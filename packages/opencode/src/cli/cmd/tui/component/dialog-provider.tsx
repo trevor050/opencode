@@ -13,6 +13,7 @@ import { DialogModel } from "./dialog-model"
 import { useKeyboard } from "@opentui/solid"
 import { Clipboard } from "@tui/util/clipboard"
 import { useToast } from "../ui/toast"
+import { toULMCodeLabel } from "../util/branding"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -34,7 +35,7 @@ export function createDialogProviderOptions() {
       map((provider) => {
         const isConnected = connected().has(provider.id)
         return {
-          title: provider.name,
+          title: toULMCodeLabel(provider.name),
           value: provider.id,
           description: {
             opencode: "(Recommended)",
