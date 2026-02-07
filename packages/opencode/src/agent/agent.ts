@@ -9,15 +9,15 @@ import { Auth } from "../auth"
 import { ProviderTransform } from "../provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
+import PROMPT_ASSESS from "./prompt/assess.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
-import PROMPT_ANALYST from "./prompt/analyst.txt"
 import PROMPT_EVIDENCE_SCRIBE from "./prompt/evidence-scribe.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_HOST_AUDITOR from "./prompt/host-auditor.txt"
 import PROMPT_NETWORK_MAPPER from "./prompt/network-mapper.txt"
 import PROMPT_PENTEST from "./prompt/pentest.txt"
 import PROMPT_RECON from "./prompt/recon.txt"
-import PROMPT_REPORT_WRITER from "./prompt/report-writer.txt"
+import PROMPT_REPORT from "./prompt/report.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import PROMPT_VULN_RESEARCHER from "./prompt/vuln-researcher.txt"
@@ -64,6 +64,7 @@ export namespace Agent {
       "*": "allow",
       bash_sensitive: "ask",
       doom_loop: "ask",
+      finding: "deny",
       external_directory: {
         "*": "ask",
         [Truncate.GLOB]: "allow",
@@ -132,6 +133,7 @@ export namespace Agent {
             question: "allow",
             plan_enter: "allow",
             task: "allow",
+            finding: "allow",
             webfetch: "allow",
             websearch: "allow",
           }),
@@ -143,38 +145,95 @@ export namespace Agent {
       },
       recon: {
         name: "recon",
-        description: "Primary reconnaissance operator for safe internal network and host discovery.",
+        description: "Subagent for safe internal attack-surface discovery and enumeration.",
         prompt: PROMPT_RECON,
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
+            read: "allow",
+            list: "allow",
+            glob: "allow",
+            grep: "allow",
+            bash: "allow",
             edit: "deny",
-            task: "allow",
+            finding: "allow",
             webfetch: "allow",
             websearch: "allow",
           }),
           user,
         ),
         options: {},
-        mode: "primary",
+        mode: "subagent",
+        native: true,
+      },
+      assess: {
+        name: "assess",
+        description: "Subagent for validation, exploitability analysis, and impact triage.",
+        prompt: PROMPT_ASSESS,
+        permission: PermissionNext.merge(
+          defaults,
+          PermissionNext.fromConfig({
+            read: "allow",
+            list: "allow",
+            glob: "allow",
+            grep: "allow",
+            bash: "allow",
+            edit: "deny",
+            finding: "allow",
+            webfetch: "allow",
+            websearch: "allow",
+          }),
+          user,
+        ),
+        options: {},
+        mode: "subagent",
+        native: true,
+      },
+      report: {
+        name: "report",
+        description: "Subagent for reporting, evidence normalization, and remediation framing.",
+        prompt: PROMPT_REPORT,
+        permission: PermissionNext.merge(
+          defaults,
+          PermissionNext.fromConfig({
+            read: "allow",
+            list: "allow",
+            glob: "allow",
+            grep: "allow",
+            bash: "allow",
+            edit: "deny",
+            finding: "allow",
+            webfetch: "allow",
+            websearch: "allow",
+          }),
+          user,
+        ),
+        options: {},
+        mode: "subagent",
         native: true,
       },
       analyst: {
         name: "analyst",
-        description: "Primary assessment and validation operator for scoring findings and remediation quality.",
-        prompt: PROMPT_ANALYST,
+        description: "Compatibility alias for assess agent behavior.",
+        prompt: PROMPT_ASSESS,
+        hidden: true,
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
+            read: "allow",
+            list: "allow",
+            glob: "allow",
+            grep: "allow",
+            bash: "allow",
             edit: "deny",
-            task: "allow",
+            finding: "allow",
             webfetch: "allow",
             websearch: "allow",
           }),
           user,
         ),
         options: {},
-        mode: "primary",
+        mode: "subagent",
         native: true,
       },
       general: {
@@ -252,6 +311,7 @@ export namespace Agent {
           PermissionNext.fromConfig({
             read: "allow",
             edit: "allow",
+            finding: "allow",
             webfetch: "allow",
             websearch: "allow",
           }),
@@ -263,13 +323,19 @@ export namespace Agent {
       },
       report_writer: {
         name: "report_writer",
-        description: "Subagent for final report drafting from finding evidence.",
-        prompt: PROMPT_REPORT_WRITER,
+        description: "Compatibility alias for report agent behavior.",
+        prompt: PROMPT_REPORT,
+        hidden: true,
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
             read: "allow",
-            edit: "allow",
+            list: "allow",
+            glob: "allow",
+            grep: "allow",
+            bash: "allow",
+            edit: "deny",
+            finding: "allow",
             webfetch: "allow",
             websearch: "allow",
           }),

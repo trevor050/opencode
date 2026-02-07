@@ -27,6 +27,7 @@ import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
+import { FindingTool } from "./finding"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -107,6 +108,7 @@ export namespace ToolRegistry {
       TaskTool,
       WebFetchTool,
       TodoWriteTool,
+      FindingTool,
       // TodoReadTool,
       WebSearchTool,
       CodeSearchTool,

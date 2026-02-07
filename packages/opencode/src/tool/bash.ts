@@ -52,6 +52,11 @@ const parser = lazy(async () => {
   return p
 })
 
+function commandPreview(command: string) {
+  const normalized = command.replace(/\s+/g, " ").trim()
+  return normalized.length > 240 ? normalized.slice(0, 237) + "..." : normalized
+}
+
 // TODO: we may wanna rename this tool so it works better on other shells
 export const BashTool = Tool.define("bash", async () => {
   const shell = Shell.acceptable()
@@ -155,8 +160,9 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
+      const risk = BashRisk.classify(params.command)
+
       if (patterns.size > 0) {
-        const risk = BashRisk.classify(params.command)
         if (risk.level === "sensitive") {
           const approvalPatterns = Array.from(patterns)
           await ctx.ask({
@@ -164,9 +170,14 @@ export const BashTool = Tool.define("bash", async () => {
             patterns: approvalPatterns,
             always: Array.from(always.size > 0 ? always : new Set(approvalPatterns)),
             metadata: {
-              description: params.description,
-              reason: risk.reason,
-              matched: risk.matched,
+              reason: risk.match.reason,
+              matched_rule: risk.match.matched_rule,
+              command_preview: commandPreview(params.command),
+              engagement_context: {
+                session_id: ctx.sessionID,
+                agent: ctx.agent,
+                cwd,
+              },
             },
           })
         }
@@ -197,6 +208,14 @@ export const BashTool = Tool.define("bash", async () => {
         metadata: {
           output: "",
           description: params.description,
+          ...(risk.level === "sensitive"
+            ? {
+                bash_risk: {
+                  level: risk.level,
+                  ...risk.match,
+                },
+              }
+            : {}),
         },
       })
 
@@ -207,6 +226,14 @@ export const BashTool = Tool.define("bash", async () => {
             // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
             output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
             description: params.description,
+            ...(risk.level === "sensitive"
+              ? {
+                  bash_risk: {
+                    level: risk.level,
+                    ...risk.match,
+                  },
+                }
+              : {}),
           },
         })
       }
@@ -276,6 +303,14 @@ export const BashTool = Tool.define("bash", async () => {
           output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
           exit: proc.exitCode,
           description: params.description,
+          ...(risk.level === "sensitive"
+            ? {
+                bash_risk: {
+                  level: risk.level,
+                  ...risk.match,
+                },
+              }
+            : {}),
         },
         output,
       }

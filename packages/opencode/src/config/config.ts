@@ -629,6 +629,7 @@ export namespace Config {
           list: PermissionRule.optional(),
           bash: PermissionRule.optional(),
           bash_sensitive: PermissionRule.optional(),
+          finding: PermissionRule.optional(),
           task: PermissionRule.optional(),
           external_directory: PermissionRule.optional(),
           todowrite: PermissionAction.optional(),
