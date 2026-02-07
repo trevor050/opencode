@@ -16,6 +16,7 @@ import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_HOST_AUDITOR from "./prompt/host-auditor.txt"
 import PROMPT_NETWORK_MAPPER from "./prompt/network-mapper.txt"
 import PROMPT_PENTEST from "./prompt/pentest.txt"
+import PROMPT_PENTEST_AUTO from "./prompt/pentest-auto.txt"
 import PROMPT_RECON from "./prompt/recon.txt"
 import PROMPT_REPORT from "./prompt/report.txt"
 import PROMPT_REPORT_WRITER from "./prompt/report-writer.txt"
@@ -144,6 +145,27 @@ export namespace Agent {
         mode: "primary",
         native: true,
       },
+      pentest_auto: {
+        name: "pentest_auto",
+        description:
+          "Primary cyber orchestrator with guided intake. Starts with essential pentest questions, then plans and delegates.",
+        prompt: PROMPT_PENTEST_AUTO,
+        permission: PermissionNext.merge(
+          defaults,
+          PermissionNext.fromConfig({
+            question: "allow",
+            plan_enter: "allow",
+            task: "allow",
+            finding: "allow",
+            webfetch: "allow",
+            websearch: "allow",
+          }),
+          user,
+        ),
+        options: {},
+        mode: "primary",
+        native: true,
+      },
       recon: {
         name: "recon",
         description: "Subagent for safe internal attack-surface discovery and enumeration.",
@@ -156,7 +178,12 @@ export namespace Agent {
             glob: "allow",
             grep: "allow",
             bash: "allow",
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             finding: "allow",
             webfetch: "allow",
             websearch: "allow",
@@ -179,7 +206,12 @@ export namespace Agent {
             glob: "allow",
             grep: "allow",
             bash: "allow",
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             finding: "allow",
             webfetch: "allow",
             websearch: "allow",
@@ -202,7 +234,12 @@ export namespace Agent {
             glob: "allow",
             grep: "allow",
             bash: "allow",
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             finding: "allow",
             webfetch: "allow",
             websearch: "allow",
@@ -226,7 +263,12 @@ export namespace Agent {
             glob: "allow",
             grep: "allow",
             bash: "allow",
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             finding: "allow",
             webfetch: "allow",
             websearch: "allow",
@@ -259,7 +301,12 @@ export namespace Agent {
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             webfetch: "allow",
             websearch: "allow",
           }),
@@ -276,7 +323,12 @@ export namespace Agent {
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             webfetch: "allow",
             websearch: "allow",
           }),
@@ -293,7 +345,12 @@ export namespace Agent {
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
-            edit: "deny",
+            edit: {
+              "*": "deny",
+              "*/engagements/*/handoff.md": "allow",
+              "*/engagements/*/agents/*/results.md": "allow",
+              "*/engagements/*/reports/*": "allow",
+            },
             webfetch: "allow",
             websearch: "allow",
           }),

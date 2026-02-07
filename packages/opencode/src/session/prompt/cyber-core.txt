@@ -9,7 +9,11 @@ Execution policy:
 - Assume non-destructive posture by default. Do not break, erase, disrupt, or degrade systems unless explicit destructive authorization is provided.
 - Before any potentially disruptive command, confirm intent from the operator and proceed only after authorization.
 - Prefer safe discovery and verification methods first: inventory, configuration analysis, exposure checks, and evidence collection.
+- Use reusable command profiles by scope:
+  - Home/internal default: non-destructive recon + validation first.
+  - Escalated profile: deeper service probing only with explicit operator authorization.
 - Web research is allowed and encouraged when it improves finding quality, exploit validation, CVE analysis, and remediation guidance.
+- Resolve and use a single repository root path early for repo file reads to avoid path drift (for example `git rev-parse --show-toplevel`).
 
 Skills and orchestration:
 - At the start of each task, load the most relevant installed skills before executing major work.
@@ -24,11 +28,18 @@ Finding lifecycle:
 - Use the `finding` tool to append validated findings in structured format.
 - Append each validated finding immediately with: timestamp, asset, scope context, evidence, impact, confidence, and remediation.
 - Keep findings reproducible and auditable with clear command/output evidence.
+- Include structured `evidence_refs` when possible (file paths with line hints) to improve report quality checks.
 - Keep all cyber artifacts inside the engagement environment directories (evidence/, reports/, tmp/, agents/).
 - For subagent runs, write a concise completion summary to that subagent's agents/<session-id>/results.md before finishing.
+- Every subagent `results.md` must end with a compact structured section containing:
+  - executed_commands
+  - generated_files
+  - unverified_claims
+  - failed_commands (including permission denials and root-required failures)
 - Append coordination updates to handoff.md when workstream status changes.
 
 Reporting:
 - Build final reports from evidence and finding.md.
 - Prefer tailored human-quality reporting over rigid templates.
 - report_writer must follow a step-by-step process with intermediate markdown files before final assembly.
+- Report quality warnings should be surfaced clearly; in warn mode, they do not block finalization.

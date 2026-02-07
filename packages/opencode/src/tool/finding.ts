@@ -9,6 +9,13 @@ import { Session } from "@/session"
 import { CyberEnvironment } from "@/session/environment"
 
 const Severity = z.enum(["critical", "high", "medium", "low", "info"])
+const EvidenceRef = z.object({
+  path: z.string().describe("Evidence file path (absolute or engagement-root relative)"),
+  line_hint: z
+    .string()
+    .optional()
+    .describe("Optional line hint such as ':42' or '#L42' to anchor the evidence location"),
+})
 
 const parameters = z.object({
   title: z.string().min(3).describe("Short finding title"),
@@ -18,6 +25,10 @@ const parameters = z.object({
   evidence: z.string().describe("Concrete evidence supporting the finding"),
   impact: z.string().describe("Likely impact if the issue is exploited"),
   recommendation: z.string().describe("Actionable remediation guidance"),
+  evidence_refs: z
+    .array(EvidenceRef)
+    .optional()
+    .describe("Optional structured evidence references used for report quality checks"),
   safe_reproduction_steps: z
     .array(z.string())
     .optional()
@@ -55,6 +66,13 @@ function findingBlock(input: FindingInput, now: string, id: string) {
     evidence: input.evidence.trim(),
     impact: input.impact.trim(),
     recommendation: input.recommendation.trim(),
+    evidence_refs:
+      input.evidence_refs
+        ?.map((ref) => ({
+          path: ref.path.trim(),
+          line_hint: ref.line_hint?.trim() || undefined,
+        }))
+        .filter((ref) => ref.path.length > 0) ?? [],
     safe_reproduction_steps: input.safe_reproduction_steps?.map((x) => x.trim()).filter(Boolean) ?? [],
     non_destructive: input.non_destructive,
     timestamp: now,
@@ -64,6 +82,13 @@ function findingBlock(input: FindingInput, now: string, id: string) {
     normalized.safe_reproduction_steps.length > 0
       ? normalized.safe_reproduction_steps.map((step, i) => `${i + 1}. ${step}`).join("\n")
       : "1. N/A"
+
+  const evidenceRefs =
+    normalized.evidence_refs.length > 0
+      ? normalized.evidence_refs
+          .map((ref) => `- ${ref.path}${ref.line_hint ? ` (${ref.line_hint})` : ""}`)
+          .join("\n")
+      : "- N/A"
 
   return {
     id,
@@ -78,6 +103,9 @@ function findingBlock(input: FindingInput, now: string, id: string) {
       "",
       "#### Evidence",
       normalized.evidence,
+      "",
+      "#### Evidence References",
+      evidenceRefs,
       "",
       "#### Impact",
       normalized.impact,

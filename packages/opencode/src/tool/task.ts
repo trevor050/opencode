@@ -2,6 +2,7 @@ import { Tool } from "./tool"
 import DESCRIPTION from "./task.txt"
 import z from "zod"
 import path from "path"
+import fs from "fs/promises"
 import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
 import { Identifier } from "../id/id"
@@ -152,6 +153,15 @@ export const TaskTool = Tool.define("task", async (ctx) => {
               "Continuously update findings.md through the finding tool when validated.",
               "Append handoff notes before finishing.",
               "Write a concise completion summary to results.md before ending.",
+              "MANDATORY: End results.md with this compact section template:",
+              "## Structured Summary",
+              "- executed_commands: [list commands actually run]",
+              "- generated_files: [list artifact paths created or updated]",
+              "- unverified_claims: [list claims not validated with direct evidence, or []]",
+              "- failed_commands: [list command + reason, including permission denials/root requirements, or []]",
+              "For assess runs: classify findings as validated vs hypothesis; only validated findings should carry high confidence.",
+              "If a command partially fails (permission denied, requires root, timeout), record it explicitly in failed_commands and adjust confidence.",
+              "Use command profiles by scope: home/internal => non-destructive recon defaults first, then deeper checks only with explicit operator approval.",
               ...(agent.name === "report_writer"
                 ? [
                     "REPORT_WRITER STAGED WORKFLOW IS MANDATORY:",
@@ -186,6 +196,28 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       })
 
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
+
+      if (environment?.type === "cyber") {
+        const denial = /prevents you from using this specific tool call|permission[^.\n]*deny/i.test(text)
+        if (denial) {
+          const handoffPath = path.join(environment.root, "handoff.md")
+          const resultsPath = path.join(environment.root, "agents", session.id, "results.md")
+          const warning = [
+            "",
+            "## Runtime Warning",
+            `- timestamp: ${new Date().toISOString()}`,
+            `- subagent: ${agent.name}`,
+            "- issue: Permission denial encountered during execution",
+            "- impact: Some planned artifact updates or checks may be incomplete",
+            "- action: Review failed_commands and rerun with adjusted permissions/scope if needed",
+            "",
+          ].join("\n")
+          await Promise.all([
+            fs.appendFile(handoffPath, warning).catch(() => {}),
+            fs.appendFile(resultsPath, warning).catch(() => {}),
+          ])
+        }
+      }
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,

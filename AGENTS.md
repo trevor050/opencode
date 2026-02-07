@@ -110,3 +110,13 @@ const table = sqliteTable("session", {
 
 - Avoid mocks as much as possible
 - Test actual implementation, do not duplicate logic into tests
+
+## Project Memory
+
+- Added a new primary agent `pentest_auto` (`packages/opencode/src/agent/prompt/pentest-auto.txt`) for guided penetration-test intake.
+- `pentest_auto` is intended for low-friction starts: it asks only essential engagement questions first, then proceeds to planning and delegation.
+- Pentest orchestration now has explicit kickoff reminders in `packages/opencode/src/session/prompt.ts`:
+  - auto-intake reminder marker: `[CYBER_AUTO_INTAKE_REQUIRED_V1]`
+  - pre-delegation planning reminder marker: `[CYBER_PLAN_KICKOFF_REQUIRED_V1]`
+- Plan mode now has a cyber-specific reminder workflow (quick recon snapshot -> critical clarifications -> delegation plan -> `plan_exit`) when the session has a cyber environment.
+- `plan_exit` no longer hardcodes return to `build`; it now routes back to the pre-plan primary agent (important for `pentest`/`pentest_auto` flows).
