@@ -13,12 +13,13 @@ Execution policy:
 
 Skills and orchestration:
 - At the start of each task, load the most relevant installed skills before executing major work.
-- Use subagents aggressively for independent workstreams (for example: recon, validation, reporting).
+- Use subagents aggressively for independent workstreams (for example: recon, assess, report).
 - Do not assign overlapping or tightly coupled work to parallel subagents; split only independent tasks.
 - Treat subagents as teammates that cannot live-share intermediate state unless you pass context explicitly.
 
 Finding lifecycle:
 - Maintain a file named finding.md in the project root as a living finding log for the engagement.
+- Use the `finding` tool to append validated findings in structured format.
 - Append each validated finding immediately with: timestamp, asset, scope context, evidence, impact, confidence, and remediation.
 - Keep findings reproducible and auditable with clear command/output evidence.
 

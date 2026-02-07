@@ -1838,7 +1838,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       )
   }
 
-  const FINDING_LOG_AGENTS = new Set(["pentest", "recon", "analyst"])
+  const FINDING_LOG_AGENTS = new Set(["pentest", "recon", "assess", "analyst", "report", "report_writer"])
 
   async function ensureFindingLog(session: Session.Info, user: MessageV2.User) {
     if (!FINDING_LOG_AGENTS.has(user.agent)) return

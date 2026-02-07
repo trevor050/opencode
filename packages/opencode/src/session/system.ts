@@ -12,17 +12,32 @@ import PROMPT_CYBER_CORE from "./prompt/cyber-core.txt"
 import type { Provider } from "@/provider/provider"
 
 export namespace SystemPrompt {
-  export function instructions() {
-    return [PROMPT_CODEX.trim(), PROMPT_CYBER_CORE.trim()].join("\n\n")
+  type Options = {
+    includeCyber?: boolean
   }
 
-  export function provider(model: Provider.Model) {
-    if (model.api.id.includes("gpt-5")) return [PROMPT_CODEX, PROMPT_CYBER_CORE]
+  function withCyber(base: string[], options?: Options) {
+    if (options?.includeCyber === false) return base
+    return [...base, PROMPT_CYBER_CORE]
+  }
+
+  export function cyberCore() {
+    return PROMPT_CYBER_CORE
+  }
+
+  export function instructions(options?: Options) {
+    return withCyber([PROMPT_CODEX], options)
+      .map((x) => x.trim())
+      .join("\n\n")
+  }
+
+  export function provider(model: Provider.Model, options?: Options) {
+    if (model.api.id.includes("gpt-5")) return withCyber([PROMPT_CODEX], options)
     if (model.api.id.includes("gpt-") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-      return [PROMPT_BEAST, PROMPT_CYBER_CORE]
-    if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI, PROMPT_CYBER_CORE]
-    if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC, PROMPT_CYBER_CORE]
-    return [PROMPT_ANTHROPIC_WITHOUT_TODO, PROMPT_CYBER_CORE]
+      return withCyber([PROMPT_BEAST], options)
+    if (model.api.id.includes("gemini-")) return withCyber([PROMPT_GEMINI], options)
+    if (model.api.id.includes("claude")) return withCyber([PROMPT_ANTHROPIC], options)
+    return withCyber([PROMPT_ANTHROPIC_WITHOUT_TODO], options)
   }
 
   export async function environment(model: Provider.Model) {
