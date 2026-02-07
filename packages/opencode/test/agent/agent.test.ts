@@ -20,6 +20,8 @@ test("returns default native agents when no config", async () => {
       const names = agents.map((a) => a.name)
       expect(names).toContain("build")
       expect(names).toContain("plan")
+      expect(names).toContain("pentest")
+      expect(names).toContain("pentest_auto")
       expect(names).toContain("general")
       expect(names).toContain("explore")
       expect(names).toContain("compaction")
@@ -71,6 +73,39 @@ test("explore agent denies edit and write", async () => {
       expect(evalPerm(explore, "write")).toBe("deny")
       expect(evalPerm(explore, "todoread")).toBe("deny")
       expect(evalPerm(explore, "todowrite")).toBe("deny")
+    },
+  })
+})
+
+test("cyber subagents allow scoped engagement artifact edits but deny project code edits", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const recon = await Agent.get("recon")
+      expect(recon).toBeDefined()
+      expect(PermissionNext.evaluate("edit", "/tmp/project/src/index.ts", recon!.permission).action).toBe("deny")
+      expect(
+        PermissionNext.evaluate(
+          "edit",
+          "/tmp/project/engagements/2026-02-07-ses_test/handoff.md",
+          recon!.permission,
+        ).action,
+      ).toBe("allow")
+      expect(
+        PermissionNext.evaluate(
+          "edit",
+          "/tmp/project/engagements/2026-02-07-ses_test/agents/ses_x/results.md",
+          recon!.permission,
+        ).action,
+      ).toBe("allow")
+      expect(
+        PermissionNext.evaluate(
+          "edit",
+          "/tmp/project/engagements/2026-02-07-ses_test/reports/report-draft.md",
+          recon!.permission,
+        ).action,
+      ).toBe("allow")
     },
   })
 })
@@ -663,13 +698,14 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
         build: { disable: true },
         plan: { disable: true },
         pentest: { disable: true },
+        pentest_auto: { disable: true },
       },
     },
   })
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      // build, plan, and pentest are disabled, no primary-capable agents remain
+      // build, plan, pentest, and pentest_auto are disabled, no primary-capable agents remain
       await expect(Agent.defaultAgent()).rejects.toThrow("no primary visible agent found")
     },
   })

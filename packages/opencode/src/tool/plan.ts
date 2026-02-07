@@ -17,21 +17,46 @@ async function getLastModel(sessionID: string) {
   return Provider.defaultModel()
 }
 
+async function getLastUserAgent(sessionID: string) {
+  for await (const item of MessageV2.stream(sessionID)) {
+    if (item.info.role !== "user") continue
+    if (!item.info.agent) continue
+    return item.info.agent
+  }
+  return "build"
+}
+
+async function getPrePlanAgent(sessionID: string) {
+  let sawPlan = false
+  for await (const item of MessageV2.stream(sessionID)) {
+    if (item.info.role !== "user") continue
+    const agent = item.info.agent
+    if (!agent) continue
+    if (agent === "plan") {
+      sawPlan = true
+      continue
+    }
+    if (sawPlan) return agent
+  }
+  return "build"
+}
+
 export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
+    const previousAgent = await getPrePlanAgent(ctx.sessionID)
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
         {
-          question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-          header: "Build Agent",
+          question: `Plan at ${plan} is complete. Would you like to switch to the ${previousAgent} agent and start implementing?`,
+          header: "Execution Agent",
           custom: false,
           options: [
-            { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+            { label: "Yes", description: `Switch to ${previousAgent} and start implementing the plan` },
             { label: "No", description: "Stay with plan agent to continue refining the plan" },
           ],
         },
@@ -51,7 +76,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
       time: {
         created: Date.now(),
       },
-      agent: "build",
+      agent: previousAgent,
       model,
     }
     await Session.updateMessage(userMsg)
@@ -60,13 +85,13 @@ export const PlanExitTool = Tool.define("plan_exit", {
       messageID: userMsg.id,
       sessionID: ctx.sessionID,
       type: "text",
-      text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
+      text: `The plan at ${plan} has been approved. You are now back in ${previousAgent} mode. Execute the plan.`,
       synthetic: true,
     } satisfies MessageV2.TextPart)
 
     return {
-      title: "Switching to build agent",
-      output: "User approved switching to build agent. Wait for further instructions.",
+      title: `Switching to ${previousAgent} agent`,
+      output: `User approved switching to ${previousAgent}. Wait for further instructions.`,
       metadata: {},
     }
   },
@@ -78,6 +103,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
+    const currentAgent = await getLastUserAgent(ctx.sessionID)
 
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
@@ -88,7 +114,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
           custom: false,
           options: [
             { label: "Yes", description: "Switch to plan agent for research and planning" },
-            { label: "No", description: "Stay with build agent to continue making changes" },
+            { label: "No", description: `Stay with ${currentAgent} to continue execution` },
           ],
         },
       ],

@@ -1316,16 +1316,32 @@ export namespace SessionPrompt {
       const plan = Session.plan(input.session)
       const exists = await Bun.file(plan).exists()
       if (!exists) await fs.mkdir(path.dirname(plan), { recursive: true })
+      const reminderText = buildPlanModeReminder({
+        session: input.session,
+        plan,
+        exists,
+      })
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
         messageID: userMessage.info.id,
         sessionID: userMessage.info.sessionID,
         type: "text",
-        text: `<system-reminder>
+        text: reminderText,
+        synthetic: true,
+      })
+      userMessage.parts.push(part)
+      return input.messages
+    }
+    return input.messages
+  }
+
+  function buildPlanModeReminder(input: { session: Session.Info; plan: string; exists: boolean }) {
+    if (input.session.environment?.type !== "cyber") {
+      return `<system-reminder>
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
+${input.exists ? `A plan file already exists at ${input.plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${input.plan} using the write tool.`}
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
 ## Plan Workflow
@@ -1390,13 +1406,40 @@ This is critical - your turn should only end with either asking the user a quest
 **Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>`,
-        synthetic: true,
-      })
-      userMessage.parts.push(part)
-      return input.messages
+</system-reminder>`
     }
-    return input.messages
+
+    return `<system-reminder>
+Plan mode is active for a cyber engagement. The user asked you to plan first, so you MUST NOT execute live testing changes yet. In this phase, avoid destructive actions and only perform read-only discovery plus planning. This supersedes conflicting instructions.
+
+## Plan File Info:
+${input.exists ? `A plan file already exists at ${input.plan}. Update it incrementally using edit.` : `No plan file exists yet. Create it at ${input.plan} using write.`}
+This plan file is the only file you should edit in this phase.
+
+## Cyber Plan Workflow
+
+### Phase 1: Quick Recon Snapshot
+Goal: Briefly explore the network/asset surface before proposing work.
+1. Gather a fast inventory of likely targets/services (safe, non-destructive only).
+2. Launch up to 2 focused explore/recon subagents in parallel only if they are independent.
+3. Capture unknowns and blockers that the model cannot infer.
+
+### Phase 2: Clarify Critical Unknowns
+Goal: Ask only what is necessary to execute safely and correctly.
+Use question tool for missing authorization/scope constraints, high-impact assumptions, or unclear objectives.
+
+### Phase 3: Build Delegation Plan
+Goal: Write an actionable plan that starts execution cleanly.
+Include:
+- Prioritized testing lanes (network mapping, host audit, validation, evidence/reporting).
+- Specific subagent delegation map with non-overlapping responsibilities.
+- Evidence expectations and decision gates for escalation.
+- Safety constraints and out-of-scope guardrails.
+
+### Phase 4: Finalize and Exit
+Call plan_exit only when the plan file is ready and ambiguities are resolved.
+Your turn should end by either asking a targeted question or calling plan_exit.
+</system-reminder>`
   }
 
   export const ShellInput = z.object({
@@ -1900,6 +1943,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   }
 
   const CYBER_ENV_CONTEXT_MARKER = "[CYBER_ENVIRONMENT_CONTEXT_V1]"
+  const CYBER_AUTO_INTAKE_MARKER = "[CYBER_AUTO_INTAKE_REQUIRED_V1]"
+  const CYBER_PLAN_KICKOFF_MARKER = "[CYBER_PLAN_KICKOFF_REQUIRED_V1]"
 
   function hasEnvironmentContextReminder(messages: MessageV2.WithParts[]) {
     return messages.some((message) =>
@@ -1940,6 +1985,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           `reports.dir=${path.join(root, "reports")}`,
           "Paths include spaces on this host; always quote absolute paths in shell commands.",
           "All pentest outputs must live in this shared environment.",
+          "Subagent completion contract: results.md must end with structured fields executed_commands, generated_files, unverified_claims, failed_commands.",
+          "For assess outputs: findings must be labeled validated vs hypothesis, and high confidence is reserved for validated findings only.",
+          "If commands partially fail (permission denied/root-required/timeout), they must be recorded explicitly in failed_commands.",
           "</system-reminder>",
         ].join("\n"),
       })
@@ -1963,6 +2011,58 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           "Load a relevant skill before major work by calling the skill tool.",
           "Example call: skill({\"name\":\"<skill-name>\"})",
           "This is a soft warning only, execution remains allowed.",
+          "</system-reminder>",
+        ].join("\n"),
+      })
+      userMessage.parts.push(part)
+    }
+
+    if (
+      input.agent.name === "pentest_auto" &&
+      !hasQuestionToolRun(input.messages) &&
+      !CyberEnvironment.hasReminderMarker(input.messages, CYBER_AUTO_INTAKE_MARKER)
+    ) {
+      const part = await Session.updatePart({
+        id: Identifier.ascending("part"),
+        messageID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        type: "text",
+        synthetic: true,
+        text: [
+          "<system-reminder>",
+          CYBER_AUTO_INTAKE_MARKER,
+          "AUTO INTAKE MODE IS ACTIVE.",
+          "Before scanning/delegation, call question tool and collect only essential engagement details:",
+          "1) Scope boundaries (CIDRs/hosts/apps) and explicit out-of-scope assets.",
+          "2) Authorization and test window constraints.",
+          "3) Allowed test depth (safe recon only, standard validation, or controlled exploitation).",
+          "4) Primary objectives and critical assets.",
+          "5) Success criteria and reporting priorities.",
+          "After collecting answers, summarize assumptions and continue with planning.",
+          "</system-reminder>",
+        ].join("\n"),
+      })
+      userMessage.parts.push(part)
+    }
+
+    if (
+      (input.agent.name === "pentest" || input.agent.name === "pentest_auto") &&
+      !CyberEnvironment.hasCompletedCyberSubtask(input.messages) &&
+      !CyberEnvironment.hasReminderMarker(input.messages, CYBER_PLAN_KICKOFF_MARKER)
+    ) {
+      const part = await Session.updatePart({
+        id: Identifier.ascending("part"),
+        messageID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        type: "text",
+        synthetic: true,
+        text: [
+          "<system-reminder>",
+          CYBER_PLAN_KICKOFF_MARKER,
+          "PENTEST PLAN KICKOFF REQUIRED BEFORE BROAD DELEGATION.",
+          "Run a brief, safe network exploration first (quick host/service map and obvious exposure inventory).",
+          "Then produce a short plan with prioritized checks and clear subagent delegation lanes.",
+          "If scope or constraints remain unclear after kickoff, use plan_enter and draft/refine the plan in plan mode before execution.",
           "</system-reminder>",
         ].join("\n"),
       })
@@ -2044,6 +2144,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     if (!CyberEnvironment.hasCompletedCyberSubtask(input.messages)) return false
     if (CyberEnvironment.hasReportWriterRun(input.messages)) return false
     return true
+  }
+
+  function hasQuestionToolRun(messages: MessageV2.WithParts[]) {
+    return messages.some((message) =>
+      message.parts.some((part) => {
+        if (part.type !== "tool") return false
+        if (part.tool !== "question") return false
+        return part.state.status === "completed"
+      }),
+    )
   }
 
   async function queueReportWriterSubtask(input: {
