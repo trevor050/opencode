@@ -22,6 +22,16 @@ describe("session.environment", () => {
         expect(await Bun.file(path.join(env.root, "finding.md")).exists()).toBe(true)
         expect(await Bun.file(path.join(env.root, "handoff.md")).exists()).toBe(true)
         expect(await Bun.file(path.join(env.root, "README.md")).exists()).toBe(true)
+        const handoff = await Bun.file(path.join(env.root, "handoff.md")).text()
+        expect(handoff).toContain("## scope_status")
+        expect(handoff).toContain("## phase_status")
+        expect(handoff).toContain("## next_actions")
+        expect(handoff).toContain("## artifact_index")
+        const engagement = await Bun.file(path.join(env.root, "engagement.md")).text()
+        expect(engagement).toContain("## Scope")
+        expect(engagement).toContain("## Authorization")
+        expect(engagement).toContain("## Constraints")
+        expect(engagement).toContain("## Objectives")
         const reports = await fs.stat(path.join(env.root, "reports"))
         expect(reports.isDirectory()).toBe(true)
         const visible = await fs.lstat(path.join(tmp.path, "engagements"))
@@ -42,9 +52,15 @@ describe("session.environment", () => {
         const session = await Session.create({ title: "Build run" })
         const ensured = await CyberEnvironment.ensureSharedEnvironment({
           session,
-          agentName: "build",
+          agentName: "title",
         })
         expect(ensured.environment).toBeUndefined()
+
+        const ensuredBuild = await CyberEnvironment.ensureSharedEnvironment({
+          session,
+          agentName: "build",
+        })
+        expect(ensuredBuild.environment).toBeUndefined()
       },
     })
   })
@@ -72,6 +88,12 @@ describe("session.environment", () => {
           session: child,
         })
         expect(await Bun.file(path.join(env.root, "agents", child.id, "results.md")).exists()).toBe(true)
+        const results = await Bun.file(path.join(env.root, "agents", child.id, "results.md")).text()
+        expect(results).toContain("## executed_commands")
+        expect(results).toContain("## generated_files")
+        expect(results).toContain("## unverified_claims")
+        expect(results).toContain("## failed_commands")
+        expect(results.trimEnd().endsWith("- none")).toBe(true)
       },
     })
   })
@@ -102,6 +124,38 @@ describe("session.environment", () => {
         })
         expect(ensured.changed).toBe(true)
         expect(ensured.environment?.root).toBe(path.join(tmp.path, "engagements", "legacy-eng"))
+      },
+    })
+  })
+
+  test("backfills legacy scaffold files with required sections", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({ title: "Legacy scaffold backfill" })
+        const env = CyberEnvironment.create(session)
+        await fs.mkdir(env.root, { recursive: true })
+        await Bun.write(
+          path.join(env.root, "engagement.md"),
+          ["# Engagement", "", "## Scope", "- TODO", "", "## Authorization", "- TODO", ""].join("\n"),
+        )
+        await Bun.write(
+          path.join(env.root, "handoff.md"),
+          ["# Handoff", "", "## Coordination Notes", "- TODO", ""].join("\n"),
+        )
+
+        await CyberEnvironment.ensureSharedScaffold({ environment: env, session })
+
+        const engagement = await Bun.file(path.join(env.root, "engagement.md")).text()
+        expect(engagement).toContain("- pending")
+        expect(engagement).toContain("## Constraints")
+        expect(engagement).toContain("## Objectives")
+
+        const handoff = await Bun.file(path.join(env.root, "handoff.md")).text()
+        expect(handoff).toContain("- pending")
+        expect(handoff).toContain("## scope_status")
+        expect(handoff).toContain("## artifact_index")
       },
     })
   })

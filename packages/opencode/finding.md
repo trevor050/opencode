@@ -1115,3 +1115,100 @@ Maintain current configuration. This is a positive finding demonstrating strong 
 1. N/A
 
 <!-- finding_json:{"id":"FND-1BVJNFA5NP","title":"VPN Tunnel Properly Configured - NordVPN with Kill Switch","severity":"info","confidence":0.95,"asset":"Host VPN Configuration (utun6)","evidence":"NordVPN configured with NordLynx (WireGuard-based) protocol. Full-tunnel mode active: default route via 10.5.0.2 (utun6). Kill switch operational: com.nordvpn.macos.Shield system extension running. DNS leak protection: queries routed through utun6 to 100.64.0.2. IPv6 disabled on WiFi preventing IPv6 leaks. Direct bind to en0 interface failed confirming kill switch protection. Exit IP: 37.19.196.75.","impact":"Positive security control. VPN configuration demonstrates excellent security posture with proper kill switch preventing traffic leaks if VPN disconnects, full-tunnel routing ensuring all traffic is protected, and DNS leak protection preventing exposure of DNS queries to ISP. This significantly enhances privacy and security for internet-bound traffic.","recommendation":"Maintain current configuration. This is a positive finding demonstrating strong privacy protection. Optional enhancements: 1. Verify ipsec0 interface purpose (may be cellular backup). 2. Periodic leak testing using online tools (dnsleaktest.com). 3. Ensure kill switch remains enabled in NordVPN application settings.","safe_reproduction_steps":[],"non_destructive":true,"timestamp":"2026-02-07T10:02:40.943Z"} -->
+### [FND-K2Y4FK8KH9] UPnP/IGD service exposed on LAN (CR1000A)
+- timestamp: 2026-02-07T17:42:28.968Z
+- severity: medium
+- confidence: 0.9
+- asset: Home router Verizon CR1000A @ 192.168.1.1 (LAN)
+- non_destructive: true
+
+#### Evidence
+[2026-02-07 12:41 -0500] SSDP M-SEARCH to 239.255.255.250:1900 received response from 192.168.1.1:1900 advertising UPnP:
+- SERVER: OpenWRT/19.07-SNAPSHOT UPnP/1.1 MiniUPnPd/2.2.0
+- LOCATION: http://192.168.1.1:34959/rootDesc.xml
+
+[2026-02-07 12:42 -0500] Fetched UPnP device description:
+- GET http://192.168.1.1:34959/rootDesc.xml
+- modelName: CR1000A
+- deviceType: urn:schemas-upnp-org:device:InternetGatewayDevice:2
+- service includes WANIPConnection:2 and WANIPv6FirewallControl:1 (control URLs exposed via UPnP description)
+
+Note: serial/UUID values omitted from this log; raw console output available in session transcript.
+
+#### Evidence References
+- N/A
+
+#### Impact
+Any compromised or untrusted device on the LAN can request UPnP port mappings (and potentially adjust related gateway behaviors depending on implementation). This can expose internal services to the internet without the owner noticing, increasing the likelihood of remote compromise and data exposure.
+
+#### Recommendation
+Disable UPnP (and NAT-PMP if present) unless you explicitly need it (gaming/VoIP). If you must keep it enabled, prefer a mode that restricts mappings to a small allowlist of devices, periodically review active port mappings, and ensure UPnP is not exposed to the WAN interface.
+
+#### Safe Reproduction Steps
+1. N/A
+
+<!-- finding_json:{"id":"FND-K2Y4FK8KH9","title":"UPnP/IGD service exposed on LAN (CR1000A)","severity":"medium","confidence":0.9,"asset":"Home router Verizon CR1000A @ 192.168.1.1 (LAN)","evidence":"[2026-02-07 12:41 -0500] SSDP M-SEARCH to 239.255.255.250:1900 received response from 192.168.1.1:1900 advertising UPnP:\n- SERVER: OpenWRT/19.07-SNAPSHOT UPnP/1.1 MiniUPnPd/2.2.0\n- LOCATION: http://192.168.1.1:34959/rootDesc.xml\n\n[2026-02-07 12:42 -0500] Fetched UPnP device description:\n- GET http://192.168.1.1:34959/rootDesc.xml\n- modelName: CR1000A\n- deviceType: urn:schemas-upnp-org:device:InternetGatewayDevice:2\n- service includes WANIPConnection:2 and WANIPv6FirewallControl:1 (control URLs exposed via UPnP description)\n\nNote: serial/UUID values omitted from this log; raw console output available in session transcript.","impact":"Any compromised or untrusted device on the LAN can request UPnP port mappings (and potentially adjust related gateway behaviors depending on implementation). This can expose internal services to the internet without the owner noticing, increasing the likelihood of remote compromise and data exposure.","recommendation":"Disable UPnP (and NAT-PMP if present) unless you explicitly need it (gaming/VoIP). If you must keep it enabled, prefer a mode that restricts mappings to a small allowlist of devices, periodically review active port mappings, and ensure UPnP is not exposed to the WAN interface.","evidence_refs":[],"safe_reproduction_steps":[],"non_destructive":true,"timestamp":"2026-02-07T17:42:28.968Z"} -->
+### [FND-BQECC5KX8A] Unauthenticated SOCKS5 proxies exposed on LAN hosts (TCP/1080)
+- timestamp: 2026-02-07T17:55:45.013Z
+- severity: high
+- confidence: 0.85
+- asset: LAN hosts 192.168.1.157 and 192.168.1.159 (device identity unknown from scan-only)
+- non_destructive: true
+
+#### Evidence
+[2026-02-07 12:53 -0500] Nmap service scan (top 200 ports) identified:
+- 192.168.1.157:1080/tcp open socks5
+- 192.168.1.159:1080/tcp open socks5
+
+[2026-02-07 12:54 -0500] SOCKS5 protocol handshake confirmed "no authentication" accepted on both hosts:
+- Connect to 192.168.1.157:1080, send 0x05 0x01 0x00, receive: b'\x05\x00'
+- Connect to 192.168.1.159:1080, send 0x05 0x01 0x00, receive: b'\x05\x00'
+
+Interpretation: these hosts run a SOCKS5 proxy that will negotiate method 0 (no-auth).
+
+#### Evidence References
+- N/A
+
+#### Impact
+Any device with LAN access (including a compromised IoT device or any guest on the main SSID) can potentially route traffic through these hosts, enabling stealthy pivoting, policy bypass, and data exfiltration. In the worst case this indicates unwanted software (proxyware/malware) running on those devices.
+
+#### Recommendation
+Identify which devices are 192.168.1.157 and 192.168.1.159 in the router UI, then remove/disable the SOCKS service (uninstall proxy software, disable developer/debug services, or factory reset/update firmware). As a compensating control, block inbound TCP/1080 to those hosts at the router (LAN firewall rules) and place untrusted/IoT devices on an isolated network/VLAN.
+
+#### Safe Reproduction Steps
+1. N/A
+
+<!-- finding_json:{"id":"FND-BQECC5KX8A","title":"Unauthenticated SOCKS5 proxies exposed on LAN hosts (TCP/1080)","severity":"high","confidence":0.85,"asset":"LAN hosts 192.168.1.157 and 192.168.1.159 (device identity unknown from scan-only)","evidence":"[2026-02-07 12:53 -0500] Nmap service scan (top 200 ports) identified:\n- 192.168.1.157:1080/tcp open socks5\n- 192.168.1.159:1080/tcp open socks5\n\n[2026-02-07 12:54 -0500] SOCKS5 protocol handshake confirmed \"no authentication\" accepted on both hosts:\n- Connect to 192.168.1.157:1080, send 0x05 0x01 0x00, receive: b'\\x05\\x00'\n- Connect to 192.168.1.159:1080, send 0x05 0x01 0x00, receive: b'\\x05\\x00'\n\nInterpretation: these hosts run a SOCKS5 proxy that will negotiate method 0 (no-auth).","impact":"Any device with LAN access (including a compromised IoT device or any guest on the main SSID) can potentially route traffic through these hosts, enabling stealthy pivoting, policy bypass, and data exfiltration. In the worst case this indicates unwanted software (proxyware/malware) running on those devices.","recommendation":"Identify which devices are 192.168.1.157 and 192.168.1.159 in the router UI, then remove/disable the SOCKS service (uninstall proxy software, disable developer/debug services, or factory reset/update firmware). As a compensating control, block inbound TCP/1080 to those hosts at the router (LAN firewall rules) and place untrusted/IoT devices on an isolated network/VLAN.","evidence_refs":[],"safe_reproduction_steps":[],"non_destructive":true,"timestamp":"2026-02-07T17:55:45.013Z"} -->
+### [FND-F7755VAZ5J] Unexpected TLS service exposed on router TCP/4577 and potentially forwarded from WAN
+- timestamp: 2026-02-07T17:56:37.478Z
+- severity: medium
+- confidence: 0.8
+- asset: Home router Verizon CR1000A @ 192.168.1.1
+- non_destructive: true
+
+#### Evidence
+[2026-02-07 12:55 -0500] Port scan of router:
+- 192.168.1.1:4577/tcp open (nmap identifies as ssl/unknown)
+- 192.168.1.1:4567/tcp closed
+
+[2026-02-07 12:56 -0500] TLS certificate observed on 4577 indicates a Verizon-issued device cert (CN appears device-specific; redacted in this log), validity 2022-07-21 through 2032-07-21.
+
+[User-provided router config] Port-forward rules include:
+- 4577/TCP -> 127.0.0.1:4577 (Always)
+- 4567/TCP -> 127.0.0.1:4567 (Always)
+
+Risk note: I have not yet validated whether WAN-side reachability to public IP on 4577 exists; from LAN, the service is reachable on 192.168.1.1:4577.
+
+#### Evidence References
+- N/A
+
+#### Impact
+An unexpected management/service port on the router increases attack surface. If the 4577 forward exposes this service to the internet, it can become a high-risk remote entry point (depending on what the service is and its authentication/patch posture). Even LAN-only, any compromised LAN device may be able to interact with it.
+
+#### Recommendation
+Remove/disable the port-forward rules for 4567/4577 unless you have a specific need. Confirm whether 4577 is reachable from the WAN (test from a cellular network) and, if so, close it immediately. Prefer using the router’s built-in remote management features (if needed) with strong auth and restricted access rather than raw port forwards.
+
+#### Safe Reproduction Steps
+1. N/A
+
+<!-- finding_json:{"id":"FND-F7755VAZ5J","title":"Unexpected TLS service exposed on router TCP/4577 and potentially forwarded from WAN","severity":"medium","confidence":0.8,"asset":"Home router Verizon CR1000A @ 192.168.1.1","evidence":"[2026-02-07 12:55 -0500] Port scan of router:\n- 192.168.1.1:4577/tcp open (nmap identifies as ssl/unknown)\n- 192.168.1.1:4567/tcp closed\n\n[2026-02-07 12:56 -0500] TLS certificate observed on 4577 indicates a Verizon-issued device cert (CN appears device-specific; redacted in this log), validity 2022-07-21 through 2032-07-21.\n\n[User-provided router config] Port-forward rules include:\n- 4577/TCP -> 127.0.0.1:4577 (Always)\n- 4567/TCP -> 127.0.0.1:4567 (Always)\n\nRisk note: I have not yet validated whether WAN-side reachability to public IP on 4577 exists; from LAN, the service is reachable on 192.168.1.1:4577.","impact":"An unexpected management/service port on the router increases attack surface. If the 4577 forward exposes this service to the internet, it can become a high-risk remote entry point (depending on what the service is and its authentication/patch posture). Even LAN-only, any compromised LAN device may be able to interact with it.","recommendation":"Remove/disable the port-forward rules for 4567/4577 unless you have a specific need. Confirm whether 4577 is reachable from the WAN (test from a cellular network) and, if so, close it immediately. Prefer using the router’s built-in remote management features (if needed) with strong auth and restricted access rather than raw port forwards.","evidence_refs":[],"safe_reproduction_steps":[],"non_destructive":true,"timestamp":"2026-02-07T17:56:37.478Z"} -->
