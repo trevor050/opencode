@@ -49,3 +49,4 @@ Last updated: 2026-02-08
   - web share-link handling and file path normalization tests,
   - i18n key updates across language packs.
 - ULM custom cyber flow files in `packages/opencode/*` merged without conflicts in this sync.
+- 2026-02-08 follow-up: fully untracked `packages/opencode/engagements/**` from git and enforced ignore-only runtime handling (keep only `.gitkeep` tracked).
