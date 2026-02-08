@@ -365,9 +365,11 @@ export const useSessionCommands = (input: {
     return [
       {
         id: "session.share",
-        title: input.info()?.share?.url ? "Copy share link" : input.language.t("command.session.share"),
+        title: input.info()?.share?.url
+          ? input.language.t("session.share.copy.copyLink")
+          : input.language.t("command.session.share"),
         description: input.info()?.share?.url
-          ? "Copy share URL to clipboard"
+          ? input.language.t("toast.session.share.success.description")
           : input.language.t("command.session.share.description"),
         category: input.language.t("command.category.session"),
         slash: "share",
