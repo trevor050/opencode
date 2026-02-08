@@ -145,11 +145,10 @@ export const dict = {
   "home.faq.a7.p2.and": "\u8207",
   "home.faq.a7.p2.shareLink": "\u5206\u4eab\u9801\u9762",
   "home.faq.q8": "OpenCode \u662f\u958b\u6e90\u7684\u55ce\uff1f",
-  "home.faq.a8.p1": "\u662f\u7684\uff0cOpenCode \u5b8c\u5168\u958b\u6e90\u3002\u539f\u59cb\u78bc\u516c\u958b\u5728",
+  "home.faq.a8.p1": "OpenCode source is publicly available on",
   "home.faq.a8.p2": "\u4e26\u4ee5",
-  "home.faq.a8.mitLicense": "MIT \u6388\u6b0a\u689d\u6b3e",
-  "home.faq.a8.p3":
-    "\u767c\u5e03\uff0c\u610f\u5473\u8457\u4efb\u4f55\u4eba\u90fd\u53ef\u4ee5\u4f7f\u7528\u3001\u4fee\u6539\u6216\u8ca2\u737b\u3002\u793e\u7fa4\u7684\u4efb\u4f55\u4eba\u90fd\u53ef\u4ee5\u63d0\u4ea4 issues\u3001pull requests \u4e26\u64f4\u5c55\u529f\u80fd\u3002",
+  "home.faq.a8.mitLicense": "PolyForm Noncommercial 1.0.0",
+  "home.faq.a8.p3": ", which permits noncommercial use. Commercial use or resale requires a separate written commercial license.",
 
   "home.zenCta.title": "\u70ba\u7de8\u78bc\u4ee3\u7406\u63d0\u4f9b\u53ef\u9760\u3001\u512a\u5316\u7684\u6a21\u578b",
   "home.zenCta.body":

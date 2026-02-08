@@ -138,11 +138,10 @@ export const dict = {
   "home.faq.a7.p2.and": "e",
   "home.faq.a7.p2.shareLink": "le pagine di condivisione",
   "home.faq.q8": "OpenCode e open source?",
-  "home.faq.a8.p1": "Si, OpenCode e completamente open source. Il codice sorgente e pubblico su",
+  "home.faq.a8.p1": "OpenCode source is publicly available on",
   "home.faq.a8.p2": "sotto la",
-  "home.faq.a8.mitLicense": "Licenza MIT",
-  "home.faq.a8.p3":
-    ", il che significa che chiunque puo usarlo, modificarlo o contribuire al suo sviluppo. Chiunque nella comunita puo aprire issue, inviare pull request ed estendere le funzionalita.",
+  "home.faq.a8.mitLicense": "PolyForm Noncommercial 1.0.0",
+  "home.faq.a8.p3": ", which permits noncommercial use. Commercial use or resale requires a separate written commercial license.",
 
   "home.zenCta.title": "Accedi a modelli affidabili e ottimizzati per agenti di coding",
   "home.zenCta.body":

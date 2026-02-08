@@ -137,11 +137,10 @@ export const dict = {
   "home.faq.a7.p2.and": "ve",
   "home.faq.a7.p2.shareLink": "paylasim sayfalari",
   "home.faq.q8": "OpenCode acik kaynak mi?",
-  "home.faq.a8.p1": "Evet, OpenCode tamamen acik kaynaktir. Kaynak kodu",
+  "home.faq.a8.p1": "OpenCode source is publicly available on",
   "home.faq.a8.p2": "altinda",
-  "home.faq.a8.mitLicense": "MIT Lisansi",
-  "home.faq.a8.p3":
-    ", yani herkes kullanabilir, degistirebilir veya gelistirmeye katkida bulunabilir. Topluluktan herkes issue acabilir, pull request gonderebilir ve islevselligi genisletebilir.",
+  "home.faq.a8.mitLicense": "PolyForm Noncommercial 1.0.0",
+  "home.faq.a8.p3": ", which permits noncommercial use. Commercial use or resale requires a separate written commercial license.",
 
   "home.zenCta.title": "Kodlama ajanlari icin guvenilir, optimize modeller",
   "home.zenCta.body":

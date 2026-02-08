@@ -1,6 +1,6 @@
 // Copyright 2019-2024 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { invoke } from "@tauri-apps/api/core"
 import { type as ostype } from "@tauri-apps/plugin-os"

@@ -40,6 +40,11 @@ Last updated: 2026-02-08
   - skill/reference discovery behavior changes,
   - any "tricky" behavior required for reliability is introduced.
 
+## Licensing Policy
+- 2026-02-08: project license changed from MIT to `PolyForm Noncommercial 1.0.0`.
+- Commercial use, resale, or offering paid services with this code now requires a separate written commercial license from Trevor Rosato (captured as `Required Notice:` lines in `LICENSE`).
+- Keep package metadata (`package.json` license fields), user-facing license labels/links, and packaging metadata aligned with the root `LICENSE` to avoid mixed-license ambiguity.
+
 ## Upstream Sync Log
 - 2026-02-08: merged `upstream/dev` into fork branch `codex/upstream-sync-20260208` (17 upstream commits integrated at sync time).
 - High-impact upstream areas landed:

@@ -138,11 +138,10 @@ export const dict = {
   "home.faq.a7.p2.and": "og",
   "home.faq.a7.p2.shareLink": "delingssider",
   "home.faq.q8": "Er OpenCode open source?",
-  "home.faq.a8.p1": "Ja, OpenCode er fuldt open source. Kildekoden er offentlig pa",
+  "home.faq.a8.p1": "OpenCode source is publicly available on",
   "home.faq.a8.p2": "under",
-  "home.faq.a8.mitLicense": "MIT-licensen",
-  "home.faq.a8.p3":
-    ", hvilket betyder at alle kan bruge, ændre eller bidrage til udviklingen. Alle i communityet kan oprette issues, indsende pull requests og udvide funktionalitet.",
+  "home.faq.a8.mitLicense": "PolyForm Noncommercial 1.0.0",
+  "home.faq.a8.p3": ", which permits noncommercial use. Commercial use or resale requires a separate written commercial license.",
 
   "home.zenCta.title": "Fa adgang til palidelige, optimerede modeller til kodningsagenter",
   "home.zenCta.body":
