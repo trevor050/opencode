@@ -244,7 +244,7 @@ export const Terminal = (props: TerminalProps) => {
         const config = settings.keybinds.get(TOGGLE_TERMINAL_ID) ?? DEFAULT_TOGGLE_TERMINAL_KEYBIND
         const keybinds = parseKeybind(config)
 
-        return matchKeybind(keybinds, event)
+        return !matchKeybind(keybinds, event)
       })
 
       const fit = new mod.FitAddon()
