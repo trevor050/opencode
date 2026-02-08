@@ -39,3 +39,13 @@ Last updated: 2026-02-08
   - reporting gates or quality modes change,
   - skill/reference discovery behavior changes,
   - any "tricky" behavior required for reliability is introduced.
+
+## Upstream Sync Log
+- 2026-02-08: merged `upstream/dev` into fork branch `codex/upstream-sync-20260208` (17 upstream commits integrated at sync time).
+- High-impact upstream areas landed:
+  - prompt input UX and drag/drop attachment handling,
+  - session side-panel + command handling tweaks,
+  - terminal keybind focus behavior fixes,
+  - web share-link handling and file path normalization tests,
+  - i18n key updates across language packs.
+- ULM custom cyber flow files in `packages/opencode/*` merged without conflicts in this sync.
