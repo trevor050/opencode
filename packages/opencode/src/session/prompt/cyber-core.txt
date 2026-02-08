@@ -17,11 +17,62 @@ Execution policy:
 
 Skills and orchestration:
 - At the start of each task, load the most relevant installed skills before executing major work.
+- After loading a K-12 skill, proactively read the most relevant `references/*.md` file(s) for the concrete task before high-impact commands.
 - Use subagents aggressively for independent workstreams (for example: recon, assess, report).
 - Do not assign overlapping or tightly coupled work to parallel subagents; split only independent tasks.
 - Treat subagents as teammates that coordinate through shared engagement artifacts and explicit handoff notes.
 - The pentest workflow must end with a `report_writer` subagent pass for final synthesis and publication.
 - report_writer execution is enforced in layers: required by prompt, warning reminder, then auto-launch fallback.
+
+Reference routing map (load when trigger appears):
+- AD attack paths / Kerberos / BloodHound / DCSync / domain abuse:
+  - `skill({"name":"k12-identity-and-privilege-escalation"})`
+  - Read: `k12-identity-and-privilege-escalation/references/active-directory-attacks.md`
+- Windows local/domain privesc checks:
+  - `skill({"name":"k12-identity-and-privilege-escalation"})`
+  - Read: `k12-identity-and-privilege-escalation/references/windows-privilege-escalation.md`
+- Linux privilege escalation checks:
+  - `skill({"name":"k12-identity-and-privilege-escalation"})`
+  - Read: `k12-identity-and-privilege-escalation/references/linux-privilege-escalation.md`
+- General escalation method selection or exploit tradeoffs:
+  - `skill({"name":"k12-identity-and-privilege-escalation"})`
+  - Read: `k12-identity-and-privilege-escalation/references/privilege-escalation-methods.md`
+- Recon/scanning strategy and phased discovery:
+  - `skill({"name":"k12-recon-and-infrastructure-testing"})`
+  - Read: `k12-recon-and-infrastructure-testing/references/scanning-tools.md`
+- SSH-specific testing:
+  - `skill({"name":"k12-recon-and-infrastructure-testing"})`
+  - Read: `k12-recon-and-infrastructure-testing/references/ssh-penetration-testing.md`
+- SMTP-specific testing:
+  - `skill({"name":"k12-recon-and-infrastructure-testing"})`
+  - Read: `k12-recon-and-infrastructure-testing/references/smtp-penetration-testing.md`
+- Internet-exposure recon / Shodan pivoting:
+  - `skill({"name":"k12-recon-and-infrastructure-testing"})`
+  - Read: `k12-recon-and-infrastructure-testing/references/shodan-reconnaissance.md`
+- Packet-level validation / traffic proof:
+  - `skill({"name":"k12-recon-and-infrastructure-testing"})`
+  - Read: `k12-recon-and-infrastructure-testing/references/wireshark-analysis.md`
+- Scope ambiguity / ROE interpretation:
+  - `skill({"name":"k12-engagement-safety-and-change-control"})`
+  - Read: `k12-engagement-safety-and-change-control/references/k12-roe-scope-guard.md`
+- Non-destructive execution defaults and safety tuning:
+  - `skill({"name":"k12-engagement-safety-and-change-control"})`
+  - Read: `k12-engagement-safety-and-change-control/references/k12-nondestructive-execution.md`
+- Authorized destructive validation planning:
+  - `skill({"name":"k12-engagement-safety-and-change-control"})`
+  - Read: `k12-engagement-safety-and-change-control/references/k12-destructive-change-control.md`
+- FERPA/privacy risk mapping and evidence packaging:
+  - `skill({"name":"k12-risk-mapping-and-reporting"})`
+  - Read: `k12-risk-mapping-and-reporting/references/k12-ferpa-risk-mapper.md`, `k12-risk-mapping-and-reporting/references/k12-evidence-reporting-pack.md`
+- Compliance framing and legal/privacy language:
+  - `skill({"name":"k12-risk-mapping-and-reporting"})`
+  - Read: `k12-risk-mapping-and-reporting/references/data-privacy-compliance.md`
+- PDF report production:
+  - `skill({"name":"k12-risk-mapping-and-reporting"})` (and `pdf` skill if installed)
+  - Read: `k12-risk-mapping-and-reporting/references/pdf.md`
+- Multi-agent planning, handoff, and quality scoring:
+  - `skill({"name":"k12-agent-orchestration-and-quality"})`
+  - Read: `k12-agent-orchestration-and-quality/references/session-handoff.md`, `k12-agent-orchestration-and-quality/references/agent-evaluation.md`
 
 Finding lifecycle:
 - Maintain a canonical finding.md in the engagement environment root as the living finding log.

@@ -4,15 +4,16 @@ import z from "zod"
 import type { MessageV2 } from "./message-v2"
 import type { Session } from "./index"
 import { Instance } from "@/project/instance"
+import { Log } from "../util/log"
 
 export namespace CyberEnvironment {
+  const log = Log.create({ service: "session.environment" })
   export const SKILL_REMINDER_MARKER = "[CYBER_SKILL_REMINDER_V1]"
   export const REPORT_WRITER_REQUIRED_MARKER = "[CYBER_REPORT_WRITER_REQUIRED_V1]"
   export const REPORT_WRITER_SKILL_MARKER = "[REPORT_WRITER_SKILL_REQUIRED_V1]"
 
   const CYBER_AGENTS = new Set([
     "action",
-    "build",
     "pentest",
     "AutoPentest",
     "pentest_flow",
@@ -27,6 +28,7 @@ export namespace CyberEnvironment {
     "vuln_researcher",
     "evidence_scribe",
   ])
+  const symlinkWarningClaims = new Set<string>()
 
   export const Info = z.object({
     type: z.literal("cyber"),
@@ -99,13 +101,24 @@ export namespace CyberEnvironment {
       `- Created: ${now}`,
       "",
       "## Scope",
-      "- TODO",
+      "- in_scope_assets: pending",
+      "- out_of_scope_assets: pending",
+      "- test_depth: pending",
       "",
       "## Authorization",
-      "- TODO",
+      "- written_authorization: pending",
+      "- destructive_testing_authorized: no",
+      "- approval_contact: pending",
+      "",
+      "## Constraints",
+      "- maintenance_windows: pending",
+      "- prohibited_actions: pending",
+      "",
+      "## Objectives",
+      "1. pending",
       "",
       "## Notes",
-      "- TODO",
+      "- pending",
       "",
     ].join("\n")
   }
@@ -116,8 +129,40 @@ export namespace CyberEnvironment {
       "",
       `- Created: ${now}`,
       "",
-      "## Coordination Notes",
-      "- Record cross-agent dependencies and updates here.",
+      "## scope_status",
+      "- authorization: pending",
+      "- in_scope_assets: pending",
+      "- restricted_actions: pending",
+      "",
+      "## phase_status",
+      "- current_phase: pending",
+      "- completed_phases: []",
+      "- blocked_gates: []",
+      "",
+      "## completed_work",
+      "- none",
+      "",
+      "## open_findings",
+      "- none",
+      "",
+      "## assumptions_and_risks",
+      "- none",
+      "",
+      "## blocked_by",
+      "- none",
+      "",
+      "## next_actions",
+      "1. pending",
+      "2. pending",
+      "3. pending",
+      "",
+      "## artifact_index",
+      "- finding.md: pending",
+      "- engagement.md: pending",
+      "- handoff.md: pending",
+      "- agents/*/results.md: pending",
+      "- evidence/raw: pending",
+      "- evidence/processed: pending",
       "",
     ].join("\n")
   }
@@ -160,7 +205,32 @@ export namespace CyberEnvironment {
     } else if (existing) {
       return
     }
-    await fs.symlink(input.target, input.link, process.platform === "win32" ? "junction" : "dir").catch(() => {})
+    await fs.symlink(input.target, input.link, process.platform === "win32" ? "junction" : "dir").catch((error) => {
+      const claim = `${input.link}->${input.target}`
+      if (symlinkWarningClaims.has(claim)) return
+      symlinkWarningClaims.add(claim)
+      log.warn("failed to create cyber environment symlink", {
+        link: input.link,
+        target: input.target,
+        error,
+      })
+    })
+  }
+
+  async function appendSectionIfMissing(input: { file: string; heading: string; block: string }) {
+    const current = await fs.readFile(input.file, "utf8").catch(() => "")
+    if (current.includes(`## ${input.heading}`)) return
+    const next = `${current.trimEnd()}\n\n${input.block.trim()}\n`
+    await fs.writeFile(input.file, next, "utf8")
+  }
+
+  async function normalizeLegacyPlaceholders(file: string) {
+    const current = await fs.readFile(file, "utf8").catch(() => "")
+    if (!current) return
+    const next = current.replace(/^- TODO$/gm, "- pending")
+    if (next !== current) {
+      await fs.writeFile(file, next, "utf8")
+    }
   }
 
   function normalizeEnvironmentRoot(environment: Info): Info {
@@ -225,6 +295,73 @@ export namespace CyberEnvironment {
     await writeIfMissing(path.join(root, "finding.md"), findingHeader(input.session.id, now))
     await writeIfMissing(path.join(root, "engagement.md"), engagementHeader(input.session.id, now))
     await writeIfMissing(path.join(root, "handoff.md"), handoffHeader(now))
+    const engagementPath = path.join(root, "engagement.md")
+    const handoffPath = path.join(root, "handoff.md")
+    await normalizeLegacyPlaceholders(engagementPath)
+    await normalizeLegacyPlaceholders(handoffPath)
+    await appendSectionIfMissing({
+      file: engagementPath,
+      heading: "Constraints",
+      block: ["## Constraints", "- maintenance_windows: pending", "- prohibited_actions: pending"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: engagementPath,
+      heading: "Objectives",
+      block: ["## Objectives", "1. pending"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "scope_status",
+      block: [
+        "## scope_status",
+        "- authorization: pending",
+        "- in_scope_assets: pending",
+        "- restricted_actions: pending",
+      ].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "phase_status",
+      block: ["## phase_status", "- current_phase: pending", "- completed_phases: []", "- blocked_gates: []"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "completed_work",
+      block: ["## completed_work", "- none"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "open_findings",
+      block: ["## open_findings", "- none"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "assumptions_and_risks",
+      block: ["## assumptions_and_risks", "- none"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "blocked_by",
+      block: ["## blocked_by", "- none"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "next_actions",
+      block: ["## next_actions", "1. pending", "2. pending", "3. pending"].join("\n"),
+    })
+    await appendSectionIfMissing({
+      file: handoffPath,
+      heading: "artifact_index",
+      block: [
+        "## artifact_index",
+        "- finding.md: pending",
+        "- engagement.md: pending",
+        "- handoff.md: pending",
+        "- agents/*/results.md: pending",
+        "- evidence/raw: pending",
+        "- evidence/processed: pending",
+      ].join("\n"),
+    })
     await writeIfMissing(path.join(root, "README.md"), engagementReadme(input))
     await writeIfMissing(
       path.join(root, "run-metadata.json"),
@@ -263,6 +400,18 @@ export namespace CyberEnvironment {
         "",
         "## Evidence Links",
         "- TODO",
+        "",
+        "## executed_commands",
+        "- none",
+        "",
+        "## generated_files",
+        "- none",
+        "",
+        "## unverified_claims",
+        "- none",
+        "",
+        "## failed_commands",
+        "- none",
         "",
       ].join("\n"),
     )

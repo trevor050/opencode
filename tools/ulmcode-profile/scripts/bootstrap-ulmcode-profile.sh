@@ -101,6 +101,13 @@ This profile is strict-isolation mode for district pentest operations.
 ## Skill policy
 - deny by default
 - allow only compact k12 skill set (and optional pdf if enabled)
+- load the matching skill and `references/*.md` before specialized execution:
+  - AD/Kerberos/domain abuse -> k12-identity-and-privilege-escalation + active-directory-attacks
+  - Windows/Linux privesc -> k12-identity-and-privilege-escalation + OS-specific privesc reference
+  - SSH/SMTP/Shodan/packet analysis -> k12-recon-and-infrastructure-testing + protocol/tool reference
+  - ROE/scope/change-control -> k12-engagement-safety-and-change-control + safety reference
+  - FERPA/privacy/report packaging/PDF -> k12-risk-mapping-and-reporting + reporting/compliance/pdf reference
+  - multi-agent handoff/quality -> k12-agent-orchestration-and-quality + session-handoff/agent-evaluation
 
 ## Operational note
 Use this profile launcher for field engagements to prevent skill leakage from shared environments.

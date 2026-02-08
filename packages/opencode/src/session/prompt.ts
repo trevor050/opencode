@@ -1970,17 +1970,54 @@ Your turn should end by either asking a targeted question or calling plan_exit.
     session: Session.Info
     agent: Agent.Info
   }) {
-    const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
+    const userMessage = input.messages.findLast(
+      (msg): msg is MessageV2.WithParts & { info: MessageV2.User } => msg.info.role === "user",
+    )
     if (!userMessage) return input.messages
     if (!CyberEnvironment.isCyberAgent(input.agent.name)) return input.messages
     if (!input.session.environment || input.session.environment.type !== "cyber") return input.messages
+    let reminderMessage: MessageV2.WithParts | undefined
+    const ensureReminderMessage = async () => {
+      if (reminderMessage) return reminderMessage
+      const info = (await Session.updateMessage({
+        id: Identifier.ascending("message"),
+        role: "assistant",
+        parentID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        mode: input.agent.name,
+        agent: input.agent.name,
+        cost: 0,
+        path: {
+          cwd: Instance.directory,
+          root: Instance.worktree,
+        },
+        time: {
+          created: Date.now(),
+        },
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: userMessage.info.model.modelID,
+        providerID: userMessage.info.model.providerID,
+      })) as MessageV2.Assistant
+      reminderMessage = {
+        info,
+        parts: [],
+      }
+      input.messages.push(reminderMessage)
+      return reminderMessage
+    }
 
     if (!hasEnvironmentContextReminder(input.messages)) {
       const root = input.session.environment.root
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -1999,17 +2036,18 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     if (
       !CyberEnvironment.hasLoadedSkill(input.messages) &&
       !CyberEnvironment.hasSkillReminderBeenShown(input.messages)
     ) {
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -2022,17 +2060,18 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     if (
       (input.agent.name === "pentest_auto" || input.agent.name === "pentest_flow" || input.agent.name === "AutoPentest") &&
       !CyberEnvironment.hasReminderMarker(input.messages, CYBER_AUTO_INTAKE_MARKER)
     ) {
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -2053,7 +2092,7 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     if (
@@ -2064,10 +2103,11 @@ Your turn should end by either asking a targeted question or calling plan_exit.
       !CyberEnvironment.hasCompletedCyberSubtask(input.messages) &&
       !CyberEnvironment.hasReminderMarker(input.messages, CYBER_PLAN_KICKOFF_MARKER)
     ) {
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -2080,7 +2120,7 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     if (
@@ -2089,10 +2129,11 @@ Your turn should end by either asking a targeted question or calling plan_exit.
       !CyberEnvironment.hasReportWriterRun(input.messages) &&
       !CyberEnvironment.hasReminderMarker(input.messages, CyberEnvironment.REPORT_WRITER_REQUIRED_MARKER)
     ) {
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -2104,7 +2145,7 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     if (
@@ -2113,10 +2154,11 @@ Your turn should end by either asking a targeted question or calling plan_exit.
       !CyberEnvironment.hasReminderMarker(input.messages, CyberEnvironment.REPORT_WRITER_SKILL_MARKER)
     ) {
       const preloaded = await preloadReportingSkillBlock()
+      const target = await ensureReminderMessage()
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
+        messageID: target.info.id,
+        sessionID: target.info.sessionID,
         type: "text",
         synthetic: true,
         text: [
@@ -2131,7 +2173,7 @@ Your turn should end by either asking a targeted question or calling plan_exit.
           "</system-reminder>",
         ].join("\n"),
       })
-      userMessage.parts.push(part)
+      target.parts.push(part)
     }
 
     return input.messages
