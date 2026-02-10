@@ -1,7 +1,6 @@
 import { getFilename } from "@opencode-ai/util/path"
 import { type AgentPartInput, type FilePartInput, type Part, type TextPartInput } from "@opencode-ai/sdk/v2/client"
 import type { FileSelection } from "@/context/file"
-import { encodeFilePath } from "@/context/file/path"
 import type { AgentPart, FileAttachmentPart, ImageAttachmentPart, Prompt } from "@/context/prompt"
 import { Identifier } from "@/utils/id"
 
@@ -33,6 +32,22 @@ const isAbsolutePath = (path: string) =>
 
 const absolute = (directory: string, path: string) =>
   isAbsolutePath(path) ? path : (directory + "/" + path).replace("//", "/")
+
+const encodeFilePath = (filepath: string): string => {
+  // Normalize Windows paths: convert backslashes to forward slashes
+  let normalized = filepath.replace(/\\/g, "/")
+
+  // Handle Windows absolute paths (D:/path -> /D:/path for proper file:// URLs)
+  if (/^[A-Za-z]:/.test(normalized)) {
+    normalized = "/" + normalized
+  }
+
+  // Encode each path segment (preserving forward slashes as path separators)
+  return normalized
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
+}
 
 const fileQuery = (selection: FileSelection | undefined) =>
   selection ? `?start=${selection.startLine}&end=${selection.endLine}` : ""
