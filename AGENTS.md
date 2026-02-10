@@ -1,6 +1,6 @@
 # ULMcode Agents Notes
 
-Last updated: 2026-02-08
+Last updated: 2026-02-10
 
 ## Project Summary
 - Repo root: `opencode/` (fork of OpenCode).
@@ -80,6 +80,17 @@ Last updated: 2026-02-08
   - keep `packages/opencode/engagements/**` ignored and untracked (except `.gitkeep`),
   - do not reintroduce tracked engagement outputs during conflict resolution.
 - If conflict touches both security-critical behavior and upstream runtime assumptions, prefer explicit manual reconciliation and document the decision in PR notes.
+
+## Security Incident Notes
+- 2026-02-10: confirmed sensitive engagement outputs were historically committed under:
+  - `packages/opencode/finding.md`
+  - `packages/opencode/.engagements_link_backup`
+  - `packages/opencode/.opencode/engagements/**`
+  - `packages/opencode/.opencode/engagements_legacy_backup/**`
+- Required remediation now includes:
+  1) keep these paths ignored in root `.gitignore`,
+  2) keep all engagement runtime artifacts local-only and untracked,
+  3) if any of these paths appear in git history, perform history rewrite + force-push cleanup to `origin/dev` and `origin/main`.
 
 ### Required PR Format For Syncs
 - Title: `chore(sync): merge upstream dev into fork (<YYYY-MM-DD>)`
