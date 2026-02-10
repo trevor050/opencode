@@ -44,6 +44,7 @@ export const dict = {
 
   "command.session.new": "新しいセッション",
   "command.file.open": "ファイルを開く",
+  "command.tab.close": "タブを閉じる",
   "command.context.addSelection": "選択範囲をコンテキストに追加",
   "command.context.addSelection.description": "現在のファイルから選択した行を追加",
   "command.input.focus": "入力欄にフォーカス",
@@ -104,7 +105,7 @@ export const dict = {
   "dialog.model.manage": "モデルを管理",
   "dialog.model.manage.description": "モデルセレクターに表示するモデルをカスタマイズします。",
 
-  "dialog.model.unpaid.freeModels.title": "ULMCodeが提供する無料モデル",
+  "dialog.model.unpaid.freeModels.title": "OpenCodeが提供する無料モデル",
   "dialog.model.unpaid.addMore.title": "人気のプロバイダーからモデルを追加",
 
   "dialog.provider.viewAll": "さらにプロバイダーを表示",
@@ -117,20 +118,20 @@ export const dict = {
   "provider.connect.status.waiting": "認証を待機中...",
   "provider.connect.status.failed": "認証に失敗しました: {{error}}",
   "provider.connect.apiKey.description":
-    "{{provider}}のAPIキーを入力してアカウントを接続し、ULMCodeで{{provider}}モデルを使用します。",
+    "{{provider}}のAPIキーを入力してアカウントを接続し、OpenCodeで{{provider}}モデルを使用します。",
   "provider.connect.apiKey.label": "{{provider}} APIキー",
   "provider.connect.apiKey.placeholder": "APIキー",
   "provider.connect.apiKey.required": "APIキーが必要です",
   "provider.connect.opencodeZen.line1":
-    "ULMCode Zenは、コーディングエージェント向けに最適化された信頼性の高いモデルへのアクセスを提供します。",
+    "OpenCode Zenは、コーディングエージェント向けに最適化された信頼性の高いモデルへのアクセスを提供します。",
   "provider.connect.opencodeZen.line2": "1つのAPIキーで、Claude、GPT、Gemini、GLMなどのモデルにアクセスできます。",
   "provider.connect.opencodeZen.visit.prefix": " ",
-  "provider.connect.opencodeZen.visit.link": "ulmcode.ai/zen",
+  "provider.connect.opencodeZen.visit.link": "opencode.ai/zen",
   "provider.connect.opencodeZen.visit.suffix": " にアクセスしてAPIキーを取得してください。",
   "provider.connect.oauth.code.visit.prefix": " ",
   "provider.connect.oauth.code.visit.link": "このリンク",
   "provider.connect.oauth.code.visit.suffix":
-    " にアクセスして認証コードを取得し、アカウントを接続してULMCodeで{{provider}}モデルを使用してください。",
+    " にアクセスして認証コードを取得し、アカウントを接続してOpenCodeで{{provider}}モデルを使用してください。",
   "provider.connect.oauth.code.label": "{{method}} 認証コード",
   "provider.connect.oauth.code.placeholder": "認証コード",
   "provider.connect.oauth.code.required": "認証コードが必要です",
@@ -138,7 +139,7 @@ export const dict = {
   "provider.connect.oauth.auto.visit.prefix": " ",
   "provider.connect.oauth.auto.visit.link": "このリンク",
   "provider.connect.oauth.auto.visit.suffix":
-    " にアクセスし、以下のコードを入力してアカウントを接続し、ULMCodeで{{provider}}モデルを使用してください。",
+    " にアクセスし、以下のコードを入力してアカウントを接続し、OpenCodeで{{provider}}モデルを使用してください。",
   "provider.connect.oauth.auto.confirmationCode": "確認コード",
   "provider.connect.toast.connected.title": "{{provider}}が接続されました",
   "provider.connect.toast.connected.description": "{{provider}}モデルが使用可能になりました。",
@@ -233,13 +234,14 @@ export const dict = {
   "prompt.toast.shellSendFailed.title": "シェルコマンドの送信に失敗しました",
   "prompt.toast.commandSendFailed.title": "コマンドの送信に失敗しました",
   "prompt.toast.promptSendFailed.title": "プロンプトの送信に失敗しました",
+  "prompt.toast.promptSendFailed.description": "セッションを取得できませんでした",
 
   "dialog.mcp.title": "MCP",
   "dialog.mcp.description": "{{total}}個中{{enabled}}個が有効",
   "dialog.mcp.empty": "MCPが設定されていません",
 
   "dialog.lsp.empty": "ファイルタイプから自動検出されたLSP",
-  "dialog.plugins.empty": "ulmcode.jsonで設定されたプラグイン",
+  "dialog.plugins.empty": "opencode.jsonで設定されたプラグイン",
 
   "mcp.status.connected": "接続済み",
   "mcp.status.failed": "失敗",
@@ -252,7 +254,7 @@ export const dict = {
   "dialog.directory.empty": "フォルダが見つかりません",
 
   "dialog.server.title": "サーバー",
-  "dialog.server.description": "このアプリが接続するULMCodeサーバーを切り替えます。",
+  "dialog.server.description": "このアプリが接続するOpenCodeサーバーを切り替えます。",
   "dialog.server.search.placeholder": "サーバーを検索",
   "dialog.server.empty": "サーバーはまだありません",
   "dialog.server.add.title": "サーバーを追加",
@@ -356,7 +358,7 @@ export const dict = {
   "toast.session.listFailed.title": "{{project}}のセッション読み込みに失敗しました",
 
   "toast.update.title": "アップデートが利用可能です",
-  "toast.update.description": "ULMCodeの新しいバージョン ({{version}}) がインストール可能です。",
+  "toast.update.description": "OpenCodeの新しいバージョン ({{version}}) がインストール可能です。",
   "toast.update.action.installRestart": "インストールして再起動",
   "toast.update.action.notYet": "今はしない",
 
@@ -367,7 +369,7 @@ export const dict = {
   "error.page.action.checking": "確認中...",
   "error.page.action.checkUpdates": "アップデートを確認",
   "error.page.action.updateTo": "{{version}}にアップデート",
-  "error.page.report.prefix": "このエラーをULMCodeチームに報告してください: ",
+  "error.page.report.prefix": "このエラーをOpenCodeチームに報告してください: ",
   "error.page.report.discord": "Discord",
   "error.page.version": "バージョン: {{version}}",
 
@@ -384,8 +386,8 @@ export const dict = {
   "error.chain.responseBody": "レスポンス本文:\n{{body}}",
   "error.chain.didYouMean": "もしかして: {{suggestions}}",
   "error.chain.modelNotFound": "モデルが見つかりません: {{provider}}/{{model}}",
-  "error.chain.checkConfig": "config (ulmcode.json) のプロバイダー/モデル名を確認してください",
-  "error.chain.mcpFailed": 'MCPサーバー "{{name}}" が失敗しました。注意: ULMCodeはまだMCP認証をサポートしていません。',
+  "error.chain.checkConfig": "config (opencode.json) のプロバイダー/モデル名を確認してください",
+  "error.chain.mcpFailed": 'MCPサーバー "{{name}}" が失敗しました。注意: OpenCodeはまだMCP認証をサポートしていません。',
   "error.chain.providerAuthFailed": "プロバイダー認証に失敗しました ({{provider}}): {{message}}",
   "error.chain.providerInitFailed":
     'プロバイダー "{{provider}}" の初期化に失敗しました。認証情報と設定を確認してください。',
@@ -495,12 +497,12 @@ export const dict = {
   "sidebar.workspaces.enable": "ワークスペースを有効化",
   "sidebar.workspaces.disable": "ワークスペースを無効化",
   "sidebar.gettingStarted.title": "はじめに",
-  "sidebar.gettingStarted.line1": "ULMCodeには無料モデルが含まれているため、すぐに開始できます。",
+  "sidebar.gettingStarted.line1": "OpenCodeには無料モデルが含まれているため、すぐに開始できます。",
   "sidebar.gettingStarted.line2": "プロバイダーを接続して、Claude、GPT、Geminiなどのモデルを使用できます。",
   "sidebar.project.recentSessions": "最近のセッション",
   "sidebar.project.viewAllSessions": "すべてのセッションを表示",
 
-  "app.name.desktop": "ULMCode Desktop",
+  "app.name.desktop": "OpenCode Desktop",
   "settings.section.desktop": "デスクトップ",
   "settings.section.server": "サーバー",
   "settings.tab.general": "一般",
@@ -512,11 +514,11 @@ export const dict = {
   "settings.general.section.sounds": "効果音",
 
   "settings.general.row.language.title": "言語",
-  "settings.general.row.language.description": "ULMCodeの表示言語を変更します",
+  "settings.general.row.language.description": "OpenCodeの表示言語を変更します",
   "settings.general.row.appearance.title": "外観",
-  "settings.general.row.appearance.description": "デバイスでのULMCodeの表示をカスタマイズします",
+  "settings.general.row.appearance.description": "デバイスでのOpenCodeの表示をカスタマイズします",
   "settings.general.row.theme.title": "テーマ",
-  "settings.general.row.theme.description": "ULMCodeのテーマをカスタマイズします。",
+  "settings.general.row.theme.description": "OpenCodeのテーマをカスタマイズします。",
   "settings.general.row.font.title": "フォント",
   "settings.general.row.font.description": "コードブロックで使用する等幅フォントをカスタマイズします",
 
@@ -524,13 +526,13 @@ export const dict = {
   "settings.general.row.releaseNotes.description": "アップデート後に「新機能」ポップアップを表示",
 
   "settings.updates.row.startup.title": "起動時にアップデートを確認",
-  "settings.updates.row.startup.description": "ULMCode の起動時に自動でアップデートを確認します",
+  "settings.updates.row.startup.description": "OpenCode の起動時に自動でアップデートを確認します",
   "settings.updates.row.check.title": "アップデートを確認",
   "settings.updates.row.check.description": "手動でアップデートを確認し、利用可能ならインストールします",
   "settings.updates.action.checkNow": "今すぐ確認",
   "settings.updates.action.checking": "確認中...",
   "settings.updates.toast.latest.title": "最新です",
-  "settings.updates.toast.latest.description": "ULMCode は最新バージョンです。",
+  "settings.updates.toast.latest.description": "OpenCode は最新バージョンです。",
 
   "font.option.ibmPlexMono": "IBM Plex Mono",
   "font.option.cascadiaCode": "Cascadia Code",

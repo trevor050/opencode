@@ -152,10 +152,12 @@ export const dict = {
   "home.faq.a7.p2.and": "\uc640",
   "home.faq.a7.p2.shareLink": "\uacf5\uc720 \ud398\uc774\uc9c0 \ud504\ub77c\uc774\ubc84\uc2dc",
   "home.faq.q8": "OpenCode\ub294 \uc624\ud508 \uc18c\uc2a4\uc778\uac00\uc694?",
-  "home.faq.a8.p1": "OpenCode source is publicly available on",
+  "home.faq.a8.p1":
+    "\ub124. OpenCode\ub294 \uc644\uc804\ud788 \uc624\ud508 \uc18c\uc2a4\uc785\ub2c8\ub2e4. \uc18c\uc2a4 \ucf54\ub4dc\ub294",
   "home.faq.a8.p2": "\uc758",
-  "home.faq.a8.mitLicense": "PolyForm Noncommercial 1.0.0",
-  "home.faq.a8.p3": ", which permits noncommercial use. Commercial use or resale requires a separate written commercial license.",
+  "home.faq.a8.mitLicense": "MIT \ub77c\uc774\uc13c\uc2a4",
+  "home.faq.a8.p3":
+    "\ub85c \uacf5\uac1c\ub418\uc5b4 \ub204\uad6c\ub098 \uc0ac\uc6a9\ud558\uac70\ub098 \uc218\uc815\ud558\uac70\ub098 \uac1c\ubc1c\uc5d0 \ucc38\uc5ec\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. \ucee4\ubba4\ub2c8\ud2f0\uc5d0\uc11c issue\ub97c \uc5f4\uace0, pull request\ub97c \uc81c\ucd9c\ud558\uace0, \uae30\ub2a5\uc744 \ud655\uc7a5\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.",
 
   "home.zenCta.title":
     "\ucf54\ub529 \uc5d0\uc774\uc804\ud2b8\ub97c \uc704\ud55c \uc2e0\ub8b0\ud560 \uc218 \uc788\ub294 \ucd5c\uc801\ud654 \ubaa8\ub378 \uc811\uadfc",
