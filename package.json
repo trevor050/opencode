@@ -84,7 +84,7 @@
     "type": "git",
     "url": "https://github.com/anomalyco/opencode"
   },
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "MIT",
   "prettier": {
     "semi": false,
     "printWidth": 120

@@ -72,7 +72,7 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
     const list = createMemo(() =>
       available().map((m) => ({
         ...m,
-        name: m.name.replace("(latest)", "").replace(/OpenCode/g, "ULMCode").trim(),
+        name: m.name.replace("(latest)", "").trim(),
         latest: m.name.includes("(latest)"),
       })),
     )
