@@ -94,7 +94,7 @@ export namespace Agent {
     const result: Record<string, Info> = {
       action: {
         name: "action",
-        description: "Focused one-off execution mode for targeted tasks and questions.",
+        description: "Focused one-off execution mode with a cyber-security-first operator style.",
         prompt: PROMPT_ACTION,
         options: {},
         permission: PermissionNext.merge(
