@@ -1065,7 +1065,7 @@ export namespace Config {
         .string()
         .optional()
         .describe(
-          "Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.",
+          "Default agent to use when none is specified. Must be a primary agent. Falls back to 'pentest' if not set or if the specified agent is invalid.",
         ),
       username: z
         .string()
@@ -1176,6 +1176,12 @@ export namespace Config {
         .object({
           auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
           prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
+          reserved: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("Token buffer for compaction. Leaves enough window to avoid overflow during compaction."),
         })
         .optional(),
       experimental: z
