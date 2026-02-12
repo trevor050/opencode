@@ -1,6 +1,6 @@
 # ULMcode Agents Notes
 
-Last updated: 2026-02-10
+Last updated: 2026-02-12
 
 ## Project Summary
 - Repo root: `opencode/` (fork of OpenCode).
@@ -134,13 +134,12 @@ Last updated: 2026-02-10
   - explicit callout of unresolved risk or follow-up tasks (if any).
 
 ### Bot Review + Checks Wait Strategy
-- Do not use a blind fixed sleep before triage.
-- Start polling PR state immediately after creating/updating the `dev -> main` PR.
-- Poll interval: every 60 seconds.
-- Exit early from polling as soon as:
+- Use an `up to 8 minutes` wait window for post-PR review triage.
+- Poll PR status every 60 seconds during that window.
+- Exit early as soon as both conditions are true:
   - all required checks are complete (pass/fail), and
   - bot/human reviews/comments for the latest commit are visible.
-- Keep 8 minutes as a max wait ceiling, not a mandatory delay.
+- Do not do a blind fixed sleep before triage.
 - If checks are still pending/queued after 8 minutes, continue with a slower poll loop (every 2-3 minutes) and classify the run as `blocked` only when there is a durable external blocker (for example: stuck queue, permission issue, or unavailable runners).
 
 ## Defensive Expansion Notes (2026-02-10)
