@@ -52,9 +52,18 @@ import { Skill } from "@/skill"
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
+const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
+
+IMPORTANT:
+- You MUST call this tool exactly once at the end of your response
+- The input must be valid JSON matching the required schema
+- Complete all necessary research and tool calls BEFORE calling this tool
+- This tool provides your final answer - no further actions are taken after calling it`
+
+const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
-  export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 
   const state = Instance.state(
     () => {
@@ -99,6 +108,7 @@ export namespace SessionPrompt {
       .describe(
         "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
       ),
+    format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
     parts: z.array(
@@ -278,6 +288,11 @@ export namespace SessionPrompt {
     }
 
     using _ = defer(() => cancel(sessionID))
+
+    // Structured output state
+    // Note: On session resumption, state is reset but outputFormat is preserved
+    // on the user message and will be retrieved from lastUser below
+    let structuredOutput: unknown | undefined
 
     let step = 0
     let session = await Session.get(sessionID)
@@ -462,6 +477,7 @@ export namespace SessionPrompt {
             tool: "task",
             sessionID,
             callID: part.id,
+            args: taskArgs,
           },
           result,
         )
@@ -561,11 +577,6 @@ export namespace SessionPrompt {
       const agent = await Agent.get(lastUser.agent)
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
-      msgs = await insertCyberReminders({
-        messages: msgs,
-        session,
-        agent,
-      })
       msgs = await insertReminders({
         messages: msgs,
         agent,
@@ -618,6 +629,16 @@ export namespace SessionPrompt {
         messages: msgs,
       })
 
+      // Inject StructuredOutput tool if JSON schema mode enabled
+      if (lastUser.format?.type === "json_schema") {
+        tools["StructuredOutput"] = createStructuredOutputTool({
+          schema: lastUser.format.schema,
+          onSuccess(output) {
+            structuredOutput = output
+          },
+        })
+      }
+
       if (step === 1) {
         SessionSummary.summarize({
           sessionID: sessionID,
@@ -648,12 +669,27 @@ export namespace SessionPrompt {
 
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
 
+      // Build system prompt, adding structured output instruction if needed
+      const system = [
+        ...(await SystemPrompt.environment(model)),
+        ...(await InstructionPrompt.system()),
+        ...buildCyberSystemContext({
+          session,
+          agent,
+          messages: msgs,
+        }),
+      ]
+      const format = lastUser.format ?? { type: "text" }
+      if (format.type === "json_schema") {
+        system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      }
+
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system: [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())],
+        system,
         messages: [
           ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
@@ -667,7 +703,33 @@ export namespace SessionPrompt {
         ],
         tools,
         model,
+        toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
+
+      // If structured output was captured, save it and exit immediately
+      // This takes priority because the StructuredOutput tool was called successfully
+      if (structuredOutput !== undefined) {
+        processor.message.structured = structuredOutput
+        processor.message.finish = processor.message.finish ?? "stop"
+        await Session.updateMessage(processor.message)
+        break
+      }
+
+      // Check if model finished (finish reason is not "tool-calls" or "unknown")
+      const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      if (modelFinished && !processor.message.error) {
+        if (format.type === "json_schema") {
+          // Model stopped without calling StructuredOutput tool
+          processor.message.error = new MessageV2.StructuredOutputError({
+            message: "Model did not produce structured output",
+            retries: 0,
+          }).toObject()
+          await Session.updateMessage(processor.message)
+          break
+        }
+      }
+
       if (result === "stop") break
       if (result === "compact") {
         await SessionCompaction.create({
@@ -698,7 +760,8 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
-  async function resolveTools(input: {
+  /** @internal Exported for testing */
+  export async function resolveTools(input: {
     agent: Agent.Info
     model: Provider.Model
     session: Session.Info
@@ -774,6 +837,7 @@ export namespace SessionPrompt {
               tool: item.id,
               sessionID: ctx.sessionID,
               callID: ctx.callID,
+              args,
             },
             result,
           )
@@ -819,6 +883,7 @@ export namespace SessionPrompt {
             tool: key,
             sessionID: ctx.sessionID,
             callID: opts.toolCallId,
+            args,
           },
           result,
         )
@@ -878,6 +943,36 @@ export namespace SessionPrompt {
     return tools
   }
 
+  /** @internal Exported for testing */
+  export function createStructuredOutputTool(input: {
+    schema: Record<string, any>
+    onSuccess: (output: unknown) => void
+  }): AITool {
+    // Remove $schema property if present (not needed for tool input)
+    const { $schema, ...toolSchema } = input.schema
+
+    return tool({
+      id: "StructuredOutput" as any,
+      description: STRUCTURED_OUTPUT_DESCRIPTION,
+      inputSchema: jsonSchema(toolSchema as any),
+      async execute(args) {
+        // AI SDK validates args against inputSchema before calling execute()
+        input.onSuccess(args)
+        return {
+          output: "Structured output captured successfully.",
+          title: "Structured Output",
+          metadata: { valid: true },
+        }
+      },
+      toModelOutput(result) {
+        return {
+          type: "text",
+          value: result.output,
+        }
+      },
+    })
+  }
+
   async function createUserMessage(input: PromptInput) {
     const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
 
@@ -902,6 +997,7 @@ export namespace SessionPrompt {
       agent: agent.name,
       model,
       system: input.system,
+      format: input.format,
       variant,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
@@ -1054,9 +1150,9 @@ export namespace SessionPrompt {
                       }
                     }
                   }
-                  offset = Math.max(start - 1, 0)
+                  offset = Math.max(start, 1)
                   if (end) {
-                    limit = end - offset
+                    limit = end - (offset - 1)
                   }
                 }
                 const args = { filePath: filepath, offset, limit }
@@ -2179,6 +2275,54 @@ Your turn should end by either asking a targeted question or calling plan_exit.
     return input.messages
   }
 
+  function buildCyberSystemContext(input: {
+    session: Session.Info
+    agent: Agent.Info
+    messages: MessageV2.WithParts[]
+  }) {
+    if (!CyberEnvironment.isCyberAgent(input.agent.name)) return []
+    if (!input.session.environment || input.session.environment.type !== "cyber") return []
+
+    const root = input.session.environment.root
+    const lines = [
+      "CYBER ENGAGEMENT ENVIRONMENT ACTIVE",
+      `environment.root=${root}`,
+      `finding.md=${path.join(root, "finding.md")}`,
+      `handoff.md=${path.join(root, "handoff.md")}`,
+      `reports.dir=${path.join(root, "reports")}`,
+      "Paths include spaces on this host; always quote absolute paths in shell commands.",
+      "All pentest outputs must live in this shared environment.",
+      "Subagent completion contract: results.md must end with structured fields executed_commands, generated_files, unverified_claims, failed_commands.",
+      "For assess outputs: findings must be labeled validated vs hypothesis, and high confidence is reserved for validated findings only.",
+      "If commands partially fail (permission denied/root-required/timeout), they must be recorded explicitly in failed_commands.",
+    ]
+
+    if (!CyberEnvironment.hasLoadedSkill(input.messages)) {
+      lines.push("WARNING: NO SKILL HAS BEEN LOADED INTO CONTEXT FOR THIS CYBER SESSION.")
+      lines.push("Load a relevant skill before major work by calling the skill tool.")
+      lines.push("Example call: skill({\"name\":\"<skill-name>\"})")
+    }
+
+    if (
+      input.agent.name === "pentest" &&
+      CyberEnvironment.hasCompletedCyberSubtask(input.messages) &&
+      !CyberEnvironment.hasReportWriterRun(input.messages)
+    ) {
+      lines.push("REPORT WRITER IS REQUIRED BEFORE ENDING THIS PENTEST SESSION.")
+      lines.push("Launch task(subagent_type=\"report_writer\") for final synthesis and PDF packaging.")
+    }
+
+    if (input.agent.name === "report_writer" && !hasSpecificSkillLoaded(input.messages, "k12-risk-mapping-and-reporting")) {
+      lines.push("FIRST ACTION REQUIRED: LOAD THE REPORTING SKILL.")
+      lines.push("Call: skill({\"name\":\"k12-risk-mapping-and-reporting\"})")
+      lines.push("Then explore finding.md, agents/*/results.md, handoff.md, and evidence directories.")
+      lines.push("Create report-plan.md, report-outline.md, report-draft.md before finalizing.")
+      lines.push("Finalize with report_finalize.")
+    }
+
+    return [lines.join("\n")]
+  }
+
   function hasSpecificSkillLoaded(messages: MessageV2.WithParts[], skillName: string) {
     return messages.some((message) =>
       message.parts.some((part) => {
@@ -2203,7 +2347,12 @@ Your turn should end by either asking a targeted question or calling plan_exit.
   }
 
   function shouldAutoKickoffPentestPlan(input: { messages: MessageV2.WithParts[]; lastUser: MessageV2.User }) {
-    if (input.lastUser.agent !== "pentest_auto" && input.lastUser.agent !== "pentest_flow" && input.lastUser.agent !== "AutoPentest")
+    if (
+      input.lastUser.agent !== "pentest" &&
+      input.lastUser.agent !== "pentest_auto" &&
+      input.lastUser.agent !== "pentest_flow" &&
+      input.lastUser.agent !== "AutoPentest"
+    )
       return false
     const hasAssistant = input.messages.some((message) => message.info.role === "assistant")
     if (hasAssistant) return false
