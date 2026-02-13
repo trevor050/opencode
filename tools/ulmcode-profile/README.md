@@ -14,6 +14,12 @@ This package installs a strict ULM-only runtime configuration in the ULMCode app
 ./tools/ulmcode-profile/scripts/bootstrap-ulmcode-profile.sh
 ```
 
+Alternative (CLI, after you have skills in `~/.config/ulmcode/skills`):
+
+```bash
+ulmcode profile init --dir ~/.config/ulmcode --force
+```
+
 Optional: include standalone `pdf` skill:
 
 ```bash
