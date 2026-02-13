@@ -61,7 +61,8 @@ jobs:
   build-cli:
     needs: version
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    if: github.repository == 'anomalyco/opencode'
+    # Run in upstream and forks that ship their own releases.
+    if: github.repository == 'anomalyco/opencode' || github.repository == 'trevor050/ulmcode'
     steps:
       - uses: actions/checkout@v3
         with:
@@ -76,6 +77,16 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ needs.version.outputs.version }}
           OPENCODE_RELEASE: ${{ needs.version.outputs.release }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build skills bundle
+        run: |
+          ./tools/ulmcode-profile/scripts/build-skills-bundle.sh ./dist
+
+      - name: Upload skills bundle to release
+        run: |
+          gh release upload "${{ needs.version.outputs.tag }}" ./dist/ulmcode-skills.tar.gz --clobber
+        env:
           GH_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-artifact@v4

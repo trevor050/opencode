@@ -1,6 +1,11 @@
 # ULMcode Agents Notes
 
-Last updated: 2026-02-12
+Last updated: 2026-02-13
+
+## Repo Reality (Read This First)
+- `/Users/trevorrosato/codeprojects/ULMcode/` is a workspace container only (not a git repo).
+- The actual git repo root is `/Users/trevorrosato/codeprojects/ULMcode/opencode/`.
+- Always `cd opencode` (or run `git -C opencode ...`) before doing git work to avoid committing to the void.
 
 ## Project Summary
 - Repo root: `opencode/` (fork of OpenCode).
@@ -12,6 +17,12 @@ Last updated: 2026-02-12
 - `packages/app`: web UI.
 - `packages/desktop`: desktop app shell.
 - `tools/ulmcode-profile`: skill profile + bootstrap sync scripts used by runtime harness.
+
+## Installer + Profile (Field Setup)
+- Bash installer: `install` (downloads GitHub release assets + skills bundle, installs `ulmcode`, initializes profile).
+- PowerShell installer: `install.ps1` (Windows native).
+- Skills bundle script: `tools/ulmcode-profile/scripts/build-skills-bundle.sh` -> `ulmcode-skills.tar.gz`.
+- Profile initializer CLI: `ulmcode profile init` (writes `~/.config/ulmcode/opencode.json` + launchers, allowlists skills, configures MCP).
 
 ## Current Behavior Snapshot
 - `pentest` is the default guided mode when no explicit agent is set.

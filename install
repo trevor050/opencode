@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-APP=opencode
+# Release assets are still named like "opencode-<os>-<arch>.(zip|tar.gz)".
+# We install the binary as "ulmcode" for the fork.
+ASSET_APP=opencode
+BIN_NAME=ulmcode
+REPO_DEFAULT="trevor050/ulmcode"
+REPO="${ULMCODE_GITHUB_REPO:-$REPO_DEFAULT}"
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -9,7 +14,7 @@ NC='\033[0m' # No Color
 
 usage() {
     cat <<EOF
-OpenCode Installer
+ULMCode Installer
 
 Usage: install.sh [options]
 
@@ -20,9 +25,9 @@ Options:
         --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
 
 Examples:
-    curl -fsSL https://opencode.ai/install | bash
-    curl -fsSL https://opencode.ai/install | bash -s -- --version 1.0.180
-    ./install --binary /path/to/opencode
+    curl -fsSL https://raw.githubusercontent.com/trevor050/ulmcode/main/install | bash
+    curl -fsSL https://raw.githubusercontent.com/trevor050/ulmcode/main/install | bash -s -- --version 1.0.180
+    ./install --binary /path/to/ulmcode
 EOF
 }
 
@@ -65,7 +70,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-INSTALL_DIR=$HOME/.opencode/bin
+# Install directory priority:
+# 1) ULMCODE_INSTALL_DIR, 2) OPENCODE_INSTALL_DIR (compat), 3) default user-local bin
+INSTALL_DIR="${ULMCODE_INSTALL_DIR:-${OPENCODE_INSTALL_DIR:-$HOME/.ulmcode/bin}}"
 mkdir -p "$INSTALL_DIR"
 
 # If --binary is provided, skip all download/detection logic
@@ -165,7 +172,7 @@ else
       target="$target-musl"
     fi
 
-    filename="$APP-$target$archive_ext"
+    filename="$ASSET_APP-$target$archive_ext"
 
 
     if [ "$os" = "linux" ]; then
@@ -181,8 +188,8 @@ else
     fi
 
     if [ -z "$requested_version" ]; then
-        url="https://github.com/anomalyco/opencode/releases/latest/download/$filename"
-        specific_version=$(curl -s https://api.github.com/repos/anomalyco/opencode/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+        url="https://github.com/${REPO}/releases/latest/download/$filename"
+        specific_version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": *"v\\([^"]*\\)".*/\\1/p')
 
         if [[ $? -ne 0 || -z "$specific_version" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
@@ -191,14 +198,14 @@ else
     else
         # Strip leading 'v' if present
         requested_version="${requested_version#v}"
-        url="https://github.com/anomalyco/opencode/releases/download/v${requested_version}/$filename"
+        url="https://github.com/${REPO}/releases/download/v${requested_version}/$filename"
         specific_version=$requested_version
 
         # Verify the release exists before downloading
-        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/anomalyco/opencode/releases/tag/v${requested_version}")
+        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/${REPO}/releases/tag/v${requested_version}")
         if [ "$http_status" = "404" ]; then
             echo -e "${RED}Error: Release v${requested_version} not found${NC}"
-            echo -e "${MUTED}Available releases: https://github.com/anomalyco/opencode/releases${NC}"
+            echo -e "${MUTED}Available releases: https://github.com/${REPO}/releases${NC}"
             exit 1
         fi
     fi
@@ -219,11 +226,11 @@ print_message() {
 }
 
 check_version() {
-    if command -v opencode >/dev/null 2>&1; then
-        opencode_path=$(which opencode)
+    if command -v "$BIN_NAME" >/dev/null 2>&1; then
+        bin_path=$(which "$BIN_NAME")
 
         ## Check the installed version
-        installed_version=$(opencode --version 2>/dev/null || echo "")
+        installed_version=$("$BIN_NAME" --version 2>/dev/null || echo "")
 
         if [[ "$installed_version" != "$specific_version" ]]; then
             print_message info "${MUTED}Installed version: ${NC}$installed_version."
@@ -325,8 +332,8 @@ download_with_progress() {
 }
 
 download_and_install() {
-    print_message info "\n${MUTED}Installing ${NC}opencode ${MUTED}version: ${NC}$specific_version"
-    local tmp_dir="${TMPDIR:-/tmp}/opencode_install_$$"
+    print_message info "\n${MUTED}Installing ${NC}${BIN_NAME} ${MUTED}version: ${NC}$specific_version"
+    local tmp_dir="${TMPDIR:-/tmp}/ulmcode_install_$$"
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
@@ -340,15 +347,28 @@ download_and_install() {
         unzip -q "$tmp_dir/$filename" -d "$tmp_dir"
     fi
 
-    mv "$tmp_dir/opencode" "$INSTALL_DIR"
-    chmod 755 "${INSTALL_DIR}/opencode"
+    if [ -f "$tmp_dir/${BIN_NAME}" ]; then
+      mv "$tmp_dir/${BIN_NAME}" "$INSTALL_DIR/${BIN_NAME}"
+    elif [ -f "$tmp_dir/${BIN_NAME}.exe" ]; then
+      mv "$tmp_dir/${BIN_NAME}.exe" "$INSTALL_DIR/${BIN_NAME}.exe"
+    elif [ -f "$tmp_dir/opencode" ]; then
+      mv "$tmp_dir/opencode" "$INSTALL_DIR/${BIN_NAME}"
+    elif [ -f "$tmp_dir/opencode.exe" ]; then
+      mv "$tmp_dir/opencode.exe" "$INSTALL_DIR/${BIN_NAME}.exe"
+    else
+      echo -e "${RED}Error: could not find extracted binary in $tmp_dir${NC}"
+      ls -la "$tmp_dir" >&2 || true
+      exit 1
+    fi
+    chmod 755 "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null || true
+    chmod 755 "${INSTALL_DIR}/${BIN_NAME}.exe" 2>/dev/null || true
     rm -rf "$tmp_dir"
 }
 
 install_from_binary() {
-    print_message info "\n${MUTED}Installing ${NC}opencode ${MUTED}from: ${NC}$binary_path"
-    cp "$binary_path" "${INSTALL_DIR}/opencode"
-    chmod 755 "${INSTALL_DIR}/opencode"
+    print_message info "\n${MUTED}Installing ${NC}${BIN_NAME} ${MUTED}from: ${NC}$binary_path"
+    cp "$binary_path" "${INSTALL_DIR}/${BIN_NAME}"
+    chmod 755 "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null || true
 }
 
 if [ -n "$binary_path" ]; then
@@ -358,6 +378,54 @@ else
     download_and_install
 fi
 
+install_profile_and_skills() {
+    local profile_dir="${ULMCODE_PROFILE_DIR:-$HOME/.config/ulmcode}"
+    local skills_filename="${ULMCODE_SKILLS_BUNDLE:-ulmcode-skills.tar.gz}"
+    local tmp_dir="${TMPDIR:-/tmp}/ulmcode_skills_$$"
+
+    mkdir -p "$profile_dir"
+    mkdir -p "$tmp_dir"
+
+    local skills_url=""
+    if [ "$specific_version" = "local" ] || [ -z "${specific_version:-}" ]; then
+        skills_url="https://github.com/${REPO}/releases/latest/download/${skills_filename}"
+    else
+        skills_url="https://github.com/${REPO}/releases/download/v${specific_version}/${skills_filename}"
+    fi
+
+    print_message info "\n${MUTED}Installing ${NC}skills ${MUTED}to: ${NC}${profile_dir}"
+
+    # Download skills bundle (fallback to latest if versioned asset is missing).
+    if ! curl -fsSL -o "$tmp_dir/$skills_filename" "$skills_url"; then
+        print_message warning "${MUTED}Skills bundle not found at ${NC}${skills_url}${MUTED}; falling back to latest${NC}"
+        skills_url="https://github.com/${REPO}/releases/latest/download/${skills_filename}"
+        curl -fsSL -o "$tmp_dir/$skills_filename" "$skills_url"
+    fi
+
+    # Bundle is expected to contain "skills/..."
+    tar -xzf "$tmp_dir/$skills_filename" -C "$profile_dir"
+    rm -rf "$tmp_dir"
+
+    local bin=""
+    if [ -x "${INSTALL_DIR}/${BIN_NAME}" ]; then
+        bin="${INSTALL_DIR}/${BIN_NAME}"
+    elif [ -x "${INSTALL_DIR}/${BIN_NAME}.exe" ]; then
+        bin="${INSTALL_DIR}/${BIN_NAME}.exe"
+    elif command -v "$BIN_NAME" >/dev/null 2>&1; then
+        bin="$(command -v "$BIN_NAME")"
+    fi
+
+    if [ -n "$bin" ]; then
+        print_message info "${MUTED}Initializing profile via:${NC} $bin profile init --dir \"$profile_dir\" --force"
+        "$bin" profile init --dir "$profile_dir" --force || true
+    else
+        print_message warning "${MUTED}Could not run ${NC}${BIN_NAME}${MUTED} to initialize profile. You can run later:${NC}"
+        print_message info "  ${BIN_NAME} profile init --dir \"$profile_dir\" --force"
+    fi
+}
+
+install_profile_and_skills
+
 
 add_to_path() {
     local config_file=$1
@@ -366,9 +434,9 @@ add_to_path() {
     if grep -Fxq "$command" "$config_file"; then
         print_message info "Command already exists in $config_file, skipping write."
     elif [[ -w $config_file ]]; then
-        echo -e "\n# opencode" >> "$config_file"
+        echo -e "\n# ulmcode" >> "$config_file"
         echo "$command" >> "$config_file"
-        print_message info "${MUTED}Successfully added ${NC}opencode ${MUTED}to \$PATH in ${NC}$config_file"
+        print_message info "${MUTED}Successfully added ${NC}${BIN_NAME} ${MUTED}to \$PATH in ${NC}$config_file"
     else
         print_message warning "Manually add the directory to $config_file (or similar):"
         print_message info "  $command"
@@ -450,11 +518,11 @@ echo -e "${MUTED}█░░█ █░░█ █▀▀▀ █░░█ ${NC}█░
 echo -e "${MUTED}▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
 echo -e ""
 echo -e ""
-echo -e "${MUTED}OpenCode includes free models, to start:${NC}"
+echo -e "${MUTED}ULMCode installed. Quick start:${NC}"
 echo -e ""
 echo -e "cd <project>  ${MUTED}# Open directory${NC}"
-echo -e "opencode      ${MUTED}# Run command${NC}"
+echo -e "${BIN_NAME}      ${MUTED}# Run command${NC}"
 echo -e ""
-echo -e "${MUTED}For more information visit ${NC}https://opencode.ai/docs"
+echo -e "${MUTED}Docs: ${NC}https://github.com/${REPO}"
 echo -e ""
 echo -e ""

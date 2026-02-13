@@ -59,6 +59,7 @@ export namespace Installation {
 
   export async function method() {
     if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl"
+    if (process.execPath.includes(path.join(".ulmcode", "bin"))) return "curl"
     if (process.execPath.includes(path.join(".local", "bin"))) return "curl"
     const exec = process.execPath.toLowerCase()
 
@@ -132,10 +133,16 @@ export namespace Installation {
     let cmd
     switch (method) {
       case "curl":
-        cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
-          ...process.env,
-          VERSION: target,
-        })
+        // Fork install script; overridable for local testing.
+        // NOTE: keep this URL stable for client installs.
+        {
+          const installUrl =
+            process.env.ULMCODE_INSTALL_URL || "https://raw.githubusercontent.com/trevor050/ulmcode/main/install"
+          cmd = $`curl -fsSL ${installUrl} | bash`.env({
+            ...process.env,
+            VERSION: target,
+          })
+        }
         break
       case "npm":
         cmd = $`npm install -g opencode-ai@${target}`
@@ -251,7 +258,8 @@ export namespace Installation {
         .then((data: any) => data.version)
     }
 
-    return fetch("https://api.github.com/repos/anomalyco/opencode/releases/latest")
+    const repo = process.env.ULMCODE_GITHUB_REPO || "trevor050/ulmcode"
+    return fetch(`https://api.github.com/repos/${repo}/releases/latest`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText)
         return res.json()
