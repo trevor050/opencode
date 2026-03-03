@@ -78,6 +78,7 @@ import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
+import { latestPrimaryAgent } from "./agent-sync.ts"
 
 addDefaultParsers(parsers.parsers)
 
@@ -210,11 +211,11 @@ export function Session() {
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit") {
-      const messagesList = messages()
-      const lastUserPrimary = messagesList.findLast(
-        (msg) => msg.role === "user" && msg.agent && local.agent.list().some((item) => item.name === msg.agent),
-      )
-      if (lastUserPrimary?.agent) local.agent.set(lastUserPrimary.agent)
+      const agent = latestPrimaryAgent({
+        messages: messages(),
+        primaryAgents: local.agent.list().map((item) => item.name),
+      })
+      if (agent) local.agent.set(agent)
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
       local.agent.set("plan")
@@ -310,6 +311,24 @@ export function Session() {
   }
 
   const local = useLocal()
+
+  const latestMessageAgent = createMemo(() =>
+    latestPrimaryAgent({
+      messages: messages(),
+      primaryAgents: local.agent.list().map((item) => item.name),
+    }),
+  )
+
+  createEffect(
+    on(
+      latestMessageAgent,
+      (agent) => {
+        if (!agent) return
+        local.agent.set(agent)
+      },
+      { defer: true },
+    ),
+  )
 
   function moveChild(direction: number) {
     if (children().length === 1) return
