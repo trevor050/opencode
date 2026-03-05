@@ -1,6 +1,6 @@
 # ULMcode Agents Notes
 
-Last updated: 2026-02-26
+Last updated: 2026-03-05
 
 ## Repo Reality (Read This First)
 - `/Users/trevorrosato/codeprojects/ULMcode/` is a workspace container only (not a git repo).
@@ -166,6 +166,21 @@ Last updated: 2026-02-26
 - Registry wiring updated to expose new tools by default.
 - Tests extended:
   - `packages/opencode/test/tool/team-tools.test.ts` now validates read/ack/broadcast/wait flows.
+
+## Pentest Plan Prompt Hardening (2026-03-05)
+- Hardened plan-mode cyber prompt contract in:
+  - `packages/opencode/src/session/prompt.ts`
+  - `packages/opencode/src/session/prompt/plan.txt`
+- Pentest planning is now explicitly execution-grade, not brainstorm-grade:
+  - planner must front-load deeper read-only grounding before handoff,
+  - final plan must be specific enough for another operator to execute with minimal improvisation,
+  - plan must include explicit subagent use boundaries (`WILL use` vs `WILL NOT use`),
+  - parent planner retains scope framing, sequencing, and cross-lane synthesis instead of delegating fuzzy shared-context work.
+- Reporting closeout is now mandatory in the plan itself:
+  - plan must end with `report_writer` invocation,
+  - then creation of high-quality `report.html`,
+  - then print-ready PDF generation from the HTML/CSS flow.
+- Guided pentest kickoff text now reinforces the same contract before first plan-mode turn, so auto-routed pentest sessions start with a deeper planning posture immediately.
 
 ## Contracts + Gotchas
 - Resolve git/repo root first to avoid nested path drift in this monorepo.

@@ -1430,7 +1430,7 @@ export namespace SessionPrompt {
     return input.messages
   }
 
-  function buildPlanModeReminder(input: { session: Session.Info; plan: string; exists: boolean }) {
+  export function buildPlanModeReminder(input: { session: Session.Info; plan: string; exists: boolean }) {
     if (input.session.environment?.type !== "cyber") {
       return `<system-reminder>
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
@@ -1506,6 +1506,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     return `<system-reminder>
 Plan mode is active for a cyber engagement. The user asked you to plan first, so you MUST NOT execute live testing changes yet. In this phase, avoid destructive actions and only perform read-only discovery plus planning. This supersedes conflicting instructions.
+Your job is to produce an absolute, execution-ready pentest plan, not a lightweight brainstorm. Front-load depth before handoff. Do not rush to plan_exit until the plan is specific enough that another operator could execute it with minimal improvisation.
 
 ## Plan File Info:
 ${input.exists ? `A plan file already exists at ${input.plan}. Update it incrementally using edit.` : `No plan file exists yet. Create it at ${input.plan} using write.`}
@@ -1513,11 +1514,12 @@ This plan file is the only file you should edit in this phase.
 
 ## Cyber Plan Workflow
 
-### Phase 1: Quick Recon Snapshot
-Goal: Briefly explore the network/asset surface before proposing work.
-1. Gather a fast inventory of likely targets/services (safe, non-destructive only).
-2. Launch up to 2 focused explore/recon subagents in parallel only if they are independent.
-3. Capture unknowns and blockers that the model cannot infer.
+### Phase 1: Deep Read-Only Grounding
+Goal: build a decision-grade picture of the environment before you recommend execution.
+1. Gather a safe, non-destructive asset and service snapshot first.
+2. Go beyond host counting. Identify likely trust boundaries, externally reachable services, likely auth surfaces, privilege boundaries, sensitive systems, chokepoints, and attack-path candidates.
+3. Record what you know, what you strongly suspect, and what remains unknown. Call out blockers that actually change execution choices.
+4. Do not move on while the plan still depends on hand-wavy assumptions you could resolve with additional read-only discovery.
 
 ### Phase 2: Clarify Critical Unknowns
 Goal: Ask only what is necessary to execute safely and correctly.
@@ -1528,14 +1530,36 @@ After the plan is ready, ask for approval in normal chat: "Does this plan sound 
 When the user confirms readiness, use plan_exit to switch to execution mode.
 
 ### Phase 3: Build Delegation Plan
-Goal: Write an actionable plan that starts execution cleanly.
+Goal: write an actionable operation order that starts execution cleanly.
 Include:
+- Explicit objectives, assumptions, constraints, and success criteria.
+- A recon summary that explains why each proposed testing lane exists.
+- Ranked attack-path hypotheses or validation tracks.
 - Prioritized testing lanes (network mapping, host audit, validation, evidence/reporting).
 - Specific subagent delegation map with non-overlapping responsibilities.
+- For each planned subagent: purpose, exact scope, expected inputs, expected outputs, stop conditions, and evidence it must return.
+- An explicit "where subagents WILL be used" section and an explicit "where subagents WILL NOT be used" section. Keep parent-only work for scope control, sequencing, cross-lane synthesis, and decisions that require shared context.
 - Evidence expectations and decision gates for escalation.
 - Safety constraints and out-of-scope guardrails.
+- Concrete sequencing and dependency notes so parallel work does not collide or duplicate effort.
+
+Subagent policy:
+- Use subagents only for independent, bounded lanes with minimal scope overlap.
+- Do NOT use subagents for initial scope framing, authorization decisions, cross-lane prioritization, or speculative tasks that are not yet justified by evidence.
+- Do NOT delegate overlapping recon just to look busy; parallelism without boundaries lowers quality.
+- If a lane depends on shared evolving context, keep it in the parent plan until the boundary is crisp.
+
+Plan quality bar:
+- No vague bullets like "enumerate more" or "test for vulns."
+- Name the concrete target areas, why they matter, what validation proves success/failure, and what evidence should be captured.
+- The plan should read like a real operation order with phases, gates, and ownership, not a generic checklist.
 
 ### Phase 4: Finalize and Exit
+The final section of the plan must describe the reporting closeout in this order:
+1. Invoke the \`report_writer\` subagent for final synthesis.
+2. Produce a high-quality \`report.html\`.
+3. Compile the final print-ready PDF from the HTML/CSS report flow.
+
 Call plan_exit only when the plan file is ready, ambiguities are resolved, and the user explicitly confirms they want execution to begin.
 Your turn should end by either asking a targeted question or calling plan_exit.
 </system-reminder>`
@@ -2374,11 +2398,14 @@ Your turn should end by either asking a targeted question or calling plan_exit.
       synthetic: true,
       text: [
         "Guided pentest kickoff: enter plan mode before execution.",
-        "First, do a brief safe network exploration snapshot.",
+        "First, do a deep read-only grounding pass, starting with a brief safe network exploration snapshot.",
         "Then use question tool for critical intake questions and continue focused follow-up questions until confidence is high.",
         "Avoid benign/unnecessary questions.",
+        "Produce an absolute execution-ready plan with explicit testing phases, decision gates, and a clear subagent use/non-use map.",
+        "Make the plan specific enough that another operator could execute it with minimal improvisation.",
         "When the plan is ready, ask in normal chat: 'Does this plan sound good? If not, tell me what to change.'",
         "When the user confirms they are ready, call plan_exit to switch into execution mode.",
+        "The plan must end with reporting closeout: invoke report_writer, then build a high-quality report.html and final PDF from HTML/CSS.",
         "Produce a full actionable plan before active pentest execution.",
       ].join("\n"),
     })
