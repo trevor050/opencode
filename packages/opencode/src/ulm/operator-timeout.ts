@@ -3,7 +3,7 @@ import path from "path"
 import { operationPath, slug } from "./artifact"
 import { superviseOperation } from "./operation-supervisor"
 import type { OperationGoalRecord } from "./operation-goal"
-import type { ULMRuntimeConfig } from "./config"
+import { effectiveULMContinuation, type ULMRuntimeConfig } from "./config"
 
 export type OperatorTimeoutKind = "permission" | "question"
 
@@ -36,7 +36,59 @@ const sensitivePatterns = [
 
 export function operatorFallbackTimeoutMillis(goal: OperationGoalRecord, config: ULMRuntimeConfig = {}) {
   if (config.operator_timeout_seconds === 0) return undefined
-  return Math.max(1, Math.round((config.operator_timeout_seconds ?? goal.continuation?.operatorFallbackTimeoutSeconds ?? 75) * 1000))
+  return Math.max(1, Math.round((config.operator_timeout_seconds ?? goal.continuation?.operatorFallbackTimeoutSeconds ?? 180) * 1000))
+}
+
+async function readOperatorTimeouts(worktree: string, operationID: string) {
+  const dir = path.join(operationPath(worktree, operationID), "operator-timeouts")
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
+
+  return (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          try {
+            return JSON.parse(await fs.readFile(path.join(dir, entry), "utf8")) as OperatorTimeoutRecord
+          } catch {
+            return undefined
+          }
+        }),
+    )
+  ).filter((record): record is OperatorTimeoutRecord => record !== undefined)
+}
+
+export async function operatorTimeoutCount(
+  worktree: string,
+  input: { operationID: string; kind: OperatorTimeoutKind },
+) {
+  return (await readOperatorTimeouts(worktree, slug(input.operationID, "operation"))).filter(
+    (record) => record.kind === input.kind,
+  ).length
+}
+
+export async function operatorFallbackWaitMillis(
+  worktree: string,
+  input: {
+    operationID: string
+    kind: OperatorTimeoutKind
+    goal: OperationGoalRecord
+    config?: ULMRuntimeConfig
+  },
+) {
+  const continuation = effectiveULMContinuation(input.goal, input.config)
+  if (!continuation.enabled || !continuation.operatorFallbackEnabled) return undefined
+  const timeoutMillis = operatorFallbackTimeoutMillis(input.goal, input.config)
+  if (timeoutMillis === undefined) return undefined
+  const count = await operatorTimeoutCount(worktree, { operationID: input.operationID, kind: input.kind })
+  if (count >= continuation.maxRepeatedOperatorTimeoutsPerKind) return 0
+  return timeoutMillis
 }
 
 export function isSensitiveOperatorPrompt(text: string) {

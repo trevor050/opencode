@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { effectiveULMContinuation, parseULMConfigToml } from "../../src/ulm/config"
-import { operatorFallbackTimeoutMillis } from "../../src/ulm/operator-timeout"
+import { operatorFallbackTimeoutMillis, operatorFallbackWaitMillis, recordOperatorTimeout } from "../../src/ulm/operator-timeout"
 import { createOperationGoal } from "../../src/ulm/operation-goal"
 import { tmpdir } from "../fixture/fixture"
 
@@ -53,6 +53,16 @@ test("operator timeout config overrides operation goal timeout", async () => {
   expect(operatorFallbackTimeoutMillis(result.goal, { operator_timeout_seconds: 300 })).toBe(300_000)
 })
 
+test("operator timeout defaults to three minutes for unattended field runs", async () => {
+  await using dir = await tmpdir()
+  const result = await createOperationGoal(dir.path, {
+    operationID: "school",
+    objective: "Authorized unattended run",
+  })
+
+  expect(operatorFallbackTimeoutMillis(result.goal)).toBe(180_000)
+})
+
 test("operator timeout config zero disables fallback timeout", async () => {
   await using dir = await tmpdir()
   const result = await createOperationGoal(dir.path, {
@@ -62,6 +72,52 @@ test("operator timeout config zero disables fallback timeout", async () => {
   })
 
   expect(operatorFallbackTimeoutMillis(result.goal, { operator_timeout_seconds: 0 })).toBeUndefined()
+})
+
+test("operator fallback wait is immediate after repeated timeouts hit the configured ceiling", async () => {
+  await using dir = await tmpdir()
+  const result = await createOperationGoal(dir.path, {
+    operationID: "school",
+    objective: "Authorized unattended run",
+    continuation: {
+      operatorFallbackTimeoutSeconds: 180,
+      maxRepeatedOperatorTimeoutsPerKind: 2,
+    },
+  })
+
+  await recordOperatorTimeout(dir.path, {
+    operationID: "school",
+    kind: "question",
+    requestID: "que_1",
+    sessionID: "ses_1",
+    fallback: "Skip",
+    sensitive: false,
+    timedOutAt: "2026-05-07T10:00:00.000Z",
+  })
+  await recordOperatorTimeout(dir.path, {
+    operationID: "school",
+    kind: "question",
+    requestID: "que_2",
+    sessionID: "ses_1",
+    fallback: "Skip",
+    sensitive: false,
+    timedOutAt: "2026-05-07T10:03:00.000Z",
+  })
+
+  expect(
+    await operatorFallbackWaitMillis(dir.path, {
+      operationID: "school",
+      kind: "question",
+      goal: result.goal,
+    }),
+  ).toBe(0)
+  expect(
+    await operatorFallbackWaitMillis(dir.path, {
+      operationID: "school",
+      kind: "permission",
+      goal: result.goal,
+    }),
+  ).toBe(180_000)
 })
 
 test("effectiveULMContinuation applies config overrides", async () => {

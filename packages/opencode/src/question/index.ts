@@ -8,7 +8,7 @@ import * as Log from "@opencode-ai/core/util/log"
 import { withStatics } from "@/util/schema"
 import { QuestionID } from "./schema"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
-import { isSensitiveOperatorPrompt, operatorFallbackTimeoutMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
+import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
 import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "question" })
@@ -186,7 +186,14 @@ export const layer = Layer.effect(
       const activeOperation = operation && operationAllowsUnattendedFallback(operation.goal, ulmConfig) ? operation : undefined
       const timeoutMillis =
         activeOperation !== undefined
-          ? operatorFallbackTimeoutMillis(activeOperation.goal, ulmConfig)
+          ? yield* Effect.promise(() =>
+              operatorFallbackWaitMillis(activeOperation.worktree, {
+                operationID: activeOperation.operationID,
+                kind: "question",
+                goal: activeOperation.goal,
+                config: ulmConfig,
+              }),
+            )
           : undefined
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined

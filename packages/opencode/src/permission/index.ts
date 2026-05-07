@@ -16,7 +16,7 @@ import os from "os"
 import { evaluate as evalRule } from "./evaluate"
 import { PermissionID } from "./schema"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
-import { isSensitiveOperatorPrompt, operatorFallbackTimeoutMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
+import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
 import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "permission" })
@@ -214,7 +214,14 @@ export const layer = Layer.effect(
       const activeOperation = operation && operationAllowsUnattendedFallback(operation.goal, ulmConfig) ? operation : undefined
       const timeoutMillis =
         activeOperation !== undefined
-          ? operatorFallbackTimeoutMillis(activeOperation.goal, ulmConfig)
+          ? yield* Effect.promise(() =>
+              operatorFallbackWaitMillis(activeOperation.worktree, {
+                operationID: activeOperation.operationID,
+                kind: "permission",
+                goal: activeOperation.goal,
+                config: ulmConfig,
+              }),
+            )
           : undefined
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
