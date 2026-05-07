@@ -16,11 +16,15 @@ export const Parameters = Schema.Struct({
   credentialID: Schema.optional(Schema.String),
   credentialIDs: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   label: Schema.optional(Schema.String),
+  type: Schema.optional(Schema.String),
   username: Schema.optional(Schema.String),
   password: Schema.optional(Schema.String),
+  secret: Schema.optional(Schema.String),
   url: Schema.optional(Schema.String),
+  target: Schema.optional(Schema.String),
   tags: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   notes: Schema.optional(Schema.String),
+  rules: Schema.optional(Schema.String),
 })
 
 type Metadata = {
@@ -48,11 +52,15 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
                 operationID: params.operationID,
                 credentialID: params.credentialID,
                 label,
+                type: params.type,
                 username: params.username,
                 password: params.password,
+                secret: params.secret,
                 url: params.url,
+                target: params.target,
                 tags: params.tags,
                 notes: params.notes,
+                rules: params.rules,
               }),
             )
             return {

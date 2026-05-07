@@ -13,6 +13,9 @@ export const UlmPaths = {
   status: `${root}/:operationID/status`,
   resume: `${root}/:operationID/resume`,
   audit: `${root}/:operationID/audit`,
+  credentials: `${root}/:operationID/credentials`,
+  credential: `${root}/:operationID/credentials/:credentialID`,
+  materializeCredentials: `${root}/:operationID/credentials/materialize-env`,
 } as const
 
 const QueryBoolean = Schema.Literals(["true", "false"]).pipe(
@@ -197,6 +200,59 @@ const OperationAuditResult = Schema.Struct({
     markdown: Schema.String,
   }).annotate({ identifier: "UlmAuditFiles" }),
 }).annotate({ identifier: "UlmOperationAuditResult" })
+const CredentialRecord = Schema.Struct({
+  credentialID: Schema.String,
+  label: Schema.String,
+  type: Schema.optional(Schema.String),
+  username: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.String),
+  target: Schema.optional(Schema.String),
+  tags: Schema.Array(Schema.String),
+  notes: Schema.optional(Schema.String),
+  rules: Schema.optional(Schema.String),
+  password: Schema.optional(Schema.String),
+  secret: Schema.optional(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+}).annotate({ identifier: "UlmCredentialRecord" })
+const CredentialListResult = Schema.Struct({
+  operationID: Schema.String,
+  index: Schema.String,
+  credentials: Schema.Array(CredentialRecord),
+}).annotate({ identifier: "UlmCredentialListResult" })
+export const UlmCredentialCreatePayload = Schema.Struct({
+  credentialID: Schema.optional(Schema.String),
+  label: Schema.String,
+  type: Schema.optional(Schema.String),
+  username: Schema.optional(Schema.String),
+  password: Schema.optional(Schema.String),
+  secret: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.String),
+  target: Schema.optional(Schema.String),
+  tags: Schema.optional(Schema.Array(Schema.String)),
+  notes: Schema.optional(Schema.String),
+  rules: Schema.optional(Schema.String),
+})
+const CredentialDeleteResult = Schema.Struct({
+  operationID: Schema.String,
+  credentialID: Schema.String,
+  index: Schema.String,
+  deleted: Schema.Boolean,
+}).annotate({ identifier: "UlmCredentialDeleteResult" })
+export const UlmCredentialMaterializePayload = Schema.Struct({
+  credentialIDs: Schema.optional(Schema.Array(Schema.String)),
+})
+const CredentialMaterializeResult = Schema.Struct({
+  operationID: Schema.String,
+  envFile: Schema.String,
+  credentials: Schema.Array(
+    Schema.Struct({
+      credentialID: Schema.String,
+      label: Schema.String,
+      variables: Schema.Array(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "UlmCredentialMaterializeResult" })
 
 export const UlmApi = HttpApi.make("ulm")
   .add(
@@ -243,6 +299,48 @@ export const UlmApi = HttpApi.make("ulm")
             identifier: "ulm.operation.audit",
             summary: "Audit ULM operation handoff",
             description: "Run ULMCode final readiness checks for one operation.",
+          }),
+        ),
+        HttpApiEndpoint.get("credentials", UlmPaths.credentials, {
+          params: { operationID: Schema.String },
+          success: described(CredentialListResult, "ULMCode operation credentials"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "ulm.operation.credentials",
+            summary: "List ULM operation credentials",
+            description: "List redacted credential handles for one ULMCode operation.",
+          }),
+        ),
+        HttpApiEndpoint.post("credentialCreate", UlmPaths.credentials, {
+          params: { operationID: Schema.String },
+          payload: UlmCredentialCreatePayload,
+          success: described(CredentialListResult, "ULMCode operation credentials"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "ulm.operation.credential.create",
+            summary: "Create ULM operation credential",
+            description: "Store one operation-scoped credential and return the redacted credential list.",
+          }),
+        ),
+        HttpApiEndpoint.delete("credentialDelete", UlmPaths.credential, {
+          params: { operationID: Schema.String, credentialID: Schema.String },
+          success: described(CredentialDeleteResult, "ULMCode credential deletion"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "ulm.operation.credential.delete",
+            summary: "Delete ULM operation credential",
+            description: "Delete one operation-scoped credential from the redacted index and backing secret store.",
+          }),
+        ),
+        HttpApiEndpoint.post("credentialMaterializeEnv", UlmPaths.materializeCredentials, {
+          params: { operationID: Schema.String },
+          payload: UlmCredentialMaterializePayload,
+          success: described(CredentialMaterializeResult, "ULMCode credential env file"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "ulm.operation.credential.materializeEnv",
+            summary: "Materialize ULM credential environment",
+            description: "Write selected credential secrets to a chmod 0600 env file for scoped command use.",
           }),
         ),
       )

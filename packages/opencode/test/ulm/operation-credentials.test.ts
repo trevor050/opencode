@@ -50,11 +50,14 @@ describe("ULM operation credentials", () => {
     const result = await writeOperationCredential(storage, dir.path, {
       operationID: "School Login",
       label: "student portal test account",
+      type: "Web Login",
       username: "student@example.edu",
       password: "correct horse battery staple",
       url: "https://portal.example.edu/login",
+      target: "portal.example.edu",
       tags: ["student", "portal"],
       notes: "Authorized test account.",
+      rules: "Use only for low-privilege authenticated checks.",
     })
 
     expect(result.operationID).toBe("school-login")
@@ -66,17 +69,21 @@ describe("ULM operation credentials", () => {
     expect((await fs.stat(path.dirname(index))).mode & 0o777).toBe(0o700)
     expect((await fs.stat(index)).mode & 0o777).toBe(0o600)
     expect(await fs.readFile(index, "utf8")).not.toContain("correct horse battery staple")
+    expect(await fs.readFile(index, "utf8")).toContain("Use only for low-privilege authenticated checks.")
 
     const list = await readOperationCredentials(dir.path, { operationID: "School Login" })
     expect(list.credentials).toEqual([
       {
         credentialID: "student-portal-test-account",
         label: "student portal test account",
+        type: "Web Login",
         username: "student@example.edu",
         password: "********",
         url: "https://portal.example.edu/login",
+        target: "portal.example.edu",
         tags: ["student", "portal"],
         notes: "Authorized test account.",
+        rules: "Use only for low-privilege authenticated checks.",
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
       },
@@ -85,5 +92,7 @@ describe("ULM operation credentials", () => {
     const materialized = await materializeOperationCredentials(storage, dir.path, { operationID: "School Login" })
     expect((await fs.stat(materialized.envFile)).mode & 0o777).toBe(0o600)
     expect(await fs.readFile(materialized.envFile, "utf8")).toContain("correct horse battery staple")
+    expect(await fs.readFile(materialized.envFile, "utf8")).toContain("ULMCODE_CREDENTIAL_STUDENT_PORTAL_TEST_ACCOUNT_SECRET")
+    expect(await fs.readFile(materialized.envFile, "utf8")).toContain("ULMCODE_CREDENTIAL_STUDENT_PORTAL_TEST_ACCOUNT_TARGET")
   })
 })

@@ -40,6 +40,7 @@ import { SyncPaths } from "./httpapi/groups/sync"
 import { TuiPaths } from "./httpapi/groups/tui"
 import { WorkspacePaths } from "./httpapi/groups/workspace"
 import type { CorsOptions } from "@/server/cors"
+import { credentialVaultHtml } from "@/server/shared/ulm-credential-vault"
 
 export const InstanceRoutes = (upgrade: UpgradeWebSocket, opts?: CorsOptions): Hono => {
   const app = new Hono()
@@ -160,6 +161,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket, opts?: CorsOptions): H
   }
 
   return app
+    .get("/ulm/credentials", (c) => c.html(credentialVaultHtml()))
     .route("/project", ProjectRoutes())
     .route("/pty", PtyRoutes(upgrade, opts))
     .route("/config", ConfigRoutes())

@@ -1936,6 +1936,45 @@ export type UlmOperationAuditResult = {
   files: UlmAuditFiles
 }
 
+export type UlmCredentialRecord = {
+  credentialID: string
+  label: string
+  type?: string
+  username?: string
+  url?: string
+  target?: string
+  tags: Array<string>
+  notes?: string
+  rules?: string
+  password?: string
+  secret?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type UlmCredentialListResult = {
+  operationID: string
+  index: string
+  credentials: Array<UlmCredentialRecord>
+}
+
+export type UlmCredentialDeleteResult = {
+  operationID: string
+  credentialID: string
+  index: string
+  deleted: boolean
+}
+
+export type UlmCredentialMaterializeResult = {
+  operationID: string
+  envFile: string
+  credentials: Array<{
+    credentialID: string
+    label: string
+    variables: Array<string>
+  }>
+}
+
 export type Workspace = {
   id: string
   type: string
@@ -7073,6 +7112,108 @@ export type UlmOperationAuditResponses = {
 }
 
 export type UlmOperationAuditResponse = UlmOperationAuditResponses[keyof UlmOperationAuditResponses]
+
+export type UlmOperationCredentialsData = {
+  body?: never
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials"
+}
+
+export type UlmOperationCredentialsResponses = {
+  /**
+   * ULMCode operation credentials
+   */
+  200: UlmCredentialListResult
+}
+
+export type UlmOperationCredentialsResponse = UlmOperationCredentialsResponses[keyof UlmOperationCredentialsResponses]
+
+export type UlmOperationCredentialCreateData = {
+  body?: {
+    credentialID?: string
+    label: string
+    type?: string
+    username?: string
+    password?: string
+    secret?: string
+    url?: string
+    target?: string
+    tags?: Array<string>
+    notes?: string
+    rules?: string
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials"
+}
+
+export type UlmOperationCredentialCreateResponses = {
+  /**
+   * ULMCode operation credentials
+   */
+  200: UlmCredentialListResult
+}
+
+export type UlmOperationCredentialCreateResponse =
+  UlmOperationCredentialCreateResponses[keyof UlmOperationCredentialCreateResponses]
+
+export type UlmOperationCredentialDeleteData = {
+  body?: never
+  path: {
+    operationID: string
+    credentialID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials/{credentialID}"
+}
+
+export type UlmOperationCredentialDeleteResponses = {
+  /**
+   * ULMCode credential deletion
+   */
+  200: UlmCredentialDeleteResult
+}
+
+export type UlmOperationCredentialDeleteResponse =
+  UlmOperationCredentialDeleteResponses[keyof UlmOperationCredentialDeleteResponses]
+
+export type UlmOperationCredentialMaterializeEnvData = {
+  body?: {
+    credentialIDs?: Array<string>
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials/materialize-env"
+}
+
+export type UlmOperationCredentialMaterializeEnvResponses = {
+  /**
+   * ULMCode credential env file
+   */
+  200: UlmCredentialMaterializeResult
+}
+
+export type UlmOperationCredentialMaterializeEnvResponse =
+  UlmOperationCredentialMaterializeEnvResponses[keyof UlmOperationCredentialMaterializeEnvResponses]
 
 export type ExperimentalWorkspaceAdapterListData = {
   body?: never

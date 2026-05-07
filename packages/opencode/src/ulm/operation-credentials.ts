@@ -9,20 +9,27 @@ export type OperationCredentialInput = {
   operationID: string
   credentialID?: string
   label: string
+  type?: string
   username?: string
   password?: string
+  secret?: string
   url?: string
+  target?: string
   tags?: string[]
   notes?: string
+  rules?: string
 }
 
 export type OperationCredentialRecord = {
   credentialID: string
   label: string
+  type?: string
   username?: string
   url?: string
+  target?: string
   tags: string[]
   notes?: string
+  rules?: string
   createdAt: string
   updatedAt: string
 }
@@ -32,6 +39,7 @@ type OperationCredentialSecret = {
   credentialID: string
   username?: string
   password?: string
+  secret?: string
   updatedAt: string
 }
 
@@ -98,10 +106,13 @@ export async function writeOperationCredential(storage: Storage.Interface, workt
   const record: OperationCredentialRecord = {
     credentialID,
     label: input.label,
+    type: input.type,
     username: input.username,
     url: input.url,
+    target: input.target,
     tags: input.tags ?? [],
     notes: input.notes,
+    rules: input.rules,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }
@@ -110,7 +121,8 @@ export async function writeOperationCredential(storage: Storage.Interface, workt
       operationID,
       credentialID,
       username: input.username,
-      password: input.password,
+      password: input.password ?? input.secret,
+      secret: input.secret ?? input.password,
       updatedAt: now,
     }),
   )
@@ -166,7 +178,9 @@ export async function materializeOperationCredentials(
     return [
       secret?.username ? `export ${envName(credential, "USERNAME")}=${shellQuote(secret.username)}` : undefined,
       secret?.password ? `export ${envName(credential, "PASSWORD")}=${shellQuote(secret.password)}` : undefined,
+      secret?.secret ? `export ${envName(credential, "SECRET")}=${shellQuote(secret.secret)}` : undefined,
       credential.url ? `export ${envName(credential, "URL")}=${shellQuote(credential.url)}` : undefined,
+      credential.target ? `export ${envName(credential, "TARGET")}=${shellQuote(credential.target)}` : undefined,
     ].filter((item): item is string => item !== undefined)
   })
   const envFile = path.join(os.tmpdir(), `ulmcode-${operationID}-credentials-${Date.now()}.env`)
@@ -178,7 +192,13 @@ export async function materializeOperationCredentials(
     credentials: selected.map((credential) => ({
       credentialID: credential.credentialID,
       label: credential.label,
-      variables: [`${envName(credential, "USERNAME")}`, `${envName(credential, "PASSWORD")}`, `${envName(credential, "URL")}`],
+      variables: [
+        `${envName(credential, "USERNAME")}`,
+        `${envName(credential, "PASSWORD")}`,
+        `${envName(credential, "SECRET")}`,
+        `${envName(credential, "URL")}`,
+        `${envName(credential, "TARGET")}`,
+      ],
     })),
   }
 }

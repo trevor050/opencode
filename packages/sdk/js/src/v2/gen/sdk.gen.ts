@@ -201,6 +201,10 @@ import type {
   TuiShowToastResponses,
   TuiSubmitPromptResponses,
   UlmOperationAuditResponses,
+  UlmOperationCredentialCreateResponses,
+  UlmOperationCredentialDeleteResponses,
+  UlmOperationCredentialMaterializeEnvResponses,
+  UlmOperationCredentialsResponses,
   UlmOperationListResponses,
   UlmOperationResumeResponses,
   UlmOperationStatusResponses,
@@ -4817,6 +4821,140 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Credential extends HeyApiClient {
+  /**
+   * Create ULM operation credential
+   *
+   * Store one operation-scoped credential and return the redacted credential list.
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      credentialID?: string
+      label?: string
+      type?: string
+      username?: string
+      password?: string
+      secret?: string
+      url?: string
+      target?: string
+      tags?: Array<string>
+      notes?: string
+      rules?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "credentialID" },
+            { in: "body", key: "label" },
+            { in: "body", key: "type" },
+            { in: "body", key: "username" },
+            { in: "body", key: "password" },
+            { in: "body", key: "secret" },
+            { in: "body", key: "url" },
+            { in: "body", key: "target" },
+            { in: "body", key: "tags" },
+            { in: "body", key: "notes" },
+            { in: "body", key: "rules" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationCredentialCreateResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Delete ULM operation credential
+   *
+   * Delete one operation-scoped credential from the redacted index and backing secret store.
+   */
+  public delete<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      credentialID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "path", key: "credentialID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<UlmOperationCredentialDeleteResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials/{credentialID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Materialize ULM credential environment
+   *
+   * Write selected credential secrets to a chmod 0600 env file for scoped command use.
+   */
+  public materializeEnv<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      credentialIDs?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "credentialIDs" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationCredentialMaterializeEnvResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials/materialize-env",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Operation extends HeyApiClient {
   /**
    * List ULM operations
@@ -4966,6 +5104,43 @@ export class Operation extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  /**
+   * List ULM operation credentials
+   *
+   * List redacted credential handles for one ULMCode operation.
+   */
+  public credentials<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<UlmOperationCredentialsResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials",
+      ...options,
+      ...params,
+    })
+  }
+
+  private _credential?: Credential
+  get credential(): Credential {
+    return (this._credential ??= new Credential({ client: this.client }))
   }
 }
 
