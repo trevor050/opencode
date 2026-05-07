@@ -17,10 +17,11 @@ import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
-import { activeOperationGoal, readOperationPlanExcerpt } from "@/ulm/operation-context"
+import { operationForSession, readOperationPlanExcerpt } from "@/ulm/operation-context"
 import { effectiveULMContinuation, readULMConfig } from "@/ulm/config"
 import { operatorFallbackTimeoutMillis } from "@/ulm/operator-timeout"
 import { readOperationMemory } from "@/ulm/operation-extras"
+import type { SessionID } from "./schema"
 
 type OperationGoalContext = {
   operationID: string
@@ -105,8 +106,9 @@ async function toolInventory(worktree: string, operationID: string) {
   return readJson<ToolInventoryContext>(path.join(worktree, ".ulmcode", "operations", operationID, "tool-inventory", "tool-inventory.json"))
 }
 
-async function ulmOperationContext(worktree: string) {
-  const active = await activeOperationGoal(worktree)
+async function ulmOperationContext(worktree: string, sessionID: SessionID | undefined) {
+  if (!sessionID) return undefined
+  const active = await operationForSession(worktree, sessionID)
   if (!active) return undefined
   const goal = active.goal
   const config = await readULMConfig({ directory: worktree, worktree })
@@ -141,8 +143,7 @@ async function ulmOperationContext(worktree: string) {
     memory ? `operation_memory: ${memory.file}` : "operation_memory: missing; call operation_memory append when important details must survive compaction",
     "credential_policy: if the operator offers credentials, use operation_credentials create/list/get/materialize_env; never store raw secrets in chat, operation memory, evidence, reports, command text, task metadata, or final deliverables",
     "planning_gate_policy: for pentest runs of 2h or more, ask scope questions until actionable, write a Discovery Charter for research/recon/questions/time investment, record approval, then write the full duration-aware operation_plan",
-    "operator_go_ahead_policy: if the kickoff explicitly authorizes autonomous work and asks you to proceed while the operator is away, treat that as Discovery Charter approval for bounded non-destructive discovery; do not ask for duplicate Discovery Charter approval unless scope or safety materially changed",
-    "stale_operation_policy: if the newest user request starts a new engagement or gives a new stop time/objective that conflicts with this active operation, create a fresh operation_goal or ask one blocking clarification; do not silently resume a stale mismatched operation",
+    "operation_binding_policy: ULM operation context is scoped to the session that created or explicitly read the operation. New sessions must not inherit active operations from the same worktree.",
     "discovery_charter_policy: the Discovery Charter is not the final execution plan; it is the strategy for learning where to invest time, what to ask, what to recon, and whether enough safe deep work exists to fill the budget",
     "full_plan_confidence_policy: do not write the actual full operation_plan for 2h+ runs until duration-fit confidence is duration_sized with evidence and an overflow backlog",
     "budget_sized_work_policy: the full plan must allocate enough safe primary, fallback, retry, reporting, and follow-up-question work for the requested duration; completion is coverage-based, not clock-burning",
@@ -187,7 +188,7 @@ export function provider(model: Provider.Model) {
 }
 
 export interface Interface {
-  readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
+  readonly environment: (model: Provider.Model, input?: { sessionID?: SessionID }) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
@@ -199,9 +200,11 @@ export const layer = Layer.effect(
     const skill = yield* Skill.Service
 
     return Service.of({
-      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
+      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model, input?: { sessionID?: SessionID }) {
         const ctx = yield* InstanceState.context
-        const operationContext = yield* Effect.promise(async () => (await ulmOperationContext(ctx.worktree)) ?? (await ulmOperationContext(ctx.directory)))
+        const operationContext = yield* Effect.promise(async () =>
+          (await ulmOperationContext(ctx.worktree, input?.sessionID)) ?? (await ulmOperationContext(ctx.directory, input?.sessionID)),
+        )
         return [
           [
             `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,

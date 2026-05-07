@@ -14,6 +14,8 @@ import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { Storage } from "@/storage/storage"
 import { writeOperationCheckpoint, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import { createOperationGoal } from "@/ulm/operation-goal"
+import { operationForSession } from "@/ulm/operation-context"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(
@@ -37,6 +39,12 @@ describe("tool.operation_resume", () => {
       fn: () =>
         Effect.runPromise(
           Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              createOperationGoal(Instance.worktree, {
+                operationID: "school",
+                objective: "Authorized school assessment",
+              }),
+            )
             yield* Effect.promise(() =>
               writeOperationCheckpoint(Instance.worktree, {
                 operationID: "school",
@@ -70,6 +78,7 @@ describe("tool.operation_resume", () => {
             expect(result.output).toContain("<operation_resume_json>")
             expect(result.output).toContain("\"operationID\": \"school\"")
             expect(result.metadata.health.ready).toBe(false)
+            expect((yield* Effect.promise(() => operationForSession(dir.path, "session-1" as any)))?.operationID).toBe("school")
           }).pipe(Effect.scoped, Effect.provide(layer)),
         ),
     })

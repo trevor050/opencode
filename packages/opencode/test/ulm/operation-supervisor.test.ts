@@ -51,7 +51,7 @@ describe("ULM operation supervisor", () => {
       planningApproval: {
         status: "approved",
         discoveryCharterPath: "plans/discovery-charter.md",
-        approver: "operator kickoff",
+        approver: "operator",
       },
       discoveryCharter: {
         purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
@@ -69,7 +69,7 @@ describe("ULM operation supervisor", () => {
     expect(review.decisions[0]?.reason).toBe("approved Discovery Charter needs bounded discovery before the full operation plan")
     expect(review.decisions[0]?.requiredNextTool).toBe("command_supervise")
     expect(review.planExcerpt?.path).toContain("discovery-charter.json")
-    expect(review.planExcerpt?.content).toContain("operator kickoff")
+    expect(review.planExcerpt?.content).toContain("operator")
   })
 
   test("blocks long-run graphs that omit a supervisor lane", async () => {

@@ -9,6 +9,7 @@ import { TaskTool } from "./task"
 import { CommandSuperviseTool } from "./command_supervise"
 import { buildOperationResumeBrief, formatOperationResumeBrief, readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
 import { markRecoveredLanesRunning } from "@/ulm/operation-recovery"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -127,6 +128,13 @@ export const OperationResumeTool = Tool.define(
               staleAfterMinutes: params.staleAfterMinutes,
             }),
           ).pipe(Effect.orDie)
+          yield* Effect.promise(() =>
+            bindOperationSession(worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: "operation_resume",
+            }),
+          )
           const recoveryLines = recovery
             ? [
                 "recovery:",

@@ -59,7 +59,7 @@ describe("tool.operation_plan", () => {
     })
   })
 
-  test("persists kickoff-approved Discovery Charter approval state", async () => {
+  test("persists explicitly approved Discovery Charter approval state", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
@@ -75,8 +75,8 @@ describe("tool.operation_plan", () => {
                 planningApproval: {
                   status: "approved",
                   discoveryCharterPath: "plans/discovery-charter.md",
-                  approver: "operator kickoff",
-                  notes: ["Operator asked the agent to work autonomously until the stated stop time."],
+                  approver: "operator",
+                  notes: ["Operator explicitly approved the Discovery Charter."],
                 },
                 discoveryCharter: {
                   purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
@@ -100,7 +100,7 @@ describe("tool.operation_plan", () => {
             const record = yield* Effect.promise(() => fs.readFile(result.metadata.json, "utf8").then(JSON.parse))
 
             expect(record.planningApproval.status).toBe("approved")
-            expect(record.planningApproval.approver).toBe("operator kickoff")
+            expect(record.planningApproval.approver).toBe("operator")
           }).pipe(Effect.provide(layer)),
         ),
     })

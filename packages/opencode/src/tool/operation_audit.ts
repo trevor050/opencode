@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_audit.txt"
 import { Instance } from "@/project/instance"
 import { buildOperationAudit, formatOperationAudit } from "@/ulm/artifact"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -58,7 +59,7 @@ export const OperationAuditTool = Tool.define<typeof Parameters, Metadata, never
   Effect.succeed({
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const result = yield* Effect.tryPromise(() =>
           buildOperationAudit(Instance.worktree, params.operationID, {
@@ -76,6 +77,13 @@ export const OperationAuditTool = Tool.define<typeof Parameters, Metadata, never
             finalHandoff: params.finalHandoff,
           }),
         ).pipe(Effect.orDie)
+        yield* Effect.promise(() =>
+          bindOperationSession(Instance.worktree, {
+            sessionID: ctx.sessionID,
+            operationID: result.operationID,
+            source: "operation_audit",
+          }),
+        )
         return {
           title: result.ok ? "operation audit passed" : `${result.blockers.length} operation audit blockers`,
           output: [

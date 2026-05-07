@@ -179,7 +179,7 @@ export const layer = Layer.effect(
 
       const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
       const ctx = yield* InstanceState.context
-      const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
+      const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       const ulmConfig = yield* Effect.promise(() => readULMConfig(ctx))
       const activeOperation = operation && operationAllowsUnattendedFallback(operation.goal, ulmConfig) ? operation : undefined
       const timeoutMillis =

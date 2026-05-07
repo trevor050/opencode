@@ -13,6 +13,7 @@ import { SessionID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { createOperationGoal } from "../../src/ulm/operation-goal"
+import { bindOperationSession } from "../../src/ulm/operation-context"
 
 const it = testEffect(Layer.mergeAll(Question.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -131,6 +132,7 @@ it.instance(
           continuation: { operatorFallbackTimeoutSeconds: 0.01 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
 
       const answers = yield* askEffect({
         sessionID: SessionID.make("ses_test"),
@@ -167,6 +169,7 @@ it.instance(
           continuation: { operatorFallbackTimeoutSeconds: 0.01 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
 
       const answers = yield* askEffect({
         sessionID: SessionID.make("ses_test"),
@@ -200,6 +203,7 @@ it.instance(
           continuation: { operatorFallbackTimeoutSeconds: 0.2 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
 
       const fiber = yield* askEffect({
         sessionID: SessionID.make("ses_test"),
@@ -240,6 +244,7 @@ it.instance(
           continuation: { operatorFallbackTimeoutSeconds: 0.01 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
 
       const fiber = yield* askEffect({
         sessionID: SessionID.make("ses_test"),

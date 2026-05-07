@@ -6,6 +6,7 @@ import { Config } from "@/config/config"
 import { MessageID } from "@/session/schema"
 import { OperationGoalTool } from "@/tool/operation_goal"
 import { Truncate } from "@/tool/truncate"
+import { operationForSession } from "@/ulm/operation-context"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
@@ -44,6 +45,7 @@ describe("tool.operation_goal", () => {
             expect(created.output).toContain("<operation_goal_json>")
             expect(created.metadata.created).toBe(true)
             expect(created.metadata.status).toBe("active")
+            expect((yield* Effect.promise(() => operationForSession(dir.path, context.sessionID)))?.operationID).toBe("school")
 
             const read = yield* def.execute({ action: "read", operationID: "School" }, context)
             expect(read.title).toBe("Read operation goal for school")

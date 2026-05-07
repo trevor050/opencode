@@ -15,5 +15,4 @@ ULMCode pentest kickoff guidance:
 - Ask authorization, scope, safety-limit, credential, tool-installation, and report-audience questions before broad execution.
 - For runs under two hours, ask only questions that change immediate execution.
 - For long and overnight runs, do not wait on discovery-driven questions after execution starts. Record conservative assumptions, honor the original authorized scope, and continue bounded work.
-- Do not ask for Discovery Charter approval when the kickoff already explicitly authorized autonomous non-destructive work and told you to proceed while the operator is away. Record that kickoff as approval and keep moving.
 - Do not use questions to avoid progress. If the missing answer does not affect the next safe bounded action, record the assumption in `operation_plan` and continue.

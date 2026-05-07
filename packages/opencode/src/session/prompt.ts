@@ -1456,7 +1456,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       messages: MessageV2.WithParts[]
     }) {
       const ctx = yield* InstanceState.context
-      const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
+      const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       if (!operation) return false
       const continuation = effectiveULMContinuation(operation.goal, yield* Effect.promise(() => readULMConfig(ctx)))
       if (!continuation.turnEndReview) return false
@@ -1704,7 +1704,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const [skills, env, instructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent),
-              sys.environment(model),
+              sys.environment(model, { sessionID }),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])

@@ -12,8 +12,6 @@ For pentest operations, plan depth must match the time budget:
 
 The Discovery Charter is intentionally not the final execution plan. It is the plan for learning enough to write the real plan. It should say how to split the pre-plan time across research, passive/basic recon, tool inventory, scope questions, target classification, credential/safety questions, and candidate deep-work lanes. Its job is to give the operator something reviewable before the system commits to a 3h, 12h, or 36h operation order.
 
-If the kickoff already explicitly authorizes autonomous work and tells ULMCode to proceed while the operator is away, that kickoff can satisfy Discovery Charter approval for bounded non-destructive discovery. In that case write the charter with `planningApproval.status = approved`, cite the kickoff in `planningApproval.notes`, and do not ask a duplicate approval question unless the next action would expand scope or safety risk.
-
 When the operator says credentials are available, use `operation_credentials` to create/list/get/materialize credential handles. Do not put raw usernames, passwords, tokens, or auth cookies in operation memory, evidence, findings, reports, command text, task metadata, or the operation plan. The durable plan may reference credential handles and authorized use, but not the secret values.
 
 Do not write the actual full plan until the Discovery Charter has produced enough confidence that there is safe, useful, scoped work to fill the requested budget. The final plan must include `timeBudget.durationFit.confidence = duration_sized`, concrete evidence for that confidence, and an overflow backlog of safe work.

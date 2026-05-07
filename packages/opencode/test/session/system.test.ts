@@ -7,6 +7,7 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
 import { Permission } from "../../src/permission"
 import { SystemPrompt } from "../../src/session/system"
+import { bindOperationSession } from "@/ulm/operation-context"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { provideInstance, tmpdir } from "../fixture/fixture"
@@ -150,6 +151,25 @@ describe("session.system", () => {
     ),
   )
 
+  it.effect("environment omits unbound active ULM goals from new sessions", () =>
+    withTmpInstance((dir) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => writeJson(path.join(dir, ".ulmcode", "operations", "school", "goals", "operation-goal.json"), {
+          operationID: "school",
+          objective: "Authorized overnight district assessment",
+          targetDurationHours: 20,
+          status: "active",
+          updatedAt: "2026-05-06T00:00:00.000Z",
+        }))
+
+        const prompt = yield* SystemPrompt.Service
+        const output = (yield* prompt.environment(model, { sessionID: "ses_new" as any })).join("\n")
+
+        expect(output).not.toContain("<ulm_operation_context>")
+      }),
+    ),
+  )
+
   it.effect("environment includes compact active ULM goal context and missing inventory hint", () =>
     withTmpInstance((dir) =>
       Effect.gen(function* () {
@@ -164,9 +184,10 @@ describe("session.system", () => {
           generatedAt: "2026-05-06T00:10:00.000Z",
           decisions: [{ action: "blocked", reason: "operation plan is missing", requiredNextTool: "operation_plan" }],
         }))
+        yield* Effect.promise(() => bindOperationSession(dir, { sessionID: "ses_bound" as any, operationID: "school" }))
 
         const prompt = yield* SystemPrompt.Service
-        const output = (yield* prompt.environment(model)).join("\n")
+        const output = (yield* prompt.environment(model, { sessionID: "ses_bound" as any })).join("\n")
 
         expect(output).toContain("<ulm_operation_context>")
         expect(output).toContain("operation: school")
@@ -177,9 +198,8 @@ describe("session.system", () => {
         expect(output).toContain("operator_availability_policy")
         expect(output).toContain("assume the operator is unavailable after execution starts")
         expect(output).toContain("do not wait for new operator input")
-        expect(output).toContain("operator_go_ahead_policy")
-        expect(output).toContain("do not ask for duplicate Discovery Charter approval")
-        expect(output).toContain("stale_operation_policy")
+        expect(output).toContain("operation_binding_policy")
+        expect(output).toContain("New sessions must not inherit active operations")
       }),
     ),
   )
@@ -203,9 +223,10 @@ describe("session.system", () => {
           })),
           nextActions: ["Review high-value missing tools before broad discovery."],
         }))
+        yield* Effect.promise(() => bindOperationSession(dir, { sessionID: "ses_bound" as any, operationID: "school" }))
 
         const prompt = yield* SystemPrompt.Service
-        const output = (yield* prompt.environment(model)).join("\n")
+        const output = (yield* prompt.environment(model, { sessionID: "ses_bound" as any })).join("\n")
         const block = output.match(/<ulm_operation_context>[\s\S]*<\/ulm_operation_context>/)?.[0] ?? ""
 
         expect(block).toContain("installed_high_value: tool-1, tool-2, tool-3, tool-4, tool-5, tool-6, tool-7, tool-8")

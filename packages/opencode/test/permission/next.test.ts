@@ -21,6 +21,7 @@ import {
 import { testEffect } from "../lib/effect"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { createOperationGoal } from "../../src/ulm/operation-goal"
+import { bindOperationSession } from "../../src/ulm/operation-context"
 
 const bus = Bus.layer
 const env = Layer.mergeAll(Permission.layer.pipe(Layer.provide(bus)), bus, CrossSpawnSpawner.defaultLayer)
@@ -674,6 +675,7 @@ it.live("ask - active unattended ULM operation times out and rejects", () =>
           continuation: { operatorFallbackTimeoutSeconds: 0.01 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("session_test"), operationID: "school" }))
 
       const err = yield* fail(
         ask({
@@ -709,6 +711,7 @@ it.live("ask - active operator touch extends an unattended permission timeout", 
           continuation: { operatorFallbackTimeoutSeconds: 0.2 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("session_test"), operationID: "school" }))
 
       const fiber = yield* ask({
         id: PermissionID.make("per_timeout_touch"),
@@ -747,6 +750,7 @@ it.live("ask - ULMconfig zero disables unattended timeout", () =>
           continuation: { operatorFallbackTimeoutSeconds: 0.01 },
         }),
       )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("session_test"), operationID: "school" }))
 
       const fiber = yield* ask({
         id: PermissionID.make("per_timeout_disabled"),
