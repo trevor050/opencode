@@ -21,7 +21,9 @@ export const REQUIRED_OPERATION_LANES = [
 ] as const
 
 export type OperationLaneID = (typeof REQUIRED_OPERATION_LANES)[number] | string
-export type OperationLaneStatus = "pending" | "ready" | "running" | "blocked" | "complete" | "failed"
+export type OperationLaneStatus = "pending" | "ready" | "running" | "blocked" | "skipped" | "complete" | "failed"
+export type OperationLaneTerminalState = "complete" | "skipped" | "blocked" | "failed"
+export type OperationLaneCoverageImpact = "none" | "low" | "medium" | "high" | "blocks_release"
 export type OperationSafetyMode = "non_destructive" | "interactive_destructive"
 export type OperationTrustLevel = "guided" | "moderate" | "unattended" | "lab_full"
 export type OperationScanProfile = "paranoid" | "stealth" | "balanced" | "aggressive" | "lab-insane"
@@ -46,6 +48,10 @@ export type OperationLane = {
     staleAfterMinutes: number
   }
   activeJobs?: Array<{ id: string; type: string; status: string; updatedAt: string }>
+  terminalState?: OperationLaneTerminalState
+  skipReason?: string
+  coverageImpact?: OperationLaneCoverageImpact
+  releaseRequired?: boolean
   operationID: string
 }
 
@@ -71,11 +77,15 @@ export type OperationScheduleInput = {
   fallbackModelRoutes?: Record<string, string[] | undefined>
 }
 
-const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fallbackModelRoutes" | "budget" | "restartPolicy" | "status"> & {
-  route: string
-  budgetWeight: number
-  staleAfterMinutes: number
-}> = [
+const BASE_LANES: Array<
+  Omit<OperationLane, "operationID" | "modelRoute" | "fallbackModelRoutes" | "budget" | "restartPolicy" | "status"> & {
+    route: string
+    budgetWeight: number
+    staleAfterMinutes: number
+    coverageImpact: OperationLaneCoverageImpact
+    releaseRequired: boolean
+  }
+> = [
   {
     id: "district_profile",
     title: "District profile and public system map",
@@ -86,28 +96,34 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "throughput",
     budgetWeight: 0.07,
     staleAfterMinutes: 90,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "person_recon",
     title: "Role-focused public person recon",
     agent: "person-recon",
-    dependsOn: ["district_profile"],
+    dependsOn: [],
     allowedTools: ["person_profile", "webfetch", "websearch", "evidence_record", "task"],
     expectedArtifacts: ["profiles/people/"],
     route: "throughput",
     budgetWeight: 0.08,
     staleAfterMinutes: 90,
+    coverageImpact: "medium",
+    releaseRequired: false,
   },
   {
     id: "recon",
     title: "Recon and service inventory",
     agent: "recon",
-    dependsOn: ["district_profile"],
+    dependsOn: [],
     allowedTools: ["operation_checkpoint", "command_supervise", "evidence_record", "task"],
     expectedArtifacts: ["evidence/raw/", "commands/", "status.md"],
     route: "throughput",
     budgetWeight: 0.1,
     staleAfterMinutes: 90,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "web_inventory",
@@ -119,6 +135,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "throughput",
     budgetWeight: 0.07,
     staleAfterMinutes: 90,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "identity_graph",
@@ -130,6 +148,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reasoning",
     budgetWeight: 0.07,
     staleAfterMinutes: 90,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "identity_auth_review",
@@ -141,6 +161,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reasoning",
     budgetWeight: 0.09,
     staleAfterMinutes: 120,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "saas_cloud_review",
@@ -152,6 +174,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reasoning",
     budgetWeight: 0.07,
     staleAfterMinutes: 120,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "evidence_normalization",
@@ -163,6 +187,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "small",
     budgetWeight: 0.07,
     staleAfterMinutes: 60,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "finding_validation",
@@ -174,6 +200,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reasoning",
     budgetWeight: 0.09,
     staleAfterMinutes: 90,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "report_evidence_index",
@@ -185,6 +213,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "small",
     budgetWeight: 0.04,
     staleAfterMinutes: 60,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "report_writing",
@@ -196,6 +226,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reporting",
     budgetWeight: 0.11,
     staleAfterMinutes: 120,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "report_technical_review",
@@ -207,6 +239,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "review",
     budgetWeight: 0.04,
     staleAfterMinutes: 60,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "report_executive_review",
@@ -218,6 +252,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "review",
     budgetWeight: 0.04,
     staleAfterMinutes: 60,
+    coverageImpact: "high",
+    releaseRequired: false,
   },
   {
     id: "report_review",
@@ -239,6 +275,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "review",
     budgetWeight: 0.04,
     staleAfterMinutes: 60,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
   {
     id: "operator_summary",
@@ -255,6 +293,8 @@ const BASE_LANES: Array<Omit<OperationLane, "operationID" | "modelRoute" | "fall
     route: "reasoning",
     budgetWeight: 0.02,
     staleAfterMinutes: 45,
+    coverageImpact: "blocks_release",
+    releaseRequired: true,
   },
 ]
 
@@ -309,6 +349,8 @@ export function buildOperationGraph(input: OperationScheduleInput): OperationGra
           maxAttempts: 2,
           staleAfterMinutes: lane.staleAfterMinutes,
         },
+        coverageImpact: lane.coverageImpact,
+        releaseRequired: lane.releaseRequired,
         operationID,
       }
     }),
@@ -332,7 +374,8 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
   }
   if (graph.safetyMode === "non_destructive") {
     for (const lane of graph.lanes) {
-      if (lane.allowedTools.includes("shell")) gaps.push(`${lane.id}: non_destructive lanes must use command_supervise instead of raw shell`)
+      if (lane.allowedTools.includes("shell"))
+        gaps.push(`${lane.id}: non_destructive lanes must use command_supervise instead of raw shell`)
     }
   }
   if (graph.maxConcurrentLanes < 1) gaps.push("maxConcurrentLanes must be at least 1")
@@ -348,6 +391,18 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
     }
     if (!lane.expectedArtifacts.length) gaps.push(`${lane.id}: expectedArtifacts required`)
     if (!lane.allowedTools.length) gaps.push(`${lane.id}: allowedTools required`)
+    if ((lane.status === "skipped" || lane.status === "blocked") && !lane.skipReason?.trim()) {
+      gaps.push(`${lane.id}: ${lane.status} lanes require skipReason`)
+    }
+    if (lane.terminalState && !["complete", "skipped", "blocked", "failed"].includes(lane.terminalState)) {
+      gaps.push(`${lane.id}: terminalState must be complete, skipped, blocked, or failed`)
+    }
+    if (
+      lane.coverageImpact &&
+      !["none", "low", "medium", "high", "blocks_release"].includes(lane.coverageImpact)
+    ) {
+      gaps.push(`${lane.id}: coverageImpact must be none, low, medium, high, or blocks_release`)
+    }
   }
   return gaps
 }
@@ -369,6 +424,10 @@ function markdown(graph: OperationGraphRecord) {
       `- title: ${lane.title}`,
       `- agent: ${lane.agent}`,
       `- status: ${lane.status}`,
+      lane.terminalState ? `- terminal_state: ${lane.terminalState}` : undefined,
+      `- coverage_impact: ${lane.coverageImpact ?? "none"}`,
+      `- release_required: ${lane.releaseRequired ?? false}`,
+      lane.skipReason ? `- skip_reason: ${lane.skipReason}` : undefined,
       `- depends_on: ${lane.dependsOn.length ? lane.dependsOn.join(", ") : "none"}`,
       `- model_route: ${lane.modelRoute}`,
       `- fallback_model_routes: ${lane.fallbackModelRoutes.length ? lane.fallbackModelRoutes.join(", ") : "none"}`,
@@ -377,7 +436,7 @@ function markdown(graph: OperationGraphRecord) {
       `- allowed_tools: ${lane.allowedTools.join(", ")}`,
       `- expected_artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
-    ]),
+    ].filter((line): line is string => line !== undefined)),
   ].join("\n")
 }
 

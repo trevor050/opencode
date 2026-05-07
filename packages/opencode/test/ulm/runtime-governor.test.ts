@@ -65,20 +65,36 @@ describe("ULM runtime governor", () => {
     expect(decision.blockers).not.toContain("lane budget exhausted for recon")
   })
 
-  test("compacts when projected context approaches the lane model limit", async () => {
+  test("does not treat cumulative operation tokens as current lane context", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
     await writeRuntimeSummary(dir.path, {
       operationID: "School",
-      usage: { costUSD: 1, budgetUSD: 10, totalTokens: 190_000 },
+      usage: { costUSD: 1, budgetUSD: 10, totalTokens: 19_000_000 },
       compaction: { pressure: "low" },
     })
 
     const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School", laneID: "recon" })
 
+    expect(decision.action).toBe("continue")
+    expect(decision.contextRatio).toBeUndefined()
+    expect(decision.blockers).not.toContain("model context is above 90% for opencode-go/default")
+  })
+
+  test("compacts when the active session reports high compaction pressure", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "high" },
+    })
+
+    const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School", laneID: "recon" })
+
     expect(decision.action).toBe("compact")
-    expect(decision.contextRatio).toBeGreaterThanOrEqual(0.9)
-    expect(decision.blockers).toContain("model context is above 90% for opencode-go/default")
+    expect(decision.contextPressure).toBe("high")
+    expect(decision.reason).toBe("context pressure is high")
   })
 
   test("requires model metadata for unknown routes", async () => {
@@ -176,7 +192,9 @@ describe("ULM runtime governor", () => {
     expect(audit.json).toContain("model-route-audit.json")
     expect(audit.markdown).toContain("model-route-audit.md")
     expect(audit.record.routes.some((route) => route.role === "fallback")).toBe(true)
-    expect(audit.record.routes.some((route) => route.route === "opencode-go/default" && route.quotaPolicyKnown)).toBe(true)
+    expect(audit.record.routes.some((route) => route.route === "opencode-go/default" && route.quotaPolicyKnown)).toBe(
+      true,
+    )
     expect(await Bun.file(audit.markdown).text()).toContain("quota policy is not recorded")
   })
 })

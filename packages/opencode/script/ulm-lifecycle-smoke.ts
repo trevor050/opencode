@@ -10,6 +10,7 @@ import {
   lintReport,
   readOperationStatus,
   renderReport,
+  writeCoverageContract,
   writeEvidence,
   writeFinding,
   writeOperationCheckpoint,
@@ -66,6 +67,19 @@ async function completeGraphForHandoff(worktree: string, operationID: string) {
       ) + "\n",
     )
   }
+  await writeCoverageContract(worktree, {
+    operationID,
+    status: "released",
+    goals: ["Synthetic smoke coverage is complete."],
+    minimumEvidence: ["Lane completion proofs and rendered deliverables exist."],
+    requiredLanes: parsed.lanes.map((lane) => lane.id),
+    allowedSkippedLanes: [],
+    fallbackRules: ["No fallback required for the local smoke fixture."],
+    retryRules: ["No retry required for the local smoke fixture."],
+    subagentOpportunities: ["Report review lane fixture."],
+    reportGates: ["report_lint finalHandoff=true", "operation_audit finalHandoff=true"],
+    releaseNotes: ["Coverage released by complete synthetic lifecycle fixture."],
+  })
 }
 
 await writeOperationCheckpoint(worktree, {

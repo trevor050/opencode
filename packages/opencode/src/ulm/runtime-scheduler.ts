@@ -3,9 +3,18 @@ import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
 import { readOperationGoal } from "./operation-goal"
-import { superviseOperation, type OperationSupervisorAction, type OperationSupervisorReviewKind } from "./operation-supervisor"
+import {
+  superviseOperation,
+  type OperationSupervisorAction,
+  type OperationSupervisorReviewKind,
+} from "./operation-supervisor"
 import { evaluateRuntimeGovernor, type GovernorDecision } from "./runtime-governor"
-import { runOperationStep, syncOperationRuntimeState, type OperationRunResult, type OperationRuntimeSyncResult } from "./operation-run"
+import {
+  runOperationStep,
+  syncOperationRuntimeState,
+  type OperationRunResult,
+  type OperationRuntimeSyncResult,
+} from "./operation-run"
 import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNextResult } from "./work-queue"
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
@@ -85,13 +94,21 @@ function supervisorIntervalElapsed(input: { now: Date; last?: Date; intervalMinu
 }
 
 function supervisorBlocks(action: OperationSupervisorAction | undefined) {
-  return action !== undefined && action !== "continue" && action !== "continue_execution" && action !== "handoff_ready"
+  return (
+    action !== undefined &&
+    action !== "continue" &&
+    action !== "continue_execution" &&
+    action !== "continue_coverage" &&
+    action !== "continue_reporting" &&
+    action !== "handoff_ready" &&
+    action !== "release_handoff"
+  )
 }
 
 async function defaultSupervisorEnabled(worktree: string, operationID: string, configured: boolean | undefined) {
   if (configured !== undefined) return configured
   const goal = (await readOperationGoal(worktree, operationID)).goal
-  return (goal?.targetDurationHours ?? 0) >= 8
+  return (goal?.targetDurationHours ?? 0) >= 1
 }
 
 async function maybeRunSupervisor(
@@ -115,7 +132,9 @@ async function maybeRunSupervisor(
     { now: input.now.toISOString() },
   )
   const primary = review.decisions[0]
-  const nextTools = [...new Set(review.decisions.map((item) => item.requiredNextTool).filter((tool): tool is string => !!tool))]
+  const nextTools = [
+    ...new Set(review.decisions.map((item) => item.requiredNextTool).filter((tool): tool is string => !!tool)),
+  ]
   const action = primary?.action
   return {
     enabled,
@@ -130,7 +149,10 @@ async function maybeRunSupervisor(
   }
 }
 
-export async function runRuntimeScheduler(worktree: string, input: RuntimeSchedulerInput): Promise<RuntimeSchedulerResult> {
+export async function runRuntimeScheduler(
+  worktree: string,
+  input: RuntimeSchedulerInput,
+): Promise<RuntimeSchedulerResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const schedulerDir = path.join(root, "scheduler")
@@ -240,7 +262,7 @@ export async function runRuntimeScheduler(worktree: string, input: RuntimeSchedu
       reason = governor.action === "stop" ? governor.reason : run.reason
       break
     }
-    if (run.action === "wait" || run.action === "compact" || run.action === "schedule") {
+    if (run.action === "wait" || run.action === "schedule") {
       reason = run.reason
       break
     }

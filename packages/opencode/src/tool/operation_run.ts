@@ -8,7 +8,7 @@ import { TaskTool } from "./task"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
-  mode: Schema.optional(Schema.Literals(["advance", "complete_lane", "fail_lane"])),
+  mode: Schema.optional(Schema.Literals(["advance", "complete_lane", "skip_lane", "block_lane", "fail_lane"])),
   laneID: Schema.optional(Schema.String),
   jobID: Schema.optional(Schema.String),
   summary: Schema.optional(Schema.String),
@@ -18,6 +18,8 @@ export const Parameters = Schema.Struct({
   evidenceRefs: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "Evidence/finding IDs referenced by the lane completion proof.",
   }),
+  coverageImpact: Schema.optional(Schema.Literals(["none", "low", "medium", "high", "blocks_release"])),
+  releaseRequired: Schema.optional(Schema.Boolean),
   autoComplete: Schema.optional(Schema.Boolean),
   launchModelLane: Schema.optional(Schema.Boolean),
 })

@@ -8,3 +8,7 @@ The tool reads the persisted operation graph and runtime summary, applies
 dependency and concurrency gates, consults the runtime governor, writes
 `.ulmcode/operations/<operation>/plans/next-action.json`, and returns the lane
 prompt plus the tools allowed for the next action.
+
+For 1h+ approved operations, stop is coverage-based. `compact` is maintenance
+only, and all-complete lane status is not enough unless the coverage contract,
+report gates, runtime summary, and supervisor release path are also ready.

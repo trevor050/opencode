@@ -18,7 +18,9 @@ export type RuntimeDaemonInput = {
   staleLockSeconds?: number
   backgroundJobs?: BackgroundJob.Info[]
   backgroundJobProvider?: () => Promise<BackgroundJob.Info[]>
-  launchModelLane?: (params: NonNullable<OperationRunResult["taskParams"]>) => Promise<{ jobID?: string | undefined } | undefined>
+  launchModelLane?: (
+    params: NonNullable<OperationRunResult["taskParams"]>,
+  ) => Promise<{ jobID?: string | undefined } | undefined>
   launchCommandWorkUnit?: Parameters<typeof runRuntimeScheduler>[1]["launchCommandWorkUnit"]
   commandWorkUnitLimit?: number
   supervisorEnabled?: Parameters<typeof runRuntimeScheduler>[1]["supervisorEnabled"]
@@ -84,7 +86,8 @@ async function lockIsStale(lockPath: string, staleLockSeconds: number, now: Date
 
 async function acquireLock(lockPath: string, staleLockSeconds: number, now: Date) {
   await fs.mkdir(path.dirname(lockPath), { recursive: true })
-  const content = JSON.stringify({ pid: process.pid, createdAt: now.toISOString(), updatedAt: now.toISOString() }, null, 2) + "\n"
+  const content =
+    JSON.stringify({ pid: process.pid, createdAt: now.toISOString(), updatedAt: now.toISOString() }, null, 2) + "\n"
   try {
     const handle = await fs.open(lockPath, "wx")
     await handle.writeFile(content)
@@ -115,7 +118,8 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
   const heartbeatPath = path.join(daemonDir, "daemon-heartbeat.json")
   const logPath = path.join(daemonDir, "daemon.jsonl")
   const now = input.now ?? (() => new Date())
-  const sleep = input.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+  const sleep =
+    input.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
   const maxRuntimeSeconds = Math.max(1, input.maxRuntimeSeconds ?? 20 * 60 * 60)
   const cycleIntervalSeconds = Math.max(0, input.cycleIntervalSeconds ?? 60)
   const schedulerCyclesPerTick = Math.max(1, input.schedulerCyclesPerTick ?? 1)
@@ -123,7 +127,8 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
   const maxConsecutiveErrors = Math.max(1, input.maxConsecutiveErrors ?? 3)
   const staleLockSeconds = Math.max(1, input.staleLockSeconds ?? 15 * 60)
   const maxCycles = input.maxCycles === undefined ? Number.POSITIVE_INFINITY : Math.max(1, input.maxCycles)
-  const maxRecoveriesPerTick = input.maxRecoveriesPerTick === undefined ? Number.POSITIVE_INFINITY : Math.max(0, input.maxRecoveriesPerTick)
+  const maxRecoveriesPerTick =
+    input.maxRecoveriesPerTick === undefined ? Number.POSITIVE_INFINITY : Math.max(0, input.maxRecoveriesPerTick)
   const started = now()
   const cycles: RuntimeSchedulerCycle[] = []
   const recoveredJobs: string[] = []
@@ -150,7 +155,11 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       const backgroundJobs = input.backgroundJobProvider ? await input.backgroundJobProvider() : input.backgroundJobs
       const recoveredThisTick: string[] = []
       if (input.recoverBackgroundJob && backgroundJobs?.length) {
-        const restartable = restartableOperationJobs({ operationID, jobs: backgroundJobs, maxJobs: maxRecoveriesPerTick })
+        const restartable = restartableOperationJobs({
+          operationID,
+          jobs: backgroundJobs,
+          maxJobs: maxRecoveriesPerTick,
+        })
         for (const job of restartable) {
           const recovered = await input.recoverBackgroundJob(job)
           recoveredThisTick.push(recovered?.jobID ?? job.id)
@@ -192,7 +201,11 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
           lockPath,
           recoveredJobs: recoveredThisTick,
         }
-        await writeJson(lockPath, { pid: process.pid, createdAt: started.toISOString(), updatedAt: tickTime.toISOString() })
+        await writeJson(lockPath, {
+          pid: process.pid,
+          createdAt: started.toISOString(),
+          updatedAt: tickTime.toISOString(),
+        })
         await writeJson(heartbeatPath, heartbeat)
         await appendJsonl(logPath, heartbeat)
         if (consecutiveErrors >= maxConsecutiveErrors) {
@@ -209,7 +222,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       }
       consecutiveErrors = 0
       cycles.push(...scheduler.cycles)
-      const latestSupervisor = [...scheduler.cycles].reverse().find((cycle) => cycle.supervisor?.generatedAt)?.supervisor
+      const latestSupervisor = [...scheduler.cycles]
+        .reverse()
+        .find((cycle) => cycle.supervisor?.generatedAt)?.supervisor
       if (latestSupervisor?.generatedAt) lastSupervisorReviewAt = latestSupervisor.generatedAt
       stopped = scheduler.stopped
       reason = scheduler.reason
@@ -230,11 +245,14 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         supervisorReason: scheduler.cycles.at(-1)?.supervisor?.reason,
         supervisorRan: scheduler.cycles.at(-1)?.supervisor?.ran ?? false,
       }
-      await writeJson(lockPath, { pid: process.pid, createdAt: started.toISOString(), updatedAt: tickTime.toISOString() })
+      await writeJson(lockPath, {
+        pid: process.pid,
+        createdAt: started.toISOString(),
+        updatedAt: tickTime.toISOString(),
+      })
       await writeJson(heartbeatPath, heartbeat)
       await appendJsonl(logPath, heartbeat)
       if (stopped) break
-      if (scheduler.cycles.at(-1)?.governor.action === "compact") break
       if (tick < maxCycles && cycleIntervalSeconds > 0) await sleep(cycleIntervalSeconds * 1000)
     }
   } finally {

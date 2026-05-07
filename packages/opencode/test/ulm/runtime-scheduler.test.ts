@@ -20,7 +20,11 @@ async function writeBasicPlan(worktree: string, operationID = "School") {
         noSubagents: [],
       },
     ],
-    reportingCloseout: ["report_lint before handoff", "report_render final package", "runtime_summary final accounting"],
+    reportingCloseout: [
+      "report_lint before handoff",
+      "report_render final package",
+      "runtime_summary final accounting",
+    ],
   })
 }
 
@@ -229,11 +233,59 @@ describe("ULM runtime scheduler", () => {
     })
 
     expect(result.cycles[0]?.supervisor?.ran).toBe(true)
-    expect(result.cycles[0]?.supervisor?.action).toBe("continue_execution")
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_coverage")
     expect(launched).toEqual(["district_profile"])
     const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
     expect(heartbeat.supervisorRan).toBe(true)
-    expect(heartbeat.supervisorAction).toBe("continue_execution")
+    expect(heartbeat.supervisorAction).toBe("continue_coverage")
+  })
+
+  test("runs supervisor heartbeats by default for three-hour operations", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, {
+      operationID: "School",
+      objective: "Authorized three-hour internal assessment.",
+      targetDurationHours: 3,
+    })
+    await writeBasicPlan(dir.path)
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await addSupervisorLane(dir.path, "School")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 1,
+      supervisorIntervalMinutes: 30,
+      lastSupervisorReviewAt: new Date("2026-05-05T00:00:00.000Z"),
+      now: new Date("2026-05-05T00:31:00.000Z"),
+    })
+
+    expect(result.cycles[0]?.supervisor?.ran).toBe(true)
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_coverage")
+  })
+
+  test("continues scheduler cycles after compact maintenance actions", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "high" },
+    })
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 2,
+    })
+
+    expect(result.cycles).toHaveLength(2)
+    expect(result.cycles.every((cycle) => cycle.run?.action === "compact")).toBe(true)
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toBe("max scheduler cycles reached")
   })
 
   test("supervisor blockers prevent new lane launch", async () => {
@@ -314,8 +366,16 @@ describe("ULM runtime scheduler", () => {
     await fs.writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n")
     await fs.writeFile(
       goal.files.json,
-      JSON.stringify({ ...goal.goal, status: "complete", updatedAt: "2026-05-05T00:00:00.000Z", completedAt: "2026-05-05T00:00:00.000Z" }, null, 2) +
-        "\n",
+      JSON.stringify(
+        {
+          ...goal.goal,
+          status: "complete",
+          updatedAt: "2026-05-05T00:00:00.000Z",
+          completedAt: "2026-05-05T00:00:00.000Z",
+        },
+        null,
+        2,
+      ) + "\n",
     )
     await writeRuntimeSummary(dir.path, {
       operationID: "School",
@@ -323,7 +383,10 @@ describe("ULM runtime scheduler", () => {
       compaction: { pressure: "low" },
     })
     await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
-    await fs.writeFile(path.join(root, "deliverables", "final", "manifest.json"), JSON.stringify({ operationID: "school" }, null, 2) + "\n")
+    await fs.writeFile(
+      path.join(root, "deliverables", "final", "manifest.json"),
+      JSON.stringify({ operationID: "school" }, null, 2) + "\n",
+    )
 
     const result = await runRuntimeScheduler(dir.path, {
       operationID: "School",
@@ -332,8 +395,8 @@ describe("ULM runtime scheduler", () => {
       supervisorReviewKind: "pre_handoff",
     })
 
-    expect(result.cycles[0]?.supervisor?.action).toBe("continue_execution")
-    expect(result.cycles[0]?.run?.action).toBe("stop")
-    expect(result.reason).toBe("all operation lanes are complete")
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_coverage")
+    expect(result.cycles[0]?.run?.action).toBe("wait")
+    expect(result.reason).toBe("coverage contract is not release-ready")
   })
 })

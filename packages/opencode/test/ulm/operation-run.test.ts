@@ -36,6 +36,9 @@ describe("ULM operation run controller", () => {
       compaction: { pressure: "low" },
     })
     await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
     const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
     await fs.mkdir(path.join(operationRoot, "evidence", "raw"), { recursive: true })
     await fs.mkdir(path.join(operationRoot, "commands"), { recursive: true })
@@ -55,6 +58,35 @@ describe("ULM operation run controller", () => {
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("complete")
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "web_inventory")?.status).toBe("ready")
     expect(result.completedLanes).toContain("recon")
+  })
+
+  test("does not complete a pending or unlaunched lane", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "evidence", "raw"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "commands"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "evidence", "raw", "service-inventory.xml"), "<nmaprun />\n")
+    await fs.writeFile(path.join(operationRoot, "commands", "service-inventory.log"), "complete\n")
+    await fs.writeFile(path.join(operationRoot, "status.md"), "recon done\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "recon",
+      summary: "Recon finished.",
+      artifacts: ["evidence/raw/", "commands/", "status.md"],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    expect(result.blockers).toContain("recon: lane must be running before it can be completed")
+    expect(result.completedLanes).not.toContain("recon")
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("ready")
   })
 
   test("does not complete a lane when proof artifacts are missing", async () => {
@@ -79,6 +111,38 @@ describe("ULM operation run controller", () => {
     expect(result.blockers).toContain("proof artifact is missing or empty: profiles/district-profile.json")
     expect(result.completedLanes).not.toContain("district_profile")
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "district_profile")?.status).toBe("running")
+  })
+
+  test("records skipped lanes with release impact and does not treat them as complete", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "skip_lane",
+      laneID: "district_profile",
+      summary: "District profile was skipped because the target public site was unavailable; continue with network-safe recon.",
+      coverageImpact: "blocks_release",
+      releaseRequired: true,
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const lane = updated.lanes.find((item: { id: string }) => item.id === "district_profile")
+    const proof = JSON.parse(
+      await fs.readFile(path.join(dir.path, ".ulmcode", "operations", "school", "lane-complete", "district_profile.json"), "utf8"),
+    )
+    expect(result.skippedLanes).toContain("district_profile")
+    expect(result.completedLanes).not.toContain("district_profile")
+    expect(lane?.status).toBe("skipped")
+    expect(lane?.terminalState).toBe("skipped")
+    expect(lane?.coverageImpact).toBe("blocks_release")
+    expect(proof.status).toBe("skipped")
   })
 
   test("auto-completes running lanes only when lane completion proof references real artifacts", async () => {

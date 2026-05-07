@@ -11,7 +11,7 @@ Usage notes:
 - During active unattended ULM operations, unanswered questions time out. Include a clear skip/decline/unavailable option when the operator can safely be absent; timeout fallback prefers that over a recommended action.
 
 ULMCode pentest kickoff guidance:
-- Ask for target duration when it is missing. The answer controls compact planning versus plan-plan versus overnight planning.
+- Ask for target duration when it is missing. The answer controls compact planning versus Discovery Charter versus overnight planning.
 - Ask authorization, scope, safety-limit, credential, tool-installation, and report-audience questions before broad execution.
 - For runs under two hours, ask only questions that change immediate execution.
 - For long and overnight runs, do not wait on discovery-driven questions after execution starts. Record conservative assumptions, honor the original authorized scope, and continue bounded work.

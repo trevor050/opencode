@@ -545,6 +545,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         syncCost(sessionID: string) {
           return refreshCost(sessionID)
         },
+        async messages(sessionID: string) {
+          const response = await sdk.client.session.messages({ sessionID, limit: 0 }, { throwOnError: true })
+          return response.data ?? []
+        },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
           const [session, messages, todo, diff, cost] = await Promise.all([

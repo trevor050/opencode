@@ -168,8 +168,19 @@ export type PersonProfileInput = {
 
 export type IdentityGraphInput = {
   operationID: string
-  nodes: Array<{ id: string; kind: "person" | "account" | "group" | "role" | "application" | "data" | "vendor" | "device"; label: string; source?: string }>
-  edges: Array<{ from: string; to: string; relationship: string; evidence?: string[]; confidence?: "low" | "medium" | "high" }>
+  nodes: Array<{
+    id: string
+    kind: "person" | "account" | "group" | "role" | "application" | "data" | "vendor" | "device"
+    label: string
+    source?: string
+  }>
+  edges: Array<{
+    from: string
+    to: string
+    relationship: string
+    evidence?: string[]
+    confidence?: "low" | "medium" | "high"
+  }>
   notes?: string[]
 }
 
@@ -317,6 +328,10 @@ type OperationGraphStatusRecord = {
     id?: string
     status?: string
     expectedArtifacts?: string[]
+    terminalState?: string
+    skipReason?: string
+    coverageImpact?: string
+    releaseRequired?: boolean
   }>
 }
 
@@ -410,6 +425,7 @@ export type OperationAuditResult = {
       gaps: string[]
       counts: ReportLintResult["counts"]
     }
+    coverage: CoverageReadiness
   }
   blockers: string[]
   recommendedTools: string[]
@@ -621,6 +637,67 @@ export type OperationPlanPhase = {
   noSubagents: string[]
 }
 
+export type PlanningApproval = {
+  status: "not_required" | "pending" | "approved" | "rejected"
+  discoveryCharterPath?: string
+  approvedAt?: string
+  approver?: string
+  notes?: string[]
+}
+
+export type DiscoveryCharterInvestmentStrategy = {
+  purpose: string
+  researchQuestions: string[]
+  reconInvestments: string[]
+  operatorQuestions: string[]
+  candidateDeepWorkLanes: string[]
+  decisionCriteriaForFullPlan: string[]
+}
+
+export type OperationTimeBudget = {
+  targetHours: number
+  finalizationWindowHours?: number
+  durationFit?: {
+    confidence: "low" | "medium" | "high" | "duration_sized"
+    evidence: string[]
+    overflowBacklog: string[]
+  }
+  allocations: Array<{
+    stage: Stage
+    hours: number
+    work: string
+  }>
+}
+
+export type CoverageContractStatus = "unmet" | "partial" | "met" | "released"
+export type CoverageImpact = "none" | "low" | "medium" | "high" | "blocks_release"
+
+export type CoverageContractInput = {
+  operationID: string
+  status?: CoverageContractStatus
+  goals: string[]
+  minimumEvidence: string[]
+  requiredLanes: string[]
+  allowedSkippedLanes: string[]
+  fallbackRules: string[]
+  retryRules: string[]
+  subagentOpportunities: string[]
+  reportGates: string[]
+  releaseNotes?: string[]
+}
+
+export type CoverageContractRecord = CoverageContractInput & {
+  operationID: string
+  status: CoverageContractStatus
+  writtenAt: string
+}
+
+export type CoverageReadiness = {
+  ok: boolean
+  status: CoverageContractStatus | "missing"
+  gaps: string[]
+}
+
 export type OperationPlanInput = {
   operationID: string
   templateName?: string
@@ -630,6 +707,10 @@ export type OperationPlanInput = {
   operationMemory?: boolean
   reportDesignProfile?: "standard" | "premium" | "board-ready"
   assumptions?: string[]
+  planningApproval?: PlanningApproval
+  discoveryCharter?: DiscoveryCharterInvestmentStrategy
+  timeBudget?: OperationTimeBudget
+  coverageContract?: Omit<CoverageContractInput, "operationID"> & { operationID?: string }
   phases: OperationPlanPhase[]
   reportingCloseout: string[]
 }
@@ -743,7 +824,8 @@ async function fileSize(file: string) {
 }
 
 async function nonEmptyArtifact(root: string, relativePath: string) {
-  if (!relativePath || path.isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("*")) return false
+  if (!relativePath || path.isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("*"))
+    return false
   const resolved = path.resolve(root, relativePath.replace(/\/+$/g, ""))
   if (!resolved.startsWith(path.resolve(root) + path.sep) && resolved !== path.resolve(root)) return false
   try {
@@ -763,7 +845,11 @@ function proofCoversExpected(artifact: string, expected: string) {
   return cleanArtifact === cleanExpected
 }
 
-async function laneProofIsValid(root: string, operationID: string, lane: NonNullable<OperationGraphStatusRecord["lanes"]>[number]) {
+async function laneProofIsValid(
+  root: string,
+  operationID: string,
+  lane: NonNullable<OperationGraphStatusRecord["lanes"]>[number],
+) {
   const laneID = lane.id
   if (!laneID) return false
   const proof = await readJson<LaneProofRecord>(path.join(root, "lane-complete", `${laneID}.json`))
@@ -810,14 +896,18 @@ async function readLatestSupervisorStatus(root: string): Promise<OperationStatus
     reason: decision?.reason,
     requiredNextTool: decision?.requiredNextTool,
     blockers: (review.decisions ?? [])
-      .filter((item) => item.action && item.action !== "continue" && item.action !== "handoff_ready")
+      .filter(
+        (item) =>
+          item.action &&
+          item.action !== "continue" &&
+          item.action !== "handoff_ready" &&
+          item.action !== "release_handoff",
+      )
       .map((item) => item.reason)
       .filter((item): item is string => !!item),
     nextTools: [
       ...new Set(
-        (review.decisions ?? [])
-          .map((item) => item.requiredNextTool)
-          .filter((item): item is string => !!item),
+        (review.decisions ?? []).map((item) => item.requiredNextTool).filter((item): item is string => !!item),
       ),
     ],
   }
@@ -1002,12 +1092,7 @@ function normalizeRuntimeBudget(usage: RuntimeSummaryInput["usage"]) {
   if (usage.remainingUSD !== undefined) return usage
   const budgetUSD = usage.budgetUSD
   const costUSD = usage.costUSD
-  if (
-    budgetUSD === undefined ||
-    costUSD === undefined ||
-    !Number.isFinite(budgetUSD) ||
-    !Number.isFinite(costUSD)
-  ) {
+  if (budgetUSD === undefined || costUSD === undefined || !Number.isFinite(budgetUSD) || !Number.isFinite(costUSD)) {
     return usage
   }
   return {
@@ -1143,8 +1228,10 @@ function resumeGaps(status: OperationStatusSummary, options: OperationResumeOpti
   if (!status.plans.operation) gaps.push("operation plan is missing")
   if (!status.graph) gaps.push("operation graph is missing")
   for (const lane of status.graph?.lanes.failed ?? []) gaps.push(`operation lane ${lane} is failed`)
-  for (const lane of status.graph?.lanes.missingProofs ?? []) gaps.push(`operation lane ${lane} is missing completion proof`)
-  for (const lane of status.graph?.lanes.invalidProofs ?? []) gaps.push(`operation lane ${lane} has invalid completion proof`)
+  for (const lane of status.graph?.lanes.missingProofs ?? [])
+    gaps.push(`operation lane ${lane} is missing completion proof`)
+  for (const lane of status.graph?.lanes.invalidProofs ?? [])
+    gaps.push(`operation lane ${lane} has invalid completion proof`)
   if (!status.runtimeSummary) gaps.push("runtime summary is missing")
   gaps.push(...runtimeHealthGaps(status))
   if (operation?.status === "running" && staleAfter !== undefined) {
@@ -1261,11 +1348,15 @@ export function formatOperationResumeBrief(brief: OperationResumeBrief) {
   const checkpoint = brief.checkpoint
   const background = brief.runtime?.backgroundTasks ?? []
   const toolHints = [
-    brief.recommendedTools.includes("operation_status") ? `operation_status operationID=${brief.operationID}` : undefined,
+    brief.recommendedTools.includes("operation_status")
+      ? `operation_status operationID=${brief.operationID}`
+      : undefined,
     brief.recommendedTools.includes("operation_resume")
       ? `operation_resume operationID=${brief.operationID} recoverStaleTasks=true`
       : undefined,
-    brief.recommendedTools.includes("operation_recover") ? `operation_recover operationID=${brief.operationID}` : undefined,
+    brief.recommendedTools.includes("operation_recover")
+      ? `operation_recover operationID=${brief.operationID}`
+      : undefined,
     brief.recommendedTools.includes("task_list") ? `task_list operationID=${brief.operationID}` : undefined,
     ...background.map((task) => `task_status task_id=${task.id}`),
     ...background
@@ -1368,8 +1459,7 @@ function lintToolRecommendations(gaps: string[]) {
   }
   if (
     gaps.some(
-      (gap) =>
-        gap.includes("outline budget") || gap.includes("report-outline.md") || gap.includes("outline section"),
+      (gap) => gap.includes("outline budget") || gap.includes("report-outline.md") || gap.includes("outline section"),
     )
   ) {
     tools.push("report_outline")
@@ -1390,6 +1480,9 @@ export function formatOperationAudit(audit: OperationAuditResult) {
     "",
     `final_handoff: ${audit.checks.finalHandoff.status}`,
     ...listLines(audit.checks.finalHandoff.gaps, "none"),
+    "",
+    `coverage: ${audit.checks.coverage.ok ? "ready" : "attention_required"} (${audit.checks.coverage.status})`,
+    ...listLines(audit.checks.coverage.gaps, "none"),
     "",
     "blockers:",
     ...listLines(audit.blockers, "none"),
@@ -1426,6 +1519,7 @@ export async function buildOperationAudit(
     requireRuntimeSummary: options.requireRuntimeSummary,
   })
   const root = operationPath(worktree, operationID)
+  const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const generatedAt = new Date().toISOString()
   const files = {
     json: path.join(root, "deliverables", "operation-audit.json"),
@@ -1435,7 +1529,7 @@ export async function buildOperationAudit(
     operationID: slug(operationID, "operation"),
     root,
     generatedAt,
-    ok: resume.health.ready && finalHandoff.ok,
+    ok: resume.health.ready && finalHandoff.ok && coverage.ok,
     checks: {
       resume: {
         ok: resume.health.ready,
@@ -1448,18 +1542,28 @@ export async function buildOperationAudit(
         gaps: finalHandoff.gaps,
         counts: finalHandoff.counts,
       },
+      coverage,
     },
     blockers: [
       ...resume.health.gaps.map((gap) => `resume: ${gap}`),
+      ...coverage.gaps.map((gap) => `coverage: ${gap}`),
       ...finalHandoff.gaps.map((gap) => `final_handoff: ${gap}`),
     ],
-    recommendedTools: unique([...resume.recommendedTools, ...lintToolRecommendations(finalHandoff.gaps)]),
+    recommendedTools: unique([
+      ...resume.recommendedTools,
+      ...(coverage.ok ? [] : ["operation_run", "operation_supervise"]),
+      ...lintToolRecommendations(finalHandoff.gaps),
+    ]),
     files,
   }
   await fs.mkdir(path.dirname(files.json), { recursive: true })
   await writeJson(files.json, audit)
   await fs.writeFile(files.markdown, formatOperationAudit(audit))
-  await publishOperationUpdated(worktree, { operationID: audit.operationID, artifact: "operation_audit", path: files.json })
+  await publishOperationUpdated(worktree, {
+    operationID: audit.operationID,
+    artifact: "operation_audit",
+    path: files.json,
+  })
   return audit
 }
 
@@ -1469,7 +1573,8 @@ function stageRequiredArtifacts(stage: Stage) {
   if (stage === "recon") return [...common, "evidence/"]
   if (stage === "mapping") return [...common, "evidence/", "findings/"]
   if (stage === "validation") return [...common, "evidence/", "findings/"]
-  if (stage === "reporting") return [...common, "findings/", "reports/report-outline.md", "reports/report.md or report.html"]
+  if (stage === "reporting")
+    return [...common, "findings/", "reports/report-outline.md", "reports/report.md or report.html"]
   return [...common, "deliverables/final/", "deliverables/runtime-summary.json", "deliverables/operation-audit.json"]
 }
 
@@ -1687,9 +1792,85 @@ function operationPlanMarkdown(record: OperationPlanRecord) {
     `- browser_evidence: ${record.browserEvidence ?? false}`,
     `- operation_memory: ${record.operationMemory ?? false}`,
     `- report_design_profile: ${record.reportDesignProfile ?? "standard"}`,
+    record.planningApproval
+      ? `- planning_approval: ${record.planningApproval.status}${record.planningApproval.approver ? ` by ${record.planningApproval.approver}` : ""}`
+      : undefined,
+    record.timeBudget ? `- target_hours: ${record.timeBudget.targetHours}` : undefined,
+    record.timeBudget?.finalizationWindowHours
+      ? `- finalization_window_hours: ${record.timeBudget.finalizationWindowHours}`
+      : undefined,
+    record.timeBudget?.durationFit ? `- duration_fit_confidence: ${record.timeBudget.durationFit.confidence}` : undefined,
     "",
     "## Assumptions",
     ...(record.assumptions?.length ? record.assumptions.map((item) => `- ${item}`) : ["- none recorded"]),
+    ...(record.discoveryCharter
+      ? [
+          "",
+          "## Discovery Charter Investment Strategy",
+          "",
+          record.discoveryCharter.purpose,
+          "",
+          "Research Questions:",
+          ...record.discoveryCharter.researchQuestions.map((item) => `- ${item}`),
+          "",
+          "Recon Investments:",
+          ...record.discoveryCharter.reconInvestments.map((item) => `- ${item}`),
+          "",
+          "Operator Questions:",
+          ...record.discoveryCharter.operatorQuestions.map((item) => `- ${item}`),
+          "",
+          "Candidate Deep Work Lanes:",
+          ...record.discoveryCharter.candidateDeepWorkLanes.map((item) => `- ${item}`),
+          "",
+          "Decision Criteria For Full Plan:",
+          ...record.discoveryCharter.decisionCriteriaForFullPlan.map((item) => `- ${item}`),
+        ]
+      : []),
+    ...(record.timeBudget
+      ? [
+          "",
+          "## Time Budget",
+          ...record.timeBudget.allocations.map((item) => `- ${item.stage}: ${item.hours}h - ${item.work}`),
+          ...(record.timeBudget.durationFit
+            ? [
+                "",
+                "Duration Fit Evidence:",
+                ...record.timeBudget.durationFit.evidence.map((item) => `- ${item}`),
+                "",
+                "Overflow Backlog:",
+                ...record.timeBudget.durationFit.overflowBacklog.map((item) => `- ${item}`),
+              ]
+            : []),
+        ]
+      : []),
+    ...(record.coverageContract
+      ? [
+          "",
+          "## Coverage Contract",
+          `- status: ${record.coverageContract.status ?? "unmet"}`,
+          "",
+          "Goals:",
+          ...record.coverageContract.goals.map((item) => `- ${item}`),
+          "",
+          "Minimum Evidence:",
+          ...record.coverageContract.minimumEvidence.map((item) => `- ${item}`),
+          "",
+          "Required Lanes:",
+          ...record.coverageContract.requiredLanes.map((item) => `- ${item}`),
+          "",
+          "Fallback Rules:",
+          ...record.coverageContract.fallbackRules.map((item) => `- ${item}`),
+          "",
+          "Retry Rules:",
+          ...record.coverageContract.retryRules.map((item) => `- ${item}`),
+          "",
+          "Subagent Opportunities:",
+          ...record.coverageContract.subagentOpportunities.map((item) => `- ${item}`),
+          "",
+          "Report Gates:",
+          ...record.coverageContract.reportGates.map((item) => `- ${item}`),
+        ]
+      : []),
     "",
     "## Execution Order",
     ...record.phases.flatMap((phase, index) => [
@@ -1726,12 +1907,18 @@ function districtProfileMarkdown(input: DistrictProfileInput) {
     "",
     "## Systems",
     ...(input.systems?.length
-      ? input.systems.map((system) => `- ${system.name} (${system.category}) - source: ${system.source}${system.notes ? ` - ${system.notes}` : ""}`)
+      ? input.systems.map(
+          (system) =>
+            `- ${system.name} (${system.category}) - source: ${system.source}${system.notes ? ` - ${system.notes}` : ""}`,
+        )
       : ["- none recorded"]),
     "",
     "## Departments",
     ...(input.departments?.length
-      ? input.departments.map((department) => `- ${department.name} - source: ${department.source}${department.notes ? ` - ${department.notes}` : ""}`)
+      ? input.departments.map(
+          (department) =>
+            `- ${department.name} - source: ${department.source}${department.notes ? ` - ${department.notes}` : ""}`,
+        )
       : ["- none recorded"]),
     "",
     "## Notes",
@@ -1760,7 +1947,10 @@ function personProfileMarkdown(input: PersonProfileInput) {
       : ["- none recorded"]),
     "",
     "## Sources",
-    ...input.sources.map((source) => `- ${source.title}${source.url ? ` (${source.url})` : source.path ? ` (${source.path})` : ""}: ${source.summary}`),
+    ...input.sources.map(
+      (source) =>
+        `- ${source.title}${source.url ? ` (${source.url})` : source.path ? ` (${source.path})` : ""}: ${source.summary}`,
+    ),
     "",
     "## Safe Validation Ideas",
     ...(input.validationIdeas?.length ? input.validationIdeas.map((idea) => `- ${idea}`) : ["- none recorded"]),
@@ -1776,10 +1966,15 @@ function identityGraphMarkdown(input: IdentityGraphInput) {
     "# Identity Graph",
     "",
     "## Nodes",
-    ...input.nodes.map((node) => `- ${node.id} [${node.kind}]: ${node.label}${node.source ? ` - source: ${node.source}` : ""}`),
+    ...input.nodes.map(
+      (node) => `- ${node.id} [${node.kind}]: ${node.label}${node.source ? ` - source: ${node.source}` : ""}`,
+    ),
     "",
     "## Edges",
-    ...input.edges.map((edge) => `- ${edge.from} -> ${edge.to}: ${edge.relationship}${edge.confidence ? ` (${edge.confidence})` : ""}${edge.evidence?.length ? ` - evidence: ${edge.evidence.join(", ")}` : ""}`),
+    ...input.edges.map(
+      (edge) =>
+        `- ${edge.from} -> ${edge.to}: ${edge.relationship}${edge.confidence ? ` (${edge.confidence})` : ""}${edge.evidence?.length ? ` - evidence: ${edge.evidence.join(", ")}` : ""}`,
+    ),
     "",
     "## Notes",
     ...(input.notes?.length ? input.notes.map((note) => `- ${note}`) : ["- none recorded"]),
@@ -1803,7 +1998,101 @@ export function validateOperationPlan(input: OperationPlanInput) {
   for (const required of ["report_lint", "report_render", "runtime_summary"]) {
     if (!closeout.includes(required)) gaps.push(`reporting closeout must include ${required}`)
   }
+  const targetHours = input.timeBudget?.targetHours
+  if (targetHours !== undefined) {
+    if (!Number.isFinite(targetHours) || targetHours <= 0) gaps.push("timeBudget.targetHours must be a positive number")
+    for (const allocation of input.timeBudget?.allocations ?? []) {
+      if (!Number.isFinite(allocation.hours) || allocation.hours <= 0) {
+        gaps.push(`${allocation.stage}: time budget allocation hours must be positive`)
+      }
+      if (!allocation.work.trim()) gaps.push(`${allocation.stage}: time budget allocation work is required`)
+    }
+  }
+  if ((targetHours ?? 0) >= 2) {
+    if (input.planningApproval?.status !== "approved") {
+      gaps.push("2h+ operation plan requires planningApproval.status=approved")
+    }
+    if (!input.planningApproval?.discoveryCharterPath) gaps.push("2h+ operation plan requires planningApproval.discoveryCharterPath")
+    const discoveryCharter = input.discoveryCharter
+    if (!discoveryCharter) {
+      gaps.push("2h+ operation plan requires discoveryCharter investment strategy")
+    } else {
+      if (!discoveryCharter.purpose.toLowerCase().includes("research") && !discoveryCharter.purpose.toLowerCase().includes("recon")) {
+        gaps.push("2h+ operation plan requires discoveryCharter.purpose to describe research/recon/question strategy")
+      }
+      if (discoveryCharter.researchQuestions.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.researchQuestions")
+      if (discoveryCharter.reconInvestments.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.reconInvestments")
+      if (discoveryCharter.operatorQuestions.length < 2) gaps.push("2h+ operation plan requires discoveryCharter.operatorQuestions")
+      if (discoveryCharter.candidateDeepWorkLanes.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.candidateDeepWorkLanes")
+      if (discoveryCharter.decisionCriteriaForFullPlan.length < 3)
+        gaps.push("2h+ operation plan requires discoveryCharter.decisionCriteriaForFullPlan")
+    }
+    if (!input.timeBudget?.allocations.length) gaps.push("2h+ operation plan requires timeBudget.allocations")
+    if (!input.timeBudget?.finalizationWindowHours) gaps.push("2h+ operation plan requires timeBudget.finalizationWindowHours")
+    if (input.timeBudget?.durationFit?.confidence !== "duration_sized") {
+      gaps.push("2h+ operation plan requires timeBudget.durationFit.confidence=duration_sized")
+    }
+    if ((input.timeBudget?.durationFit?.evidence.length ?? 0) < 1) {
+      gaps.push("2h+ operation plan requires timeBudget.durationFit.evidence")
+    }
+    if ((input.timeBudget?.durationFit?.overflowBacklog.length ?? 0) < 1) {
+      gaps.push("2h+ operation plan requires timeBudget.durationFit.overflowBacklog")
+    }
+    const coverage = input.coverageContract
+    if (!coverage) {
+      gaps.push("2h+ operation plan requires coverageContract")
+    } else {
+      if (!coverage.goals.length) gaps.push("coverageContract.goals required")
+      if (!coverage.minimumEvidence.length) gaps.push("coverageContract.minimumEvidence required")
+      if (!coverage.requiredLanes.length) gaps.push("coverageContract.requiredLanes required")
+      if (!coverage.fallbackRules.length) gaps.push("coverageContract.fallbackRules required")
+      if (!coverage.retryRules.length) gaps.push("coverageContract.retryRules required")
+      if (!coverage.subagentOpportunities.length) gaps.push("coverageContract.subagentOpportunities required")
+      if (!coverage.reportGates.length) gaps.push("coverageContract.reportGates required")
+    }
+    const hasReportingAllocation = input.timeBudget?.allocations.some(
+      (allocation) => allocation.stage === "reporting" || allocation.stage === "handoff",
+    )
+    if (!hasReportingAllocation) gaps.push("2h+ operation plan requires reporting or handoff finalization allocation")
+  }
   return gaps
+}
+
+function coverageContractMarkdown(record: CoverageContractRecord) {
+  return [
+    `# Coverage Contract: ${record.operationID}`,
+    "",
+    `- written: ${record.writtenAt}`,
+    `- status: ${record.status}`,
+    "",
+    "## Goals",
+    ...record.goals.map((item) => `- ${item}`),
+    "",
+    "## Minimum Evidence",
+    ...record.minimumEvidence.map((item) => `- ${item}`),
+    "",
+    "## Required Lanes",
+    ...record.requiredLanes.map((item) => `- ${item}`),
+    "",
+    "## Allowed Skipped Lanes",
+    ...(record.allowedSkippedLanes.length ? record.allowedSkippedLanes.map((item) => `- ${item}`) : ["- none"]),
+    "",
+    "## Fallback Rules",
+    ...record.fallbackRules.map((item) => `- ${item}`),
+    "",
+    "## Retry Rules",
+    ...record.retryRules.map((item) => `- ${item}`),
+    "",
+    "## Subagent Opportunities",
+    ...record.subagentOpportunities.map((item) => `- ${item}`),
+    "",
+    "## Report Gates",
+    ...record.reportGates.map((item) => `- ${item}`),
+    "",
+    "## Release Notes",
+    ...(record.releaseNotes?.length ? record.releaseNotes.map((item) => `- ${item}`) : ["- none recorded"]),
+    "",
+  ].join("\n")
 }
 
 function escapeHtml(input: string) {
@@ -1866,11 +2155,189 @@ function htmlToPdfLines(input: string) {
     .filter(Boolean)
 }
 
+type PdfBlock = {
+  kind: "h1" | "h2" | "h3" | "p" | "li" | "table"
+  text: string
+}
+
+function htmlToPdfBlocks(input: string) {
+  const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(input)?.[1] ?? input
+  const prepared = body
+    .replace(/<style[\s\S]*?<\/style>/gi, "\n")
+    .replace(/<script[\s\S]*?<\/script>/gi, "\n")
+    .replace(/<h1[^>]*>/gi, "\n@@h1@@")
+    .replace(/<h2[^>]*>/gi, "\n@@h2@@")
+    .replace(/<h3[^>]*>/gi, "\n@@h3@@")
+    .replace(/<p[^>]*>/gi, "\n@@p@@")
+    .replace(/<li[^>]*>/gi, "\n@@li@@- ")
+    .replace(/<tr[^>]*>/gi, "\n@@table@@")
+    .replace(/<\/t[dh]>/gi, " | ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(h1|h2|h3|p|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[ \t]+/g, " ")
+  return prepared
+    .split(/\r?\n/)
+    .map((line): PdfBlock | undefined => {
+      const match = /^@@(h1|h2|h3|p|li|table)@@(.*)$/.exec(line.trim())
+      const kind = (match?.[1] ?? "p") as PdfBlock["kind"]
+      const text = decodeHtmlText((match?.[2] ?? line).trim().replace(/\s+\|\s*$/g, ""))
+      if (!text) return undefined
+      return { kind, text }
+    })
+    .filter((block): block is PdfBlock => block !== undefined)
+}
+
+function pdfColor(kind: PdfBlock["kind"]) {
+  if (kind === "h1") return "0.07 0.08 0.1 rg"
+  if (kind === "h2" || kind === "h3") return "0.13 0.17 0.23 rg"
+  if (kind === "table") return "0.20 0.22 0.28 rg"
+  return "0.11 0.12 0.15 rg"
+}
+
+function pdfFont(kind: PdfBlock["kind"]) {
+  if (kind === "h1") return { name: "F2", size: 24, width: 42, leading: 28, before: 18, after: 10 }
+  if (kind === "h2") return { name: "F2", size: 15, width: 64, leading: 18, before: 18, after: 6 }
+  if (kind === "h3") return { name: "F2", size: 12, width: 72, leading: 15, before: 12, after: 4 }
+  if (kind === "li") return { name: "F1", size: 10, width: 82, leading: 13, before: 2, after: 2 }
+  if (kind === "table") return { name: "F1", size: 8.5, width: 96, leading: 11, before: 3, after: 3 }
+  return { name: "F1", size: 10.2, width: 86, leading: 13.5, before: 4, after: 5 }
+}
+
+function drawTextLine(input: { text: string; x: number; y: number; font: string; size: number; color: string }) {
+  return [
+    "BT",
+    input.color,
+    `/${input.font} ${input.size} Tf`,
+    `${input.x} ${input.y.toFixed(2)} Td`,
+    `(${escapePdfString(input.text)}) Tj`,
+    "ET",
+  ].join("\n")
+}
+
+function buildStyledPdf(input: {
+  title: string
+  operationID: string
+  operation?: OperationRecord
+  reportHtml: string
+}) {
+  const blocks = htmlToPdfBlocks(input.reportHtml)
+  const pages: string[][] = [[]]
+  const marginX = 54
+  const pageTop = 744
+  const pageBottom = 58
+  let y = pageTop
+
+  function current() {
+    return pages[pages.length - 1]!
+  }
+
+  function newPage() {
+    pages.push([])
+    y = pageTop
+  }
+
+  function ensure(space: number) {
+    if (y - space < pageBottom) newPage()
+  }
+
+  function drawHeader() {
+    current().push("0.61 0.38 0.11 rg", `0 764 612 28 re f`, "0.98 0.97 0.94 rg", `54 772 504 8 re f`)
+  }
+
+  drawHeader()
+  current().push(
+    drawTextLine({
+      text: input.title,
+      x: marginX,
+      y,
+      font: "F2",
+      size: 22,
+      color: "0.07 0.08 0.1 rg",
+    }),
+  )
+  y -= 30
+  current().push(
+    drawTextLine({
+      text: `Operation ${input.operationID} | ${input.operation?.stage ?? "unknown"} / ${input.operation?.status ?? "unknown"}`,
+      x: marginX,
+      y,
+      font: "F1",
+      size: 10,
+      color: "0.34 0.38 0.44 rg",
+    }),
+  )
+  y -= 26
+
+  for (const block of blocks) {
+    const font = pdfFont(block.kind)
+    const lines = wrapPdfLine(block.text, font.width)
+    ensure(font.before + font.after + lines.length * font.leading + (block.kind === "h2" ? 10 : 0))
+    y -= font.before
+    if (block.kind === "h2") {
+      current().push(
+        "0.85 0.87 0.90 RG",
+        `54 ${Math.max(pageBottom, y + 6).toFixed(2)} m 558 ${Math.max(pageBottom, y + 6).toFixed(2)} l S`,
+      )
+      y -= 8
+    }
+    if (block.kind === "table") {
+      current().push(
+        "0.96 0.91 0.84 rg",
+        `54 ${(y - lines.length * font.leading - 2).toFixed(2)} 504 ${(lines.length * font.leading + 8).toFixed(2)} re f`,
+      )
+    }
+    for (const line of lines) {
+      current().push(
+        drawTextLine({
+          text: line,
+          x: block.kind === "li" ? marginX + 10 : marginX,
+          y,
+          font: font.name,
+          size: font.size,
+          color: pdfColor(block.kind),
+        }),
+      )
+      y -= font.leading
+      ensure(font.leading + pageBottom)
+      if (y === pageTop) drawHeader()
+    }
+    y -= font.after
+  }
+
+  const objects: string[] = []
+  const pageIDs = pages.map((_, index) => 5 + index * 2)
+  const contentIDs = pages.map((_, index) => 6 + index * 2)
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>"
+  objects[2] = `<< /Type /Pages /Kids [${pageIDs.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`
+  objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+  objects[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
+  for (let index = 0; index < pages.length; index++) {
+    const content = pages[index]!.join("\n")
+    objects[pageIDs[index]!] =
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentIDs[index]} 0 R >>`
+    objects[contentIDs[index]!] = `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
+  }
+
+  let pdf = "%PDF-1.4\n% /ULMCodeRenderer (styled-html)\n"
+  const offsets = [0]
+  for (let id = 1; id < objects.length; id++) {
+    offsets[id] = Buffer.byteLength(pdf)
+    pdf += `${id} 0 obj\n${objects[id]}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`
+  for (let id = 1; id < objects.length; id++) {
+    pdf += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`
+  }
+  pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return pdf
+}
+
 function findingCounts(findings: FindingRecord[]) {
-  return Object.fromEntries(FINDING_STATES.map((state) => [state, findings.filter((item) => item.state === state).length])) as Record<
-    FindingState,
-    number
-  >
+  return Object.fromEntries(
+    FINDING_STATES.map((state) => [state, findings.filter((item) => item.state === state).length]),
+  ) as Record<FindingState, number>
 }
 
 function buildPdf(input: {
@@ -2069,7 +2536,9 @@ function executiveSummaryMarkdown(input: {
   evidence: EvidenceRecord[]
   counts: Record<FindingState, number>
 }) {
-  const highImpact = input.reportable.filter((finding) => finding.severity === "critical" || finding.severity === "high")
+  const highImpact = input.reportable.filter(
+    (finding) => finding.severity === "critical" || finding.severity === "high",
+  )
   return [
     `# Executive Summary`,
     "",
@@ -2117,7 +2586,9 @@ function technicalAppendixMarkdown(input: {
     "",
     "## Assumptions",
     "",
-    ...(input.plan?.assumptions?.length ? input.plan.assumptions.map((item) => `- ${item}`) : ["- No assumptions recorded."]),
+    ...(input.plan?.assumptions?.length
+      ? input.plan.assumptions.map((item) => `- ${item}`)
+      : ["- No assumptions recorded."]),
     "",
     "## Reportable Findings",
     "",
@@ -2143,7 +2614,9 @@ function technicalAppendixMarkdown(input: {
     "## Evidence Index",
     "",
     ...(input.evidence.length
-      ? input.evidence.map((item) => `- ${item.evidenceID}: ${item.title} (${item.kind})${item.path ? ` - ${item.path}` : ""}`)
+      ? input.evidence.map(
+          (item) => `- ${item.evidenceID}: ${item.title} (${item.kind})${item.path ? ` - ${item.path}` : ""}`,
+        )
       : ["- No evidence records were recorded."]),
     "",
   ].join("\n")
@@ -2157,7 +2630,9 @@ function operatorReviewMarkdown(input: {
   evidence: EvidenceRecord[]
   runtimeSummaryExists: boolean
 }) {
-  const needsReview = input.nonReportable.filter((finding) => finding.state === "candidate" || finding.state === "needs_validation")
+  const needsReview = input.nonReportable.filter(
+    (finding) => finding.state === "candidate" || finding.state === "needs_validation",
+  )
   return [
     "# Operator Review",
     "",
@@ -2183,7 +2658,9 @@ function operatorReviewMarkdown(input: {
     "",
     "## Next Actions",
     "",
-    ...(input.operation?.nextActions?.length ? input.operation.nextActions.map((item) => `- ${item}`) : ["- None recorded."]),
+    ...(input.operation?.nextActions?.length
+      ? input.operation.nextActions.map((item) => `- ${item}`)
+      : ["- None recorded."]),
     "",
   ].join("\n")
 }
@@ -2216,7 +2693,11 @@ export async function writeOperationCheckpoint(worktree: string, input: Operatio
   await fs.mkdir(path.join(root, "evidence"), { recursive: true })
   await fs.mkdir(path.join(root, "findings"), { recursive: true })
   await fs.mkdir(path.join(root, "reports"), { recursive: true })
-  await publishOperationUpdated(worktree, { operationID, artifact: "checkpoint", path: path.join(root, "operation.json") })
+  await publishOperationUpdated(worktree, {
+    operationID,
+    artifact: "checkpoint",
+    path: path.join(root, "operation.json"),
+  })
   return { root, record }
 }
 
@@ -2507,7 +2988,9 @@ export async function writeReportOutline(worktree: string, input: ReportOutlineI
     ["Executive Summary", 4],
     ["Scope, Authorization, and Methodology", 3],
     [hasDistrictProfile ? "District Profile and Environment Overview" : "Environment Overview", 5],
-    ...(hasPeopleProfiles || hasIdentityGraph ? ([["People, Roles, and Identity Graph", 5]] as Array<[string, number]>) : []),
+    ...(hasPeopleProfiles || hasIdentityGraph
+      ? ([["People, Roles, and Identity Graph", 5]] as Array<[string, number]>)
+      : []),
     ["Attack Path Narrative", 5],
     ["Findings Detail", Math.max(12, reportReady.length * 4)],
     ["Risk Register and Prioritized Roadmap", 5],
@@ -2518,7 +3001,7 @@ export async function writeReportOutline(worktree: string, input: ReportOutlineI
     ...(appendix ? [["Appendix: Raw Evidence Index", 8] as [string, number]] : []),
   ]
   const allocated = sections.reduce((sum, [, pages]) => sum + pages, 0)
-  const multiplier = targetPages > allocated ? targetPages / allocated : 1
+  const multiplier = targetPages / allocated
   const body = [
     `# Report Outline: ${operation?.operationID ?? slug(input.operationID, "operation")}`,
     "",
@@ -2553,7 +3036,11 @@ export async function writeReportOutline(worktree: string, input: ReportOutlineI
   const file = path.join(root, "reports", "report-outline.md")
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(file, body)
-  await publishOperationUpdated(worktree, { operationID: slug(input.operationID, "operation"), artifact: "report_outline", path: file })
+  await publishOperationUpdated(worktree, {
+    operationID: slug(input.operationID, "operation"),
+    artifact: "report_outline",
+    path: file,
+  })
   return { root, file, targetPages, reportReady: reportReady.length }
 }
 
@@ -2662,11 +3149,15 @@ function evalScorecardMarkdown(record: EvalScorecardRecord) {
     `- Cost USD: ${record.metrics.costUSD ?? "unknown"}`,
     `- Report quality: ${record.metrics.reportQuality}`,
     "",
-    record.allowedProfiles?.length ? `## Allowed Profiles\n\n${record.allowedProfiles.map((item) => `- ${item}`).join("\n")}\n` : undefined,
+    record.allowedProfiles?.length
+      ? `## Allowed Profiles\n\n${record.allowedProfiles.map((item) => `- ${item}`).join("\n")}\n`
+      : undefined,
     record.artifactRequirements?.length
       ? `## Artifact Requirements\n\n${record.artifactRequirements.map((item) => `- ${item}`).join("\n")}\n`
       : undefined,
-    record.mitreTags?.length ? `## MITRE Tags\n\n${record.mitreTags.map((item) => `- ${item}`).join("\n")}\n` : undefined,
+    record.mitreTags?.length
+      ? `## MITRE Tags\n\n${record.mitreTags.map((item) => `- ${item}`).join("\n")}\n`
+      : undefined,
     record.notes?.length ? `## Notes\n\n${record.notes.map((item) => `- ${item}`).join("\n")}\n` : undefined,
   ]
     .filter((line): line is string => line !== undefined)
@@ -2675,10 +3166,7 @@ function evalScorecardMarkdown(record: EvalScorecardRecord) {
     .concat("\n")
 }
 
-export async function writeEvalScorecard(
-  worktree: string,
-  input: EvalScorecardInput,
-): Promise<EvalScorecardResult> {
+export async function writeEvalScorecard(worktree: string, input: EvalScorecardInput): Promise<EvalScorecardResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const record: EvalScorecardRecord = {
@@ -2716,10 +3204,7 @@ export async function listOperationStatuses(
   return Promise.all(operationIDs.map((operationID) => readOperationStatus(worktree, operationID, options)))
 }
 
-export async function writeRuntimeSummary(
-  worktree: string,
-  input: RuntimeSummaryInput,
-): Promise<RuntimeSummaryResult> {
+export async function writeRuntimeSummary(worktree: string, input: RuntimeSummaryInput): Promise<RuntimeSummaryResult> {
   const resolvedInput = mergeRuntimeUsage(input)
   const operationID = slug(resolvedInput.operationID, "operation")
   const root = operationPath(worktree, operationID)
@@ -2756,10 +3241,7 @@ export async function writeRuntimeSummary(
   return { operationID, json, markdown, finalDir }
 }
 
-export async function writeOperationPlan(
-  worktree: string,
-  input: OperationPlanInput,
-): Promise<OperationPlanResult> {
+export async function writeOperationPlan(worktree: string, input: OperationPlanInput): Promise<OperationPlanResult> {
   const gaps = validateOperationPlan(input)
   if (gaps.length) throw new Error(gaps.join("; "))
 
@@ -2776,6 +3258,13 @@ export async function writeOperationPlan(
   const markdown = path.join(root, "plans", "operation-plan.md")
   await writeJson(json, record)
   await fs.writeFile(markdown, operationPlanMarkdown(record))
+  if (record.coverageContract) {
+    await writeCoverageContract(worktree, {
+      ...record.coverageContract,
+      operationID,
+      status: record.coverageContract.status ?? "unmet",
+    })
+  }
   await appendJsonl(path.join(root, "events.jsonl"), {
     type: "operation_plan",
     operationID,
@@ -2786,10 +3275,81 @@ export async function writeOperationPlan(
   return { operationID, json, markdown, phases: record.phases.length }
 }
 
-export async function writeDistrictProfile(
+export async function writeCoverageContract(
   worktree: string,
-  input: DistrictProfileInput,
-): Promise<ProfileWriteResult> {
+  input: CoverageContractInput,
+): Promise<{ operationID: string; json: string; markdown: string }> {
+  const operationID = slug(input.operationID, "operation")
+  const root = operationPath(worktree, operationID)
+  const record: CoverageContractRecord = {
+    ...input,
+    operationID,
+    status: input.status ?? "unmet",
+    writtenAt: new Date().toISOString(),
+  }
+  const json = path.join(root, "plans", "coverage-contract.json")
+  const markdown = path.join(root, "plans", "coverage-contract.md")
+  await writeJson(json, record)
+  await fs.writeFile(markdown, coverageContractMarkdown(record))
+  await appendJsonl(path.join(root, "events.jsonl"), {
+    type: "coverage_contract",
+    operationID,
+    status: record.status,
+    writtenAt: record.writtenAt,
+  })
+  await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
+  return { operationID, json, markdown }
+}
+
+export async function readCoverageContract(worktree: string, operationID: string) {
+  return readJson<CoverageContractRecord>(
+    path.join(operationPath(worktree, slug(operationID, "operation")), "plans", "coverage-contract.json"),
+  )
+}
+
+export async function evaluateCoverageReadiness(
+  worktree: string,
+  operationIDInput: string,
+): Promise<CoverageReadiness> {
+  const operationID = slug(operationIDInput, "operation")
+  const root = operationPath(worktree, operationID)
+  const contract = await readJson<CoverageContractRecord>(path.join(root, "plans", "coverage-contract.json"))
+  if (!contract) return { ok: false, status: "missing", gaps: ["coverage contract is missing"] }
+
+  const gaps: string[] = []
+  const graph = await readJson<OperationGraphStatusRecord>(path.join(root, "plans", "operation-graph.json"))
+  const lanes = graph?.lanes ?? []
+  const byID = new Map(lanes.map((lane) => [lane.id ?? "unknown", lane]))
+  const allowedSkipped = new Set(contract.allowedSkippedLanes)
+  for (const laneID of contract.requiredLanes) {
+    const lane = byID.get(laneID)
+    if (!lane) {
+      gaps.push(`coverage required lane ${laneID} is missing from operation graph`)
+      continue
+    }
+    if (lane.status === "complete") continue
+    if ((lane.status === "skipped" || lane.status === "blocked") && allowedSkipped.has(laneID) && !lane.releaseRequired) {
+      continue
+    }
+    gaps.push(`coverage required lane ${laneID} is ${lane.status ?? "unknown"}`)
+  }
+  for (const lane of lanes) {
+    const id = lane.id ?? "unknown"
+    if (
+      (lane.status === "skipped" || lane.status === "blocked" || lane.terminalState === "skipped" || lane.terminalState === "blocked") &&
+      (lane.releaseRequired || lane.coverageImpact === "blocks_release") &&
+      !allowedSkipped.has(id)
+    ) {
+      gaps.push(`lane ${id} is ${lane.terminalState ?? lane.status} and blocks release`)
+    }
+  }
+  if (contract.status !== "met" && contract.status !== "released") {
+    gaps.push(`coverage contract status is ${contract.status}`)
+  }
+  return { ok: gaps.length === 0, status: contract.status, gaps }
+}
+
+export async function writeDistrictProfile(worktree: string, input: DistrictProfileInput): Promise<ProfileWriteResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const json = path.join(root, "profiles", "district-profile.json")
@@ -2807,10 +3367,7 @@ export async function writeDistrictProfile(
   return { operationID, json, markdown }
 }
 
-export async function writePersonProfile(
-  worktree: string,
-  input: PersonProfileInput,
-): Promise<ProfileWriteResult> {
+export async function writePersonProfile(worktree: string, input: PersonProfileInput): Promise<ProfileWriteResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const personID = makePersonProfileID(input)
@@ -2830,10 +3387,7 @@ export async function writePersonProfile(
   return { operationID, json, markdown }
 }
 
-export async function writeIdentityGraph(
-  worktree: string,
-  input: IdentityGraphInput,
-): Promise<ProfileWriteResult> {
+export async function writeIdentityGraph(worktree: string, input: IdentityGraphInput): Promise<ProfileWriteResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const json = path.join(root, "profiles", "identity-graph.json")
@@ -2905,7 +3459,8 @@ export async function lintReport(
   if (options.requireReport && !report) gaps.push("reports/report.md or reports/report.html is required")
   if (report && options.minWords) {
     const words = wordCount(plainReportText(report))
-    if (words < options.minWords) gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
+    if (words < options.minWords)
+      gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
   }
   const requireOutlineBudget = options.requireOutlineBudget || options.minOutlineWordsPerPage
   const requireOutlineSections =
@@ -2914,7 +3469,16 @@ export async function lintReport(
     const outline = await readText(path.join(root, "reports", "report-outline.md"))
     if (requireOutlineBudget) {
       const targetPages = outlineTargetPages(outline)
+      const sections = outlineSectionBudgets(outline)
       if (!targetPages) gaps.push("reports/report-outline.md with target_pages is required for outline budget lint")
+      if (targetPages && sections.length) {
+        const sectionPages = sections.reduce((sum, section) => sum + section.pages, 0)
+        if (sectionPages > targetPages * 1.25) {
+          gaps.push(
+            `reports/report-outline.md Page Budget totals ${sectionPages} pages but target_pages is ${targetPages}`,
+          )
+        }
+      }
       if (!report) gaps.push("report is required for outline budget lint")
       if (report && targetPages) {
         const words = wordCount(plainReportText(report))
@@ -2983,12 +3547,17 @@ export async function lintReport(
     gaps.push("deliverables/runtime-summary.json is required")
   }
   if (options.finalHandoff) {
+    const coverage = await evaluateCoverageReadiness(worktree, operationID)
+    if (!coverage.ok) {
+      for (const gap of coverage.gaps) gaps.push(`coverage: ${gap}`)
+    }
     const graph = await readGraphStatus(root, slug(operationID, "operation"))
     if (!graph) gaps.push("plans/operation-graph.json is required")
     for (const lane of graph?.lanes.incomplete ?? []) gaps.push(`operation lane ${lane} is not complete`)
     for (const lane of graph?.lanes.failed ?? []) gaps.push(`operation lane ${lane} is failed`)
     for (const lane of graph?.lanes.missingProofs ?? []) gaps.push(`operation lane ${lane} is missing completion proof`)
-    for (const lane of graph?.lanes.invalidProofs ?? []) gaps.push(`operation lane ${lane} has invalid completion proof`)
+    for (const lane of graph?.lanes.invalidProofs ?? [])
+      gaps.push(`operation lane ${lane} has invalid completion proof`)
   }
 
   return {
@@ -3137,6 +3706,12 @@ async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSu
 
   const pdf = await readText(path.join(finalDir, "report.pdf"))
   if (pdf !== undefined && !pdf.startsWith("%PDF-")) gaps.push("deliverables/final/report.pdf is not a readable PDF")
+  if (pdf !== undefined && pdf.startsWith("%PDF-") && !pdf.includes("/ULMCodeRenderer (styled-html)")) {
+    gaps.push("deliverables/final/report.pdf missing styled HTML renderer metadata")
+  }
+  if (pdf !== undefined && pdf.includes("/BaseFont /Helvetica") && !pdf.includes("/ULMCodeRenderer (styled-html)")) {
+    gaps.push("deliverables/final/report.pdf was rendered by the legacy text-only renderer")
+  }
   const html = await readText(path.join(finalDir, "report.html"))
   if (html !== undefined) {
     const lowerHtml = html.toLowerCase()
@@ -3150,7 +3725,11 @@ async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSu
 
   const sourceRuntimeMarkdown = await readText(path.join(root, "deliverables", "runtime-summary.md"))
   const finalRuntimeMarkdown = await readText(path.join(finalDir, "runtime-summary.md"))
-  if (sourceRuntimeMarkdown !== undefined && finalRuntimeMarkdown !== undefined && sourceRuntimeMarkdown !== finalRuntimeMarkdown) {
+  if (
+    sourceRuntimeMarkdown !== undefined &&
+    finalRuntimeMarkdown !== undefined &&
+    sourceRuntimeMarkdown !== finalRuntimeMarkdown
+  ) {
     gaps.push("deliverables/final/runtime-summary.md does not match deliverables/runtime-summary.md")
   }
   return gaps
@@ -3235,7 +3814,11 @@ function renderReportSections(input: {
     }</tbody>
   </table>`
       }
-      if (normalized.includes("coverage") || normalized.includes("browser evidence") || normalized.includes("testing limits")) {
+      if (
+        normalized.includes("coverage") ||
+        normalized.includes("browser evidence") ||
+        normalized.includes("testing limits")
+      ) {
         return `<h2>${escapeHtml(title)}</h2>
   <p>This section summarizes what the operation actually touched, where browser evidence exists, and where confidence is limited by scope, time, authentication, tooling, or unresolved blockers.</p>
   <p>Current affected assets from validated/report-ready findings: ${escapeHtml(assets.join(", ") || "none recorded")}.</p>
@@ -3283,7 +3866,8 @@ async function peopleProfilesMarkdown(root: string) {
     const bodies = await Promise.all(files.map((file) => fs.readFile(path.join(peopleDir, file), "utf8")))
     return ["# People Profiles", "", ...bodies].join("\n")
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "# People Profiles\n\nNo person profiles were recorded.\n"
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return "# People Profiles\n\nNo person profiles were recorded.\n"
     throw error
   }
 }
@@ -3356,20 +3940,31 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   const technicalAppendixPath = path.join(finalDir, "technical-appendix.md")
   const runtimeSummaryMarkdownPath = path.join(finalDir, "runtime-summary.md")
   await fs.writeFile(htmlPath, html)
-  await fs.writeFile(pdfPath, buildPdf({ title, operationID, operation, reportable, nonReportable, evidence, reportHtml: html }))
+  await fs.writeFile(pdfPath, buildStyledPdf({ title, operationID, operation, reportHtml: html }))
   await fs.writeFile(readmePath, finalReadme({ title, operationID, operation, reportable, nonReportable, evidence }))
   await writeJson(findingsJsonPath, finalFindingsJson({ operationID, reportable, nonReportable, counts }))
   await writeJson(evidenceIndexPath, finalEvidenceIndexJson({ operationID, evidence, findings }))
   await fs.writeFile(peopleProfilesPath, await peopleProfilesMarkdown(root))
   await fs.copyFile(path.join(root, "profiles", "identity-graph.json"), identityGraphPath).catch(async () => {
-    await writeJson(identityGraphPath, { operationID, nodes: [], edges: [], notes: ["No identity graph was recorded before report rendering."] })
+    await writeJson(identityGraphPath, {
+      operationID,
+      nodes: [],
+      edges: [],
+      notes: ["No identity graph was recorded before report rendering."],
+    })
   })
   await fs.writeFile(
     operatorReviewPath,
     operatorReviewMarkdown({ operationID, operation, reportable, nonReportable, evidence, runtimeSummaryExists }),
   )
-  await fs.writeFile(executiveSummaryPath, executiveSummaryMarkdown({ title, operationID, operation, reportable, evidence, counts }))
-  await fs.writeFile(technicalAppendixPath, technicalAppendixMarkdown({ operationID, operation, plan, reportable, nonReportable, evidence }))
+  await fs.writeFile(
+    executiveSummaryPath,
+    executiveSummaryMarkdown({ title, operationID, operation, reportable, evidence, counts }),
+  )
+  await fs.writeFile(
+    technicalAppendixPath,
+    technicalAppendixMarkdown({ operationID, operation, plan, reportable, nonReportable, evidence }),
+  )
   await fs.writeFile(
     runtimeSummaryMarkdownPath,
     runtimeSummaryMarkdownSource ?? "# Runtime Summary\n\nNo runtime summary was recorded before report rendering.\n",

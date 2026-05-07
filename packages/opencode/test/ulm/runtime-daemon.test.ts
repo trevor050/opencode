@@ -32,7 +32,11 @@ async function writeDaemonSupervisorFixture(worktree: string) {
         noSubagents: [],
       },
     ],
-    reportingCloseout: ["report_lint before handoff", "report_render final package", "runtime_summary final accounting"],
+    reportingCloseout: [
+      "report_lint before handoff",
+      "report_render final package",
+      "runtime_summary final accounting",
+    ],
   })
   await writeOperationGraph(worktree, { operationID: "School", budgetUSD: 10 })
   const root = operationPath(worktree, "School")
@@ -115,6 +119,30 @@ describe("ULM runtime daemon", () => {
 
     expect(launched).toEqual(["district_profile"])
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-district_profile"])
+  })
+
+  test("does not exit the wall-clock daemon on compact maintenance decisions", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "high" },
+    })
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 120,
+      cycleIntervalSeconds: 0,
+      maxCycles: 2,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.cycles).toHaveLength(2)
+    expect(result.cycles.every((cycle) => cycle.run?.action === "compact")).toBe(true)
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toBe("max scheduler cycles reached")
   })
 
   test("recovers stale operation jobs before scheduler ticks", async () => {
@@ -254,7 +282,11 @@ describe("ULM runtime daemon", () => {
     await fs.mkdir(path.dirname(lockPath), { recursive: true })
     await fs.writeFile(
       lockPath,
-      JSON.stringify({ pid: process.pid, createdAt: "2026-05-05T00:00:00.000Z", updatedAt: "2026-05-05T00:00:00.000Z" }),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: "2026-05-05T00:00:00.000Z",
+        updatedAt: "2026-05-05T00:00:00.000Z",
+      }),
     )
 
     await expect(
@@ -320,7 +352,9 @@ describe("ULM runtime daemon", () => {
     expect(parsed.operationID).toBe("school")
     expect(parsed.heartbeatPath).toContain("daemon-heartbeat.json")
     expect(parsed.cycles[0].launchedJobs).toEqual(["cli-model-lane-district_profile"])
-    const launches = await fs.readdir(path.join(dir.path, ".ulmcode", "operations", "school", "scheduler", "cli-launches"))
+    const launches = await fs.readdir(
+      path.join(dir.path, ".ulmcode", "operations", "school", "scheduler", "cli-launches"),
+    )
     expect(launches.some((item) => item.includes("district_profile"))).toBe(true)
   })
 

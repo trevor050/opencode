@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { decideOperationNext } from "@/ulm/operation-next"
+import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
-import { writeRuntimeSummary } from "@/ulm/artifact"
+import { writeCoverageContract, writeRuntimeSummary } from "@/ulm/artifact"
 import { tmpdir } from "../fixture/fixture"
 
 describe("ULM operation next action", () => {
@@ -71,5 +72,71 @@ describe("ULM operation next action", () => {
     expect(result.action.reason).toContain("all operation lanes are complete")
     const persisted = JSON.parse(await fs.readFile(path.join(path.dirname(result.path), "next-action.json"), "utf8"))
     expect(persisted.action).toBe("stop")
+  })
+
+  test("does not stop a three-hour active goal after twenty minutes just because lanes are complete", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(
+      dir.path,
+      { operationID: "School", objective: "Authorized internal assessment", targetDurationHours: 3 },
+      { now: "2026-05-05T00:00:00.000Z" },
+    )
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await decideOperationNext(dir.path, {
+      operationID: "School",
+      now: "2026-05-05T00:20:00.000Z",
+    })
+
+    expect(result.action.action).toBe("wait")
+    expect(result.action.reason).toContain("coverage contract is not release-ready")
+    expect(result.action.recommendedTools).toContain("operation_supervise")
+  })
+
+  test("continues coverage when all lanes complete but the coverage contract is unmet", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(
+      dir.path,
+      { operationID: "School", objective: "Authorized internal assessment", targetDurationHours: 3 },
+      { now: "2026-05-05T00:00:00.000Z" },
+    )
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await writeCoverageContract(dir.path, {
+      operationID: "School",
+      status: "unmet",
+      goals: ["Inventory every authorized internal subnet."],
+      minimumEvidence: ["TCP service output for each responsive host."],
+      requiredLanes: ["recon", "web_inventory", "finding_validation", "report_review"],
+      allowedSkippedLanes: [],
+      fallbackRules: ["Split timed-out scan ranges into smaller chunks."],
+      retryRules: ["Retry lower-concurrency scan chunks before blocking."],
+      subagentOpportunities: ["parallel recon review"],
+      reportGates: ["report_lint finalHandoff=true"],
+    })
+
+    const result = await decideOperationNext(dir.path, {
+      operationID: "School",
+      now: "2026-05-05T03:10:00.000Z",
+    })
+
+    expect(result.action.action).toBe("wait")
+    expect(result.action.reason).toContain("coverage contract is not release-ready")
+    expect(result.action.recommendedTools).toContain("operation_supervise")
   })
 })

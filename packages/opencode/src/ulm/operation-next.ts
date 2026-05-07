@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, slug, type RuntimeSummaryRecord } from "./artifact"
+import { evaluateCoverageReadiness, operationPath, slug, type RuntimeSummaryRecord } from "./artifact"
+import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import type { GovernorDecision } from "./runtime-governor"
 import { evaluateRuntimeGovernor } from "./runtime-governor"
 import type { OperationGraphRecord, OperationLane } from "./operation-graph"
@@ -43,7 +44,17 @@ async function readJson<T>(file: string): Promise<T | undefined> {
 }
 
 function dependenciesComplete(graph: OperationGraphRecord, lane: OperationLane) {
-  const complete = new Set(graph.lanes.filter((item) => item.status === "complete").map((item) => item.id))
+  const complete = new Set(
+    graph.lanes
+      .filter(
+        (item) =>
+          item.status === "complete" ||
+          ((item.status === "skipped" || item.status === "blocked") &&
+            item.releaseRequired === false &&
+            item.coverageImpact !== "blocks_release"),
+      )
+      .map((item) => item.id),
+  )
   return lane.dependsOn.every((dependency) => complete.has(dependency))
 }
 
@@ -53,7 +64,15 @@ function runningLanes(graph: OperationGraphRecord) {
 
 function blockedDependencies(graph: OperationGraphRecord, lane: OperationLane) {
   const byID = new Map(graph.lanes.map((item) => [item.id, item]))
-  return lane.dependsOn.filter((dependency) => byID.get(dependency)?.status !== "complete")
+  return lane.dependsOn.filter((dependency) => {
+    const dep = byID.get(dependency)
+    return !(
+      dep?.status === "complete" ||
+      ((dep?.status === "skipped" || dep?.status === "blocked") &&
+        dep.releaseRequired === false &&
+        dep.coverageImpact !== "blocks_release")
+    )
+  })
 }
 
 function selectReadyLane(graph: OperationGraphRecord) {
@@ -61,6 +80,14 @@ function selectReadyLane(graph: OperationGraphRecord) {
     if (lane.status !== "ready" && lane.status !== "pending") return false
     return dependenciesComplete(graph, lane)
   })
+}
+
+function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date) {
+  if (!goal || goal.status !== "active" || goal.targetDurationHours === undefined) return false
+  const createdAt = Date.parse(goal.createdAt)
+  if (!Number.isFinite(createdAt)) return false
+  const elapsedHours = (now.getTime() - createdAt) / 60 / 60 / 1000
+  return elapsedHours < goal.targetDurationHours * 0.8
 }
 
 function promptForLane(lane: OperationLane) {
@@ -85,11 +112,13 @@ async function writeNextAction(worktree: string, action: OperationNextAction) {
   return file
 }
 
-export async function decideOperationNext(worktree: string, input: { operationID: string }) {
+export async function decideOperationNext(worktree: string, input: { operationID: string; now?: Date | string }) {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphRecord>(path.join(root, "plans", "operation-graph.json"))
   const runtime = await readJson<RuntimeSummaryRecord>(path.join(root, "deliverables", "runtime-summary.json"))
+  const goal = (await readOperationGoal(worktree, operationID)).goal
+  const now = input.now instanceof Date ? input.now : input.now ? new Date(input.now) : new Date()
 
   if (!graph) {
     const action: OperationNextAction = {
@@ -129,11 +158,36 @@ export async function decideOperationNext(worktree: string, input: { operationID
   const lane = selectReadyLane(graph)
   if (!lane) {
     const incomplete = graph.lanes.find((item) => item.status !== "complete")
-    const blockers = incomplete ? blockedDependencies(graph, incomplete).map((dependency) => `${incomplete.id} waits for ${dependency}`) : []
+    const coverage = (goal?.targetDurationHours ?? 0) >= 1 ? await evaluateCoverageReadiness(worktree, operationID) : undefined
+    if (!incomplete && coverage && !coverage.ok) {
+      const action: OperationNextAction = {
+        operationID,
+        action: "wait",
+        reason: "coverage contract is not release-ready",
+        recommendedTools: ["operation_supervise", "operation_run", "runtime_scheduler", "operation_status"],
+        blockers: coverage.gaps,
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
+    if (!incomplete && targetWindowStillOpen(goal, now)) {
+      const action: OperationNextAction = {
+        operationID,
+        action: "wait",
+        reason: `target runtime window is still open for active ${goal?.targetDurationHours}h goal`,
+        recommendedTools: ["operation_supervise", "runtime_scheduler", "operation_status", "operation_audit"],
+        blockers: [],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
+    const blockers = incomplete
+      ? blockedDependencies(graph, incomplete).map((dependency) => `${incomplete.id} waits for ${dependency}`)
+      : []
     const action: OperationNextAction = {
       operationID,
       action: incomplete ? "wait" : "stop",
-      reason: incomplete ? "no lane is ready because dependencies are still incomplete" : "all operation lanes are complete",
+      reason: incomplete
+        ? "no lane is ready because dependencies are still incomplete"
+        : "all operation lanes are complete",
       laneID: incomplete?.id,
       recommendedTools: incomplete ? ["operation_status", "task_status"] : ["operation_audit", "report_lint"],
       blockers,

@@ -5,7 +5,7 @@
   "objective": "Prove the accelerated overnight harness exercises the supervisor, stale command recovery, tool inventory, runtime summary, and final audit completion contract.",
   "checks": [
     "20-hour operation goal is created",
-    "plan-plan and durable operation plan are written",
+    "Discovery Charter and durable operation plan are written",
     "supervisor lane exists in the operation graph",
     "stale command lane is simulated and recovered",
     "tool inventory and runtime summary artifacts are present",

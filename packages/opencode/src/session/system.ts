@@ -139,6 +139,12 @@ async function ulmOperationContext(worktree: string) {
       ? `runtime_system: kind=${inventory.system.runtimeKind ?? "unknown"} distro=${inventory.system.distro ?? "unknown"} package_managers=${inventory.system.packageManagers?.join(",") || "none"} browsers=${inventory.system.browsers?.join(",") || "none"} containers=${inventory.system.containerTools?.join(",") || "none"}`
       : undefined,
     memory ? `operation_memory: ${memory.file}` : "operation_memory: missing; call operation_memory append when important details must survive compaction",
+    "planning_gate_policy: for pentest runs of 2h or more, ask scope questions until actionable, write a Discovery Charter for research/recon/questions/time investment, wait for explicit Discovery Charter approval, then write the full duration-aware operation_plan",
+    "discovery_charter_policy: the Discovery Charter is not the final execution plan; it is the strategy for learning where to invest time, what to ask, what to recon, and whether enough safe deep work exists to fill the budget",
+    "full_plan_confidence_policy: do not write the actual full operation_plan for 2h+ runs until duration-fit confidence is duration_sized with evidence and an overflow backlog",
+    "budget_sized_work_policy: the full plan must allocate enough safe primary, fallback, retry, reporting, and follow-up-question work for the requested duration; completion is coverage-based, not clock-burning",
+    "coverage_contract_policy: final stop and handoff require coverage contract release, report gates, runtime summary, and supervisor release_handoff; compact is maintenance only and never counts as progress",
+    "skip_policy: skip or block ambiguous work only with a durable reason plus alternate safe work or an operator question; skipped/blocked coverage lanes do not silently satisfy handoff",
     "foreground_command_policy: commands expected over 2 minutes must use command_supervise, task background=true, runtime_scheduler, or runtime_daemon instead of foreground waiting",
     "operator_availability_policy: assume the operator is unavailable after execution starts; do not wait for new operator input, honor the original authorized scope, work around ambiguity with conservative skip/decline defaults, and write durable notes",
     operatorTimeoutMillis === undefined

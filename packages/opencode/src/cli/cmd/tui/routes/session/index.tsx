@@ -82,7 +82,7 @@ import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import * as Model from "../../util/model"
-import { formatTranscript } from "../../util/transcript"
+import { formatTranscript, type TranscriptOptions } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
@@ -145,6 +145,18 @@ export function Session() {
     if (session()?.parentID) return []
     return children().flatMap((x) => sync.data.question[x.id] ?? [])
   })
+  const fullTranscript = async (sessionData: NonNullable<ReturnType<typeof session>>, options: TranscriptOptions) => {
+    const root = formatTranscript(sessionData, await sync.session.messages(sessionData.id), options)
+    const descendants = await Promise.all(
+      children()
+        .filter((child) => child.parentID === sessionData.id)
+        .map(async (child) => formatTranscript(child, await sync.session.messages(child.id), options)),
+    )
+    if (!descendants.length) return root
+    return (
+      [root.trimEnd(), "# Descendant Sessions", ...descendants.map((item) => item.trimEnd())].join("\n\n---\n\n") + "\n"
+    )
+  }
   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
@@ -874,17 +886,12 @@ export function Session() {
         try {
           const sessionData = session()
           if (!sessionData) return
-          const sessionMessages = messages()
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: showThinking(),
-              toolDetails: showDetails(),
-              assistantMetadata: showAssistantMetadata(),
-              providers: sync.data.provider,
-            },
-          )
+          const transcript = await fullTranscript(sessionData, {
+            thinking: showThinking(),
+            toolDetails: showDetails(),
+            assistantMetadata: showAssistantMetadata(),
+            providers: sync.data.provider,
+          })
           await Clipboard.copy(transcript)
           toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
         } catch {
@@ -905,7 +912,6 @@ export function Session() {
         try {
           const sessionData = session()
           if (!sessionData) return
-          const sessionMessages = messages()
 
           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
 
@@ -920,16 +926,12 @@ export function Session() {
 
           if (options === null) return
 
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: options.thinking,
-              toolDetails: options.toolDetails,
-              assistantMetadata: options.assistantMetadata,
-              providers: sync.data.provider,
-            },
-          )
+          const transcript = await fullTranscript(sessionData, {
+            thinking: options.thinking,
+            toolDetails: options.toolDetails,
+            assistantMetadata: options.assistantMetadata,
+            providers: sync.data.provider,
+          })
 
           if (options.openWithoutSaving) {
             // Just open in editor without saving

@@ -3,10 +3,10 @@ import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
 import { decideOperationNext, type OperationNextAction } from "./operation-next"
-import type { OperationGraphRecord, OperationLane } from "./operation-graph"
+import type { OperationGraphRecord, OperationLane, OperationLaneCoverageImpact } from "./operation-graph"
 import { syncWorkQueueJobs } from "./work-queue"
 
-export type OperationRunMode = "advance" | "complete_lane" | "fail_lane"
+export type OperationRunMode = "advance" | "complete_lane" | "skip_lane" | "block_lane" | "fail_lane"
 
 export type OperationRunInput = {
   operationID: string
@@ -16,6 +16,8 @@ export type OperationRunInput = {
   summary?: string
   artifacts?: readonly string[]
   evidenceRefs?: readonly string[]
+  coverageImpact?: OperationLaneCoverageImpact
+  releaseRequired?: boolean
   autoComplete?: boolean
   backgroundJobs?: BackgroundJob.Info[]
 }
@@ -39,6 +41,8 @@ export type OperationRunResult = {
   }
   commandProfiles?: string[]
   completedLanes: string[]
+  skippedLanes: string[]
+  blockedLanes: string[]
   failedLanes: string[]
   syncedJobs: string[]
   syncedWorkUnits: string[]
@@ -58,6 +62,8 @@ export type OperationRuntimeSyncResult = {
   graph: OperationGraphRecord
   graphPath: string
   completedLanes: string[]
+  skippedLanes: string[]
+  blockedLanes: string[]
   failedLanes: string[]
   syncedJobs: string[]
   syncedWorkUnits: string[]
@@ -68,11 +74,13 @@ export type OperationRuntimeSyncResult = {
 export type LaneCompletionProof = {
   operationID: string
   laneID: string
-  status: "complete"
+  status: "complete" | "skipped" | "blocked" | "failed"
   completedAt: string
   summary: string
   artifacts: string[]
   evidenceRefs: string[]
+  coverageImpact?: OperationLaneCoverageImpact
+  releaseRequired?: boolean
   jobID?: string
 }
 
@@ -125,7 +133,17 @@ function findLane(graph: OperationGraphRecord, laneID: string) {
 }
 
 function markDependentsReady(graph: OperationGraphRecord) {
-  const complete = new Set(graph.lanes.filter((lane) => lane.status === "complete").map((lane) => lane.id))
+  const complete = new Set(
+    graph.lanes
+      .filter(
+        (lane) =>
+          lane.status === "complete" ||
+          ((lane.status === "skipped" || lane.status === "blocked") &&
+            lane.releaseRequired === false &&
+            lane.coverageImpact !== "blocks_release"),
+      )
+      .map((lane) => lane.id),
+  )
   for (const lane of graph.lanes) {
     if (lane.status === "pending" && lane.dependsOn.every((dependency) => complete.has(dependency))) {
       lane.status = "ready"
@@ -159,7 +177,13 @@ function artifactCoversExpected(artifact: string, expected: string) {
 }
 
 function laneRequiresEvidenceRefs(lane: OperationLane) {
-  return ["evidence_normalization", "finding_validation", "report_writing", "report_review", "operator_summary"].includes(lane.id)
+  return [
+    "evidence_normalization",
+    "finding_validation",
+    "report_writing",
+    "report_review",
+    "operator_summary",
+  ].includes(lane.id)
 }
 
 async function validateLaneCompletionProof(root: string, lane: OperationLane, proof: LaneCompletionProof) {
@@ -169,13 +193,15 @@ async function validateLaneCompletionProof(root: string, lane: OperationLane, pr
   if (proof.status !== "complete") blockers.push("proof status must be complete")
   if (!proof.summary.trim()) blockers.push("proof summary is required")
   if (!proof.artifacts.length) blockers.push("proof artifacts are required")
-  if (laneRequiresEvidenceRefs(lane) && !proof.evidenceRefs.length) blockers.push(`${lane.id}: evidenceRefs are required`)
+  if (laneRequiresEvidenceRefs(lane) && !proof.evidenceRefs.length)
+    blockers.push(`${lane.id}: evidenceRefs are required`)
   for (const artifact of proof.artifacts) {
     if (!artifact || path.isAbsolute(artifact) || artifact.includes("..")) {
       blockers.push(`invalid proof artifact path: ${artifact}`)
       continue
     }
-    if (!(await expectedArtifactExists(root, artifact))) blockers.push(`proof artifact is missing or empty: ${artifact}`)
+    if (!(await expectedArtifactExists(root, artifact)))
+      blockers.push(`proof artifact is missing or empty: ${artifact}`)
   }
   for (const expected of lane.expectedArtifacts) {
     if (!proof.artifacts.some((artifact) => artifactCoversExpected(artifact, expected))) {
@@ -212,6 +238,30 @@ async function persistLaneCompletionProof(root: string, proof: LaneCompletionPro
   await writeJson(laneProofPath(root, proof.laneID), proof)
 }
 
+async function persistLaneTerminalProof(
+  root: string,
+  lane: OperationLane,
+  input: OperationRunInput,
+  status: "skipped" | "blocked",
+) {
+  const proof: LaneCompletionProof = {
+    operationID: lane.operationID,
+    laneID: lane.id,
+    status,
+    completedAt: new Date().toISOString(),
+    summary: input.summary?.trim() || "",
+    artifacts: [...(input.artifacts ?? [])],
+    evidenceRefs: [...(input.evidenceRefs ?? [])],
+    coverageImpact: input.coverageImpact ?? lane.coverageImpact ?? (status === "blocked" ? "blocks_release" : "high"),
+    releaseRequired: input.releaseRequired ?? lane.releaseRequired ?? true,
+    ...(input.jobID ? { jobID: input.jobID } : {}),
+  }
+  const blockers: string[] = []
+  if (!proof.summary) blockers.push(`${lane.id}: ${status} lanes require summary`)
+  if (!blockers.length) await persistLaneCompletionProof(root, proof)
+  return { proof, blockers }
+}
+
 async function readLaneCompletionProof(root: string, lane: OperationLane) {
   const proof = await readJson<LaneCompletionProof>(laneProofPath(root, lane.id))
   if (!proof) return undefined
@@ -229,13 +279,19 @@ async function autoCompleteLanes(root: string, graph: OperationGraphRecord) {
     if (!proof) continue
     if (!(await proofIsValid(root, lane, proof))) continue
     lane.status = "complete"
+    lane.terminalState = "complete"
     completed.push(lane.id)
   }
   if (completed.length) markDependentsReady(graph)
   return completed
 }
 
-async function syncBackgroundJobs(root: string, graph: OperationGraphRecord, operationID: string, jobs: BackgroundJob.Info[] | undefined) {
+async function syncBackgroundJobs(
+  root: string,
+  graph: OperationGraphRecord,
+  operationID: string,
+  jobs: BackgroundJob.Info[] | undefined,
+) {
   const completed: string[] = []
   const failed: string[] = []
   const synced: string[] = []
@@ -262,10 +318,12 @@ async function syncBackgroundJobs(root: string, graph: OperationGraphRecord, ope
       const proof = await readLaneCompletionProof(root, lane)
       if (!proof || !(await proofIsValid(root, lane, proof))) continue
       lane.status = "complete"
+      lane.terminalState = "complete"
       completed.push(lane.id)
     }
     if ((job.status === "error" || job.status === "cancelled" || job.status === "stale") && lane.status !== "failed") {
       lane.status = "failed"
+      lane.terminalState = "failed"
       failed.push(lane.id)
     }
   }
@@ -318,6 +376,8 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   })
   const graph = synced.graph
   const completedLanes = [...synced.completedLanes]
+  const skippedLanes = [...synced.skippedLanes]
+  const blockedLanes = [...synced.blockedLanes]
   const failedLanes = [...synced.failedLanes]
   const syncedJobs = [...synced.syncedJobs]
   const syncedWorkUnits = [...synced.syncedWorkUnits]
@@ -325,26 +385,46 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   const failedWorkUnits = [...synced.failedWorkUnits]
   const blockers: string[] = []
 
-  if (mode === "complete_lane" || mode === "fail_lane") {
+  if (mode === "complete_lane" || mode === "skip_lane" || mode === "block_lane" || mode === "fail_lane") {
     if (!input.laneID) throw new Error(`${mode} requires laneID`)
     const lane = findLane(graph, input.laneID)
     if (mode === "complete_lane") {
       const proof = await validateInputProof(root, lane, input)
+      if (lane.status !== "running") {
+        blockers.push(`${lane.id}: lane must be running before it can be completed`)
+      }
       if (proof.blockers.length) {
         blockers.push(...proof.blockers)
-      } else {
+      }
+      if (!blockers.length) {
         await persistLaneCompletionProof(root, proof.proof)
         lane.status = "complete"
+        lane.terminalState = "complete"
         completedLanes.push(lane.id)
+        markDependentsReady(graph)
+      }
+    } else if (mode === "skip_lane" || mode === "block_lane") {
+      const status = mode === "skip_lane" ? "skipped" : "blocked"
+      const proof = await persistLaneTerminalProof(root, lane, input, status)
+      if (proof.blockers.length) blockers.push(...proof.blockers)
+      if (!blockers.length) {
+        lane.status = status
+        lane.terminalState = status
+        lane.skipReason = proof.proof.summary
+        lane.coverageImpact = proof.proof.coverageImpact
+        lane.releaseRequired = proof.proof.releaseRequired
+        if (status === "skipped") skippedLanes.push(lane.id)
+        else blockedLanes.push(lane.id)
         markDependentsReady(graph)
       }
     } else {
       lane.status = "failed"
+      lane.terminalState = "failed"
       failedLanes.push(lane.id)
     }
   }
 
-  if (completedLanes.length || failedLanes.length) {
+  if (completedLanes.length || skippedLanes.length || blockedLanes.length || failedLanes.length) {
     graph.updatedAt = new Date().toISOString()
     await writeJson(synced.graphPath, graph)
   }
@@ -387,6 +467,8 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     taskParams,
     commandProfiles,
     completedLanes,
+    skippedLanes,
+    blockedLanes,
     failedLanes,
     syncedJobs,
     syncedWorkUnits,
@@ -423,6 +505,8 @@ export async function syncOperationRuntimeState(
     graph,
     graphPath,
     completedLanes,
+    skippedLanes: [],
+    blockedLanes: [],
     failedLanes,
     syncedJobs: jobSync.synced,
     syncedWorkUnits: queueSync.syncedUnits,
@@ -445,6 +529,14 @@ export function formatOperationRun(result: OperationRunResult) {
     "## Completed Lanes",
     "",
     ...(result.completedLanes.length ? result.completedLanes.map((lane) => `- ${lane}`) : ["- none"]),
+    "",
+    "## Skipped Lanes",
+    "",
+    ...(result.skippedLanes.length ? result.skippedLanes.map((lane) => `- ${lane}`) : ["- none"]),
+    "",
+    "## Blocked Lanes",
+    "",
+    ...(result.blockedLanes.length ? result.blockedLanes.map((lane) => `- ${lane}`) : ["- none"]),
     "",
     "## Failed Lanes",
     "",

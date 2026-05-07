@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import fs from "fs/promises"
+import { writeCoverageContract, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { superviseOperation } from "@/ulm/operation-supervisor"
@@ -89,9 +90,36 @@ describe("ULM operation supervisor", () => {
       writeArtifacts: false,
     })
 
-    expect(review.decisions[0]?.action).toBe("reporting_ready")
+    expect(review.decisions[0]?.action).toBe("continue_coverage")
     expect(review.planExcerpt?.maxChars).toBe(80)
     expect(review.planExcerpt?.content).toContain("[ULM operation plan truncated at 80 chars]")
     expect(review.latestAssistantMessage).toBe("Done for now.")
+  })
+
+  test("returns continue_coverage when coverage is unmet even after lanes look complete", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized three hour assessment", targetDurationHours: 3 })
+    await writeMinimalPlan(dir.path)
+    const graph = await writeOperationGraph(dir.path, { operationID: "school" })
+    const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    parsed.lanes = parsed.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(graph.json, JSON.stringify(parsed, null, 2) + "\n")
+    await writeCoverageContract(dir.path, {
+      operationID: "school",
+      status: "unmet",
+      goals: ["Internal network coverage"],
+      minimumEvidence: ["One partial TCP sweep is not enough."],
+      requiredLanes: ["recon", "web_inventory", "finding_validation", "report_review"],
+      allowedSkippedLanes: [],
+      fallbackRules: ["Chunk timed-out scan ranges."],
+      retryRules: ["Retry with lower concurrency."],
+      subagentOpportunities: ["parallel recon review"],
+      reportGates: ["report_lint finalHandoff=true"],
+    })
+
+    const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
+
+    const coverageDecision = review.decisions.find((item) => item.action === "continue_coverage")
+    expect(coverageDecision?.requiredNextTool).toBe("operation_run")
   })
 })

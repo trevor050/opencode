@@ -29,11 +29,15 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.map((lane) => lane.id)).toEqual([...REQUIRED_OPERATION_LANES])
     expect(validateOperationGraph(graph)).toEqual([])
     expect(graph.lanes.find((lane) => lane.id === "district_profile")?.status).toBe("ready")
-    expect(graph.lanes.find((lane) => lane.id === "recon")?.status).toBe("pending")
+    expect(graph.lanes.find((lane) => lane.id === "person_recon")?.status).toBe("ready")
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.status).toBe("ready")
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.dependsOn).toEqual([])
     expect(graph.lanes.find((lane) => lane.id === "report_writing")?.dependsOn).toEqual(["report_evidence_index"])
     expect(graph.lanes.every((lane) => lane.modelRoute.includes("/"))).toBe(true)
     expect(graph.lanes.every((lane) => lane.fallbackModelRoutes.length >= 1)).toBe(true)
     expect(graph.lanes.find((lane) => lane.id === "recon")?.fallbackModelRoutes).toContain("openai/gpt-5.4-mini-fast")
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.coverageImpact).toBe("blocks_release")
+    expect(graph.lanes.find((lane) => lane.id === "report_review")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(20, 2)
   })
 
@@ -43,7 +47,9 @@ describe("ULM operation graph", () => {
     graph.lanes[0]!.allowedTools.push("shell")
 
     expect(validateOperationGraph(graph)).toContain("missing required lane: report_review")
-    expect(validateOperationGraph(graph)).toContain("district_profile: non_destructive lanes must use command_supervise instead of raw shell")
+    expect(validateOperationGraph(graph)).toContain(
+      "district_profile: non_destructive lanes must use command_supervise instead of raw shell",
+    )
   })
 
   test("writes a durable operation graph artifact", async () => {

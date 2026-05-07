@@ -51,7 +51,11 @@ function firstReadyLane(graph: OperationGraphRecord) {
   })
 }
 
-function modelCallCount(runtime: RuntimeSummaryRecord | undefined, route: string | undefined, modelID: string | undefined) {
+function modelCallCount(
+  runtime: RuntimeSummaryRecord | undefined,
+  route: string | undefined,
+  modelID: string | undefined,
+) {
   if (!runtime?.modelCalls?.byModel) return 0
   if (route && runtime.modelCalls.byModel[route] !== undefined) return runtime.modelCalls.byModel[route]
   if (modelID && runtime.modelCalls.byModel[modelID] !== undefined) return runtime.modelCalls.byModel[modelID]
@@ -73,11 +77,10 @@ function decideFromRuntime(input: {
     usage?.remainingUSD ??
     (usage?.budgetUSD !== undefined && usage.costUSD !== undefined ? usage.budgetUSD - usage.costUSD : undefined)
   const laneBudgetUSD = input.lane?.budget.maxUSD
-  const laneSpent = input.lane ? (usage?.byLane?.[input.lane.id]?.costUSD ?? usage?.byAgent?.[input.lane.agent]?.costUSD) : undefined
+  const laneSpent = input.lane
+    ? (usage?.byLane?.[input.lane.id]?.costUSD ?? usage?.byAgent?.[input.lane.agent]?.costUSD)
+    : undefined
   const model = input.lane ? resolveModelRuntime(input.lane.modelRoute, input.modelCatalog) : undefined
-  const totalTokens = usage?.totalTokens ?? 0
-  const outputTokens = usage?.outputTokens ?? 0
-  const contextRatio = model?.contextLimit ? Number((totalTokens / model.contextLimit).toFixed(4)) : undefined
   const routeCalls = modelCallCount(input.runtime, model?.route, model?.modelID)
 
   if (!input.graph) {
@@ -96,15 +99,6 @@ function decideFromRuntime(input: {
     blockers.push(`model route metadata is missing for ${input.lane.modelRoute}`)
     recommendedTools.push("operation_schedule")
   }
-  if (model && contextRatio !== undefined && contextRatio >= 0.9) {
-    blockers.push(`model context is above 90% for ${model.route}`)
-  }
-  if (model && outputTokens >= model.outputLimit * 0.9) {
-    blockers.push(`model output tokens are near limit for ${model.route}`)
-  }
-  if (model?.costCliffTokens && totalTokens >= model.costCliffTokens * 0.9) {
-    blockers.push(`model cost cliff is near ${model.costCliffTokens} tokens for ${model.route}`)
-  }
   if (model?.quota?.maxCalls !== undefined && routeCalls >= model.quota.maxCalls) {
     blockers.push(`model route quota exhausted for ${model.route}`)
   }
@@ -115,7 +109,10 @@ function decideFromRuntime(input: {
 
   if (
     blockers.some(
-      (item) => item.includes("budget exhausted") || item.includes("output tokens are near limit") || item.includes("quota exhausted"),
+      (item) =>
+        item.includes("budget exhausted") ||
+        item.includes("output tokens are near limit") ||
+        item.includes("quota exhausted"),
     )
   ) {
     return {
@@ -129,7 +126,6 @@ function decideFromRuntime(input: {
       contextPressure: pressure,
       modelContextLimit: model?.contextLimit,
       modelOutputLimit: model?.outputLimit,
-      contextRatio,
       costCliffTokens: model?.costCliffTokens,
       providerKind: model?.providerKind,
       fallbackModelRoutes: input.lane?.fallbackModelRoutes,
@@ -141,7 +137,9 @@ function decideFromRuntime(input: {
   if (
     pressure === "critical" ||
     pressure === "high" ||
-    blockers.some((item) => item.includes("model context") || item.includes("cost cliff") || item.includes("model route metadata"))
+    blockers.some(
+      (item) => item.includes("model context") || item.includes("cost cliff") || item.includes("model route metadata"),
+    )
   ) {
     return {
       operationID: input.operationID,
@@ -154,7 +152,6 @@ function decideFromRuntime(input: {
       contextPressure: pressure,
       modelContextLimit: model?.contextLimit,
       modelOutputLimit: model?.outputLimit,
-      contextRatio,
       costCliffTokens: model?.costCliffTokens,
       providerKind: model?.providerKind,
       fallbackModelRoutes: input.lane?.fallbackModelRoutes,
@@ -175,7 +172,6 @@ function decideFromRuntime(input: {
       contextPressure: pressure,
       modelContextLimit: model?.contextLimit,
       modelOutputLimit: model?.outputLimit,
-      contextRatio,
       costCliffTokens: model?.costCliffTokens,
       providerKind: model?.providerKind,
       fallbackModelRoutes: input.lane?.fallbackModelRoutes,
@@ -188,14 +184,15 @@ function decideFromRuntime(input: {
     operationID: input.operationID,
     laneID: input.lane?.id,
     action: "continue",
-    reason: input.lane ? `lane ${input.lane.id} is within recorded runtime limits` : "operation is within recorded runtime limits",
+    reason: input.lane
+      ? `lane ${input.lane.id} is within recorded runtime limits`
+      : "operation is within recorded runtime limits",
     modelRoute: input.lane?.modelRoute,
     remainingUSD,
     laneBudgetUSD,
     contextPressure: pressure,
     modelContextLimit: model?.contextLimit,
     modelOutputLimit: model?.outputLimit,
-    contextRatio,
     costCliffTokens: model?.costCliffTokens,
     providerKind: model?.providerKind,
     fallbackModelRoutes: input.lane?.fallbackModelRoutes,
@@ -212,7 +209,11 @@ export async function evaluateRuntimeGovernor(
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphRecord>(path.join(root, "plans", "operation-graph.json"))
   const runtime = await readJson<RuntimeSummaryRecord>(path.join(root, "deliverables", "runtime-summary.json"))
-  const lane = input.laneID ? graph?.lanes.find((item) => item.id === input.laneID) : graph ? firstReadyLane(graph) : undefined
+  const lane = input.laneID
+    ? graph?.lanes.find((item) => item.id === input.laneID)
+    : graph
+      ? firstReadyLane(graph)
+      : undefined
   if (input.laneID && graph && !lane) {
     return {
       operationID,

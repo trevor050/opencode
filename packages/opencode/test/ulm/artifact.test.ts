@@ -22,6 +22,7 @@ import {
   writeOperationCheckpoint,
   writeOperationPlan,
   writeEvalScorecard,
+  writeCoverageContract,
   writePersonProfile,
   writeReportOutline,
   writeRuntimeSummary,
@@ -53,32 +54,38 @@ async function completeGraphForHandoff(worktree: string, operationID = "school")
         } catch {}
         await fs.writeFile(
           target,
-          artifact === "reports/report.md"
-            ? [
-                "# Assessment Report",
-                "",
-                "## Executive Summary",
-                "complete ".repeat(20),
-                "## Scope, Authorization, and Methodology",
-                "complete ".repeat(20),
-                "## District Profile and Environment Overview",
-                "complete ".repeat(20),
-                "## People, Roles, and Identity Graph",
-                "complete ".repeat(20),
-                "## Attack Path Narrative",
-                "complete ".repeat(20),
-                "## Findings Detail",
-                "complete ".repeat(20),
-                "## Risk Register and Prioritized Roadmap",
-                "complete ".repeat(20),
-                "## Validation Limits and Known Unknowns",
-                "complete ".repeat(20),
-                "## Evidence Map",
-                "complete ".repeat(20),
-                "## Appendix: Raw Evidence Index",
-                "complete ".repeat(20),
-              ].join("\n")
-            : "complete\n",
+          artifact.endsWith(".json")
+            ? "{}\n"
+            : artifact === "reports/report.md"
+              ? [
+                  "# Assessment Report",
+                  "",
+                  "## Executive Summary",
+                  "complete ".repeat(20),
+                  "## Scope, Authorization, and Methodology",
+                  "complete ".repeat(20),
+                  "## District Profile and Environment Overview",
+                  "complete ".repeat(20),
+                  "## People, Roles, and Identity Graph",
+                  "complete ".repeat(20),
+                  "## Attack Path Narrative",
+                  "complete ".repeat(20),
+                  "## Findings Detail",
+                  "complete ".repeat(20),
+                  "## Risk Register and Prioritized Roadmap",
+                  "complete ".repeat(20),
+                  "## Coverage, Browser Evidence, and Testing Limits",
+                  "complete ".repeat(20),
+                  "## Validation Limits and Known Unknowns",
+                  "complete ".repeat(20),
+                  "## Evidence Map",
+                  "complete ".repeat(20),
+                  "## Operator Handoff Checklist",
+                  "complete ".repeat(20),
+                  "## Appendix: Raw Evidence Index",
+                  "complete ".repeat(20),
+                ].join("\n")
+              : "complete\n",
         )
       }
     }
@@ -103,6 +110,19 @@ async function completeGraphForHandoff(worktree: string, operationID = "school")
       ),
     )
   }
+  await writeCoverageContract(worktree, {
+    operationID,
+    status: "released",
+    goals: ["All required handoff lanes completed."],
+    minimumEvidence: ["Lane completion proofs and report artifacts exist."],
+    requiredLanes: parsed.lanes.map((lane: { id: string }) => lane.id),
+    allowedSkippedLanes: [],
+    fallbackRules: ["No fallback required for synthetic handoff fixture."],
+    retryRules: ["No retry required for synthetic handoff fixture."],
+    subagentOpportunities: ["Report review lanes."],
+    reportGates: ["report_lint finalHandoff=true"],
+    releaseNotes: ["Synthetic test fixture released coverage."],
+  })
 }
 
 describe("ULM artifact ledger", () => {
@@ -123,7 +143,7 @@ describe("ULM artifact ledger", () => {
 
     expect(result.record.operationID).toBe("school-assessment")
     expect(await fs.readFile(path.join(result.root, "status.md"), "utf8")).toContain("Recon lane started.")
-    expect(await fs.readFile(path.join(result.root, "events.jsonl"), "utf8")).toContain("\"type\":\"checkpoint\"")
+    expect(await fs.readFile(path.join(result.root, "events.jsonl"), "utf8")).toContain('"type":"checkpoint"')
   })
 
   test("publishes operation update events after durable writes", async () => {
@@ -194,7 +214,7 @@ describe("ULM artifact ledger", () => {
       kind: "command_output",
       summary: "Policy export shows privileged MFA is optional.",
       command: "idpctl policy export --json",
-      content: "{\"adminMfa\":\"optional\"}",
+      content: '{"adminMfa":"optional"}',
     })
 
     expect(await fs.readFile(result.rawPath!, "utf8")).toContain("adminMfa")
@@ -801,6 +821,9 @@ describe("ULM artifact ledger", () => {
       backgroundTasks: [],
     })
     const result = await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
+    const renderedPdf = await fs.readFile(result.pdf, "utf8")
+    expect(renderedPdf).toContain("/ULMCodeRenderer (styled-html)")
+    expect(renderedPdf).toContain(" re f")
     await completeGraphForHandoff(worktree)
 
     const cleanLint = await lintReport(worktree, "school", { finalHandoff: true })
@@ -810,6 +833,12 @@ describe("ULM artifact ledger", () => {
     let lint = await lintReport(worktree, "school", { finalHandoff: true })
     expect(lint.ok).toBe(false)
     expect(lint.gaps).toContain("deliverables/final/report.pdf is not a readable PDF")
+
+    await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
+    await fs.writeFile(result.pdf, "%PDF-1.4\n1 0 obj\n<< /BaseFont /Helvetica >>\nendobj\n%%EOF\n")
+    lint = await lintReport(worktree, "school", { finalHandoff: true })
+    expect(lint.ok).toBe(false)
+    expect(lint.gaps).toContain("deliverables/final/report.pdf was rendered by the legacy text-only renderer")
 
     await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
     await fs.writeFile(
@@ -1573,7 +1602,9 @@ describe("ULM artifact ledger", () => {
     expect(lanes).toContain("report_evidence_index")
     expect(lanes).toContain("report_technical_review")
     expect(lanes).toContain("report_executive_review")
-    expect(parsed.lanes.find((lane: { id: string; agent: string }) => lane.id === "person_recon").agent).toBe("person-recon")
+    expect(parsed.lanes.find((lane: { id: string; agent: string }) => lane.id === "person_recon").agent).toBe(
+      "person-recon",
+    )
   })
 
   test("writes K-12 district, person, and identity graph artifacts for recon lanes", async () => {
@@ -1603,7 +1634,9 @@ describe("ULM artifact ledger", () => {
       whyTheyMatter: "Likely approval authority for student discipline and guardian communications workflows.",
       likelyAccess: ["SIS discipline", "guardian messaging"],
       publicContacts: [{ type: "email", value: "alex.principal@example.edu", source: "district staff directory" }],
-      sources: [{ title: "Staff Directory", url: "https://example.edu/staff", summary: "District-published role and email." }],
+      sources: [
+        { title: "Staff Directory", url: "https://example.edu/staff", summary: "District-published role and email." },
+      ],
       validationIdeas: ["Check whether principal accounts receive elevated SIS roles in authorized identity exports."],
       excludedPrivateInfo: ["Ignored personal social media because it was not needed for the engagement."],
     })
@@ -1615,7 +1648,12 @@ describe("ULM artifact ledger", () => {
         { id: "role:principal", kind: "role", label: "Principal" },
       ],
       edges: [
-        { from: "person:alex-principal", to: "role:principal", relationship: "has_role", evidence: ["person:alex-principal"] },
+        {
+          from: "person:alex-principal",
+          to: "role:principal",
+          relationship: "has_role",
+          evidence: ["person:alex-principal"],
+        },
         { from: "role:principal", to: "app:sis", relationship: "likely_access", evidence: ["public profile"] },
       ],
       notes: ["Identity graph is based on public role evidence until export validation is available."],
@@ -1644,6 +1682,161 @@ describe("ULM artifact ledger", () => {
         reportingCloseout: ["Write report."],
       }),
     ).rejects.toThrow("phase 1 requires at least one action")
+  })
+
+  test("requires approval, time budget, coverage, retry, and finalization details for 2h+ operation plans", async () => {
+    const worktree = await tmpdir()
+
+    await expect(
+      writeOperationPlan(worktree, {
+        operationID: "school",
+        planningApproval: { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
+        timeBudget: {
+          targetHours: 3,
+          allocations: [{ stage: "recon", hours: 2.5, work: "Inventory the authorized network." }],
+        },
+        coverageContract: {
+          status: "unmet",
+          goals: ["Inventory the internal network."],
+          minimumEvidence: ["At least one TCP sweep output."],
+          requiredLanes: ["recon", "web_inventory", "finding_validation", "report_review"],
+          allowedSkippedLanes: [],
+          fallbackRules: [],
+          retryRules: [],
+          subagentOpportunities: [],
+          reportGates: ["report_lint"],
+        },
+        phases: [
+          {
+            stage: "recon",
+            objective: "Map authorized targets.",
+            actions: ["Run chunked service inventory."],
+            successCriteria: ["Inventory evidence exists."],
+            subagents: ["recon"],
+            noSubagents: ["Operator approval decisions"],
+          },
+        ],
+        reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary"],
+      }),
+    ).rejects.toThrow("2h+ operation plan requires planningApproval.status=approved")
+
+    const result = await writeOperationPlan(worktree, {
+      operationID: "school",
+      planningApproval: { status: "approved", discoveryCharterPath: "plans/discovery-charter.md", approver: "operator" },
+      discoveryCharter: {
+        purpose: "Research, recon, and question strategy before writing the actual plan.",
+        researchQuestions: [
+          "Which host classes are in scope?",
+          "Which identity systems are safe to inspect?",
+          "Which report audience needs evidence depth?",
+        ],
+        reconInvestments: ["Chunked host discovery", "Web inventory", "Identity surface inventory"],
+        operatorQuestions: ["Are authenticated identity checks allowed if discovery finds AD?", "Are printer/IoT devices inventory-only?"],
+        candidateDeepWorkLanes: ["Subnet-by-subnet service inventory", "SaaS/cloud exposure review", "Report evidence review"],
+        decisionCriteriaForFullPlan: [
+          "Enough safe lanes exist to fill the requested time budget.",
+          "Fallback/retry lanes exist for timed-out discovery.",
+          "Report closeout has a protected finalization window.",
+        ],
+      },
+      timeBudget: {
+        targetHours: 3,
+        finalizationWindowHours: 0.5,
+        durationFit: {
+          confidence: "duration_sized",
+          evidence: ["Three primary lanes plus fallback/retry work cover the 3h budget."],
+          overflowBacklog: ["Additional low-rate web review", "Secondary role profile pass"],
+        },
+        allocations: [
+          { stage: "recon", hours: 1.25, work: "Chunked internal service inventory." },
+          { stage: "validation", hours: 1.25, work: "Validate evidence-backed findings and retry timed-out chunks." },
+          { stage: "reporting", hours: 0.5, work: "Report lint, render, and audit gates." },
+        ],
+      },
+      coverageContract: {
+        status: "unmet",
+        goals: ["Inventory authorized internal hosts.", "Validate evidence-backed findings."],
+        minimumEvidence: ["TCP sweep for each authorized subnet.", "Service evidence for responsive hosts."],
+        requiredLanes: ["recon", "web_inventory", "finding_validation", "report_review"],
+        allowedSkippedLanes: [],
+        fallbackRules: ["If a scan times out, split the subnet and run smaller supervised chunks."],
+        retryRules: ["Retry timed-out command profiles once with lower concurrency before marking blocked."],
+        subagentOpportunities: ["recon inventory", "report review"],
+        reportGates: ["report_lint finalHandoff=true", "operation_audit finalHandoff=true"],
+      },
+      phases: [
+        {
+          stage: "recon",
+          objective: "Map authorized targets.",
+          actions: ["Run chunked service inventory.", "Retry timed-out chunks with lower concurrency."],
+          successCriteria: ["Inventory evidence exists for each reachable host class."],
+          subagents: ["recon"],
+          noSubagents: ["Operator approval decisions"],
+        },
+        {
+          stage: "reporting",
+          objective: "Close out client-ready deliverables.",
+          actions: ["Run report_lint", "Run report_render", "Run runtime_summary", "Run operation_audit"],
+          successCriteria: ["Coverage contract and report gates release handoff."],
+          subagents: ["report-reviewer"],
+          noSubagents: ["Final client send decision"],
+        },
+      ],
+      reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary", "Run operation_audit"],
+    })
+
+    const coverage = JSON.parse(await fs.readFile(path.join(worktree, ".ulmcode", "operations", "school", "plans", "coverage-contract.json"), "utf8"))
+    expect(coverage.requiredLanes).toContain("recon")
+    expect(await fs.readFile(result.markdown, "utf8")).toContain("## Coverage Contract")
+  })
+
+  test("rejects approved 2h+ plans that do not prove duration-sized work from the Discovery Charter", async () => {
+    const worktree = await tmpdir()
+
+    await expect(
+      writeOperationPlan(worktree, {
+        operationID: "school",
+        planningApproval: { status: "approved", discoveryCharterPath: "plans/discovery-charter.md", approver: "operator" },
+        discoveryCharter: {
+          purpose: "Think a bit before planning.",
+          researchQuestions: ["What hosts exist?"],
+          reconInvestments: [],
+          operatorQuestions: [],
+          candidateDeepWorkLanes: ["Recon"],
+          decisionCriteriaForFullPlan: ["Seems fine."],
+        },
+        timeBudget: {
+          targetHours: 3,
+          finalizationWindowHours: 0.5,
+          allocations: [
+            { stage: "recon", hours: 2.5, work: "Scan a bit." },
+            { stage: "reporting", hours: 0.5, work: "Report." },
+          ],
+        },
+        coverageContract: {
+          status: "unmet",
+          goals: ["Inventory authorized internal hosts."],
+          minimumEvidence: ["TCP sweep output."],
+          requiredLanes: ["recon", "finding_validation", "report_review"],
+          allowedSkippedLanes: [],
+          fallbackRules: ["Retry lower concurrency."],
+          retryRules: ["Retry timed-out chunks."],
+          subagentOpportunities: ["recon"],
+          reportGates: ["report_lint finalHandoff=true"],
+        },
+        phases: [
+          {
+            stage: "recon",
+            objective: "Map authorized targets.",
+            actions: ["Run chunked service inventory."],
+            successCriteria: ["Inventory evidence exists."],
+            subagents: ["recon"],
+            noSubagents: ["Operator approval decisions"],
+          },
+        ],
+        reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary"],
+      }),
+    ).rejects.toThrow("2h+ operation plan requires discoveryCharter.reconInvestments")
   })
 
   test("lints missing final handoff artifacts when required", async () => {

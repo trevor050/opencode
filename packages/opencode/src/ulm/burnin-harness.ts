@@ -52,7 +52,7 @@ export type BurnInProof = {
 export type BurnInSupervisorScenarioProof = {
   operationGoalCreated: boolean
   targetDurationHours: number
-  planPlanWritten: boolean
+  discoveryCharterWritten: boolean
   supervisorLanePresent: boolean
   supervisorReviews: number
   staleCommandLaneSimulated: boolean
@@ -142,9 +142,9 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   })
   await fs.mkdir(path.join(root, "plans"), { recursive: true })
   await fs.writeFile(
-    path.join(root, "plans", "plan-plan.md"),
+    path.join(root, "plans", "discovery-charter.md"),
     [
-      "# Plan-Plan",
+      "# Discovery Charter",
       "",
       "- Confirm authorization and target duration.",
       "- Run bounded discovery before full operation planning.",
@@ -262,7 +262,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   const proof: BurnInSupervisorScenarioProof = {
     operationGoalCreated: goal.created || !!goal.goal,
     targetDurationHours,
-    planPlanWritten: true,
+    discoveryCharterWritten: true,
     supervisorLanePresent: graph.lanes.some((lane: { id?: string }) => lane.id === "supervisor"),
     supervisorReviews: input.completed ? 2 : 1,
     staleCommandLaneSimulated: true,

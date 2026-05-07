@@ -21,7 +21,7 @@ describe("ULM accelerated burn-in harness", () => {
     expect(interrupted.proof.ticks).toBe(3)
     expect(interrupted.proof.supervisorScenario.operationGoalCreated).toBe(true)
     expect(interrupted.proof.supervisorScenario.targetDurationHours).toBe(20)
-    expect(interrupted.proof.supervisorScenario.planPlanWritten).toBe(true)
+    expect(interrupted.proof.supervisorScenario.discoveryCharterWritten).toBe(true)
     expect(interrupted.proof.supervisorScenario.supervisorLanePresent).toBe(true)
     expect(interrupted.proof.supervisorScenario.staleCommandLaneSimulated).toBe(true)
     expect(interrupted.proof.supervisorScenario.staleCommandLaneRecovered).toBe(false)

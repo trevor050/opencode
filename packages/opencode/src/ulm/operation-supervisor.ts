@@ -1,6 +1,13 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, readOperationStatus, slug, type OperationStatusSummary } from "./artifact"
+import {
+  evaluateCoverageReadiness,
+  operationPath,
+  readOperationStatus,
+  slug,
+  type CoverageReadiness,
+  type OperationStatusSummary,
+} from "./artifact"
 import { readOperationPlanExcerpt, type OperationPlanExcerpt } from "./operation-context"
 import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import { effectiveULMContinuation, readULMConfig } from "./config"
@@ -19,6 +26,10 @@ export type OperationSupervisorReviewKind =
 export type OperationSupervisorAction =
   | "continue"
   | "continue_execution"
+  | "continue_coverage"
+  | "continue_reporting"
+  | "ask_operator"
+  | "release_handoff"
   | "reporting_ready"
   | "ask_question"
   | "recover"
@@ -104,7 +115,7 @@ function graphIncomplete(status: OperationStatusSummary) {
 }
 
 function longRunGoal(goal: OperationGoalRecord | undefined) {
-  return (goal?.targetDurationHours ?? 0) >= 8
+  return (goal?.targetDurationHours ?? 0) >= 1
 }
 
 function decisionsFor(input: {
@@ -112,6 +123,7 @@ function decisionsFor(input: {
   goal?: OperationGoalRecord
   status: OperationStatusSummary
   graph?: OperationGraphLike
+  coverage: CoverageReadiness
   finalArtifacts: { operationAudit: boolean; handoffGate: boolean }
 }) {
   const decisions: OperationSupervisorDecision[] = []
@@ -135,7 +147,8 @@ function decisionsFor(input: {
         requiredNextTool: "operation_plan",
         requiredArtifacts: ["plans/operation-plan.json"],
         operatorMessage: "Write the durable operation plan before scheduling or launching broad work.",
-        modelPrompt: "Call operation_plan with ordered phases, success criteria, subagent policy, supervisor handoff, and report closeout.",
+        modelPrompt:
+          "Call operation_plan with ordered phases, success criteria, subagent policy, supervisor handoff, and report closeout.",
       }),
     )
   }
@@ -159,7 +172,21 @@ function decisionsFor(input: {
         requiredNextTool: "operation_schedule",
         requiredArtifacts: ["plans/operation-graph.json"],
         operatorMessage: "Regenerate or extend the lane graph so long runs have a supervisor lane.",
-        modelPrompt: "Update the schedule so a supervisor lane reviews goal drift, stale work, runtime budget, evidence gaps, and handoff readiness.",
+        modelPrompt:
+          "Update the schedule so a supervisor lane reviews goal drift, stale work, runtime budget, evidence gaps, and handoff readiness.",
+      }),
+    )
+  }
+  if (longRunGoal(input.goal) && !input.coverage.ok) {
+    decisions.push(
+      decision({
+        action: "continue_coverage",
+        reason: "coverage contract is not release-ready",
+        requiredNextTool: "operation_run",
+        requiredArtifacts: ["plans/coverage-contract.json", "plans/operation-graph.json", "evidence/"],
+        operatorMessage: "Coverage is not ready for release; continue safe testing, retry/fallback lanes, or ask the operator if scope affects safety.",
+        modelPrompt:
+          "Use operation_next and operation_run to continue coverage. For blocked scope/safety decisions, use ask_operator instead of treating a skip as completion.",
       }),
     )
   }
@@ -171,7 +198,8 @@ function decisionsFor(input: {
         requiredNextTool: "operation_run",
         requiredArtifacts: ["plans/operation-graph.json", "lane-complete/"],
         operatorMessage: "Continue execution until every planned lane is complete or explicitly skipped with proof.",
-        modelPrompt: "Call operation_run or operation_next, then advance the next incomplete lane with task background=true or command_supervise.",
+        modelPrompt:
+          "Call operation_run or operation_next, then advance the next incomplete lane with task background=true or command_supervise.",
       }),
     )
   }
@@ -183,7 +211,8 @@ function decisionsFor(input: {
         requiredNextTool: "runtime_summary",
         requiredArtifacts: ["deliverables/runtime-summary.json"],
         operatorMessage: "Resolve runtime accounting blind spots before final handoff.",
-        modelPrompt: "Regenerate runtime_summary with background task/session usage or explicitly document unrecoverable blind spots.",
+        modelPrompt:
+          "Regenerate runtime_summary with background task/session usage or explicitly document unrecoverable blind spots.",
       }),
     )
   }
@@ -216,7 +245,7 @@ function decisionsFor(input: {
   ) {
     decisions.push(
       decision({
-        action: "reporting_ready",
+        action: "continue_reporting",
         reason: "execution lanes are ready for the reporting and audit pipeline",
         requiredNextTool: "report_outline",
         requiredArtifacts: [
@@ -244,9 +273,13 @@ function decisionsFor(input: {
   ) {
     decisions.push(
       decision({
-        action: "handoff_ready",
+        action: "release_handoff",
         reason: "goal is complete and final runtime/report artifacts are present",
-        requiredArtifacts: ["goals/operation-goal.json", "deliverables/runtime-summary.json", "deliverables/final/manifest.json"],
+        requiredArtifacts: [
+          "goals/operation-goal.json",
+          "deliverables/runtime-summary.json",
+          "deliverables/final/manifest.json",
+        ],
         operatorMessage: "Final handoff appears ready. Confirm operation_audit remains clean before stopping.",
         modelPrompt: "Call operation_audit with finalHandoff=true if it has not already passed in this handoff cycle.",
       }),
@@ -259,7 +292,8 @@ function decisionsFor(input: {
         reason: "operator prompt timed out and fallback policy denied or answered conservatively",
         requiredArtifacts: ["operator-timeouts/"],
         operatorMessage: "Operator input was unavailable; stay within the existing authorized scope.",
-        modelPrompt: "Do not retry the same blocked ask. Continue with safe in-scope work, or pause only if no safe bounded work remains.",
+        modelPrompt:
+          "Do not retry the same blocked ask. Continue with safe in-scope work, or pause only if no safe bounded work remains.",
       }),
     )
   }
@@ -271,7 +305,8 @@ function decisionsFor(input: {
         requiredNextTool: "operation_run",
         requiredArtifacts: ["plans/operation-run.jsonl"],
         operatorMessage: "Continue with the next scheduled operation lane.",
-        modelPrompt: "Call operation_run or operation_next and launch the next bounded lane through task or command_supervise.",
+        modelPrompt:
+          "Call operation_run or operation_next and launch the next bounded lane through task or command_supervise.",
       }),
     )
   }
@@ -290,7 +325,9 @@ function reviewMarkdown(review: OperationSupervisorReview) {
     review.planExcerpt
       ? `plan_excerpt: path=${review.planExcerpt.path ?? "missing"} chars=${review.planExcerpt.chars} max_chars=${review.planExcerpt.maxChars} truncated=${review.planExcerpt.truncated}`
       : undefined,
-    review.latestAssistantMessage ? `latest_assistant_message: ${review.latestAssistantMessage.slice(0, 500)}` : undefined,
+    review.latestAssistantMessage
+      ? `latest_assistant_message: ${review.latestAssistantMessage.slice(0, 500)}`
+      : undefined,
     "",
     "## Decisions",
     "",
@@ -333,13 +370,16 @@ export async function superviseOperation(
   const operationID = slug(input.operationID, "operation")
   const status = await readOperationStatus(worktree, operationID)
   const goal = (await readOperationGoal(worktree, operationID)).goal
-  const continuation = goal ? effectiveULMContinuation(goal, await readULMConfig({ directory: worktree, worktree })) : undefined
+  const continuation = goal
+    ? effectiveULMContinuation(goal, await readULMConfig({ directory: worktree, worktree }))
+    : undefined
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphLike>(path.join(root, "plans", "operation-graph.json"))
   const finalArtifacts = {
     operationAudit: !!(await readJson(path.join(root, "deliverables", "operation-audit.json"))),
     handoffGate: !!(await readJson(path.join(root, "deliverables", "stage-gates", "handoff.json"))),
   }
+  const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const review: OperationSupervisorReview = {
     operationID,
     reviewKind: input.reviewKind ?? "manual",
@@ -348,10 +388,14 @@ export async function superviseOperation(
     status,
     planExcerpt: await readOperationPlanExcerpt(worktree, operationID, continuation?.injectPlanMaxChars ?? 12_000),
     latestAssistantMessage: input.latestAssistantMessage,
-    decisions: decisionsFor({ reviewKind: input.reviewKind ?? "manual", goal, status, graph, finalArtifacts }).slice(
-      0,
-      input.maxActions ?? 5,
-    ),
+    decisions: decisionsFor({
+      reviewKind: input.reviewKind ?? "manual",
+      goal,
+      status,
+      graph,
+      coverage,
+      finalArtifacts,
+    }).slice(0, input.maxActions ?? 5),
   }
   if (input.writeArtifacts === false) return review
   return writeReview(worktree, review)
