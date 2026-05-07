@@ -21,6 +21,7 @@ import {
   writeIdentityGraph,
   writeOperationCheckpoint,
   writeOperationPlan,
+  writeOperationDiscoveryCharter,
   writeEvalScorecard,
   writeCoverageContract,
   writePersonProfile,
@@ -1580,6 +1581,41 @@ describe("ULM artifact ledger", () => {
     expect(await fs.readFile(result.markdown, "utf8")).toContain("authorization decisions stay with primary operator")
     expect(JSON.parse(await fs.readFile(result.json, "utf8")).phases).toHaveLength(2)
     expect((await readOperationStatus(worktree, "school")).plans.operation).toBe(true)
+  })
+
+  test("writes a Discovery Charter without final operation plan fields", async () => {
+    const worktree = await tmpdir()
+    const result = await writeOperationDiscoveryCharter(worktree, {
+      operationID: "home-network-hardrun-20260507",
+      templateName: "home-network-discovery-charter",
+      trustLevel: "unattended",
+      scanProfile: "aggressive",
+      browserEvidence: true,
+      operationMemory: true,
+      reportDesignProfile: "standard",
+      assumptions: ["Authorization is limited to the operator-owned home network."],
+      discoveryCharter: {
+        purpose: "Research, recon, operator questions, and time-investment strategy before writing the full plan.",
+        researchQuestions: [
+          "Which network ranges and asset classes are in scope?",
+          "Which authenticated services need credentials before validation?",
+          "Which evidence will support final report claims?",
+        ],
+        reconInvestments: ["Passive inventory", "Low-rate service discovery", "Login surface classification"],
+        operatorQuestions: ["Will authenticated checks be allowed?", "Are disruptive tests explicitly out of scope?"],
+        candidateDeepWorkLanes: ["Router admin review", "IoT service inventory", "Authenticated portal validation"],
+        decisionCriteriaForFullPlan: [
+          "Enough safe lanes exist for the requested duration.",
+          "Credential requirements are understood.",
+          "Report closeout has protected time.",
+        ],
+      },
+    })
+
+    expect(result.operationID).toBe("home-network-hardrun-20260507")
+    expect(result.markdown).toEndWith("plans/discovery-charter.md")
+    expect(await fs.readFile(result.markdown, "utf8")).toContain("Credential requirements are understood.")
+    expect(JSON.parse(await fs.readFile(result.json, "utf8")).planningApproval.status).toBe("pending")
   })
 
   test("operation graph includes district profile, person recon, identity graph, and multistage report lanes", async () => {

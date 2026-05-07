@@ -728,6 +728,13 @@ export type OperationPlanResult = {
   phases: number
 }
 
+export type OperationDiscoveryCharterInput = Omit<
+  OperationPlanInput,
+  "planningApproval" | "timeBudget" | "coverageContract" | "phases" | "reportingCloseout"
+> & {
+  discoveryCharter: DiscoveryCharterInvestmentStrategy
+}
+
 export function slug(input: string, fallback: string) {
   const value = input
     .trim()
@@ -1894,6 +1901,48 @@ function operationPlanMarkdown(record: OperationPlanRecord) {
     "",
     "## Reporting Closeout",
     ...record.reportingCloseout.map((item) => `- ${item}`),
+    "",
+  ].join("\n")
+}
+
+function operationDiscoveryCharterMarkdown(record: OperationPlanRecord) {
+  return [
+    `# Discovery Charter: ${record.operationID}`,
+    "",
+    `- written: ${record.writtenAt}`,
+    `- objective: ${record.objective ?? "unknown"}`,
+    `- template: ${record.templateName ?? "custom"}`,
+    `- trust_level: ${record.trustLevel ?? "moderate"}`,
+    `- scan_profile: ${record.scanProfile ?? "balanced"}`,
+    `- browser_evidence: ${record.browserEvidence ?? false}`,
+    `- operation_memory: ${record.operationMemory ?? false}`,
+    `- report_design_profile: ${record.reportDesignProfile ?? "standard"}`,
+    `- planning_approval: ${record.planningApproval?.status ?? "pending"}`,
+    "",
+    "## Assumptions",
+    ...(record.assumptions?.length ? record.assumptions.map((item) => `- ${item}`) : ["- none recorded"]),
+    "",
+    "## Investment Strategy",
+    "",
+    record.discoveryCharter?.purpose ?? "No purpose recorded.",
+    "",
+    "Research Questions:",
+    ...(record.discoveryCharter?.researchQuestions ?? []).map((item) => `- ${item}`),
+    "",
+    "Recon Investments:",
+    ...(record.discoveryCharter?.reconInvestments ?? []).map((item) => `- ${item}`),
+    "",
+    "Operator Questions:",
+    ...(record.discoveryCharter?.operatorQuestions ?? []).map((item) => `- ${item}`),
+    "",
+    "Candidate Deep Work Lanes:",
+    ...(record.discoveryCharter?.candidateDeepWorkLanes ?? []).map((item) => `- ${item}`),
+    "",
+    "Decision Criteria For Full Plan:",
+    ...(record.discoveryCharter?.decisionCriteriaForFullPlan ?? []).map((item) => `- ${item}`),
+    "",
+    "## Next Step",
+    "- Wait for explicit Discovery Charter approval before writing the full duration-aware operation_plan.",
     "",
   ].join("\n")
 }
@@ -3273,6 +3322,35 @@ export async function writeOperationPlan(worktree: string, input: OperationPlanI
   })
   await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
   return { operationID, json, markdown, phases: record.phases.length }
+}
+
+export async function writeOperationDiscoveryCharter(
+  worktree: string,
+  input: OperationDiscoveryCharterInput,
+): Promise<OperationPlanResult> {
+  const operationID = slug(input.operationID, "operation")
+  const root = operationPath(worktree, operationID)
+  const operation = await readJson<OperationRecord>(path.join(root, "operation.json"))
+  const record: OperationPlanRecord = {
+    ...input,
+    operationID,
+    planningApproval: { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
+    phases: [],
+    reportingCloseout: [],
+    writtenAt: new Date().toISOString(),
+    objective: operation?.objective,
+  }
+  const json = path.join(root, "plans", "discovery-charter.json")
+  const markdown = path.join(root, "plans", "discovery-charter.md")
+  await writeJson(json, record)
+  await fs.writeFile(markdown, operationDiscoveryCharterMarkdown(record))
+  await appendJsonl(path.join(root, "events.jsonl"), {
+    type: "discovery_charter",
+    operationID,
+    writtenAt: record.writtenAt,
+  })
+  await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
+  return { operationID, json, markdown, phases: 0 }
 }
 
 export async function writeCoverageContract(

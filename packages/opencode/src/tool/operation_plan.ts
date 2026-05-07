@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import DESCRIPTION from "./operation_plan.txt"
 import { Instance } from "@/project/instance"
-import { writeOperationPlan } from "@/ulm/artifact"
+import { writeOperationDiscoveryCharter, writeOperationPlan } from "@/ulm/artifact"
 
 const Phase = Schema.Struct({
   stage: Schema.Literals(["intake", "recon", "mapping", "validation", "reporting", "handoff"]),
@@ -66,6 +66,7 @@ const CoverageContract = Schema.Struct({
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
+  planningMode: Schema.optional(Schema.Literals(["compact", "discovery-charter", "full-duration"])),
   templateName: Schema.optional(Schema.String),
   trustLevel: Schema.optional(Schema.Literals(["guided", "moderate", "unattended", "lab_full"])),
   scanProfile: Schema.optional(Schema.Literals(["paranoid", "stealth", "balanced", "aggressive", "lab-insane"])),
@@ -77,8 +78,8 @@ export const Parameters = Schema.Struct({
   discoveryCharter: Schema.optional(DiscoveryCharter),
   timeBudget: Schema.optional(TimeBudget),
   coverageContract: Schema.optional(CoverageContract),
-  phases: Schema.mutable(Schema.Array(Phase)),
-  reportingCloseout: Schema.mutable(Schema.Array(Schema.String)),
+  phases: Schema.optional(Schema.mutable(Schema.Array(Phase))),
+  reportingCloseout: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
 })
 
 type Metadata = {
@@ -95,9 +96,37 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const result = yield* Effect.tryPromise(() => writeOperationPlan(Instance.worktree, params)).pipe(Effect.orDie)
+        const result =
+          params.planningMode === "discovery-charter" || (params.phases === undefined && params.discoveryCharter)
+            ? yield* Effect.tryPromise(() =>
+                writeOperationDiscoveryCharter(Instance.worktree, {
+                  operationID: params.operationID,
+                  templateName: params.templateName,
+                  trustLevel: params.trustLevel,
+                  scanProfile: params.scanProfile,
+                  browserEvidence: params.browserEvidence,
+                  operationMemory: params.operationMemory,
+                  reportDesignProfile: params.reportDesignProfile,
+                  assumptions: params.assumptions,
+                  discoveryCharter: params.discoveryCharter ?? {
+                    purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
+                    researchQuestions: [],
+                    reconInvestments: [],
+                    operatorQuestions: [],
+                    candidateDeepWorkLanes: [],
+                    decisionCriteriaForFullPlan: [],
+                  },
+                }),
+              ).pipe(Effect.orDie)
+            : yield* Effect.tryPromise(() =>
+                writeOperationPlan(Instance.worktree, {
+                  ...params,
+                  phases: params.phases ?? [],
+                  reportingCloseout: params.reportingCloseout ?? [],
+                }),
+              ).pipe(Effect.orDie)
         return {
-          title: `Wrote operation plan for ${result.operationID}`,
+          title: result.phases === 0 ? `Wrote Discovery Charter for ${result.operationID}` : `Wrote operation plan for ${result.operationID}`,
           output: [
             `operation_id: ${result.operationID}`,
             `json: ${result.json}`,

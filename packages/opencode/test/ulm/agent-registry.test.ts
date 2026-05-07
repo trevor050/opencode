@@ -44,6 +44,7 @@ describe("ULM native surface", () => {
       const ids = yield* registry.ids()
       expect(ids).toContain("operation_audit")
       expect(ids).toContain("operation_checkpoint")
+      expect(ids).toContain("operation_credentials")
       expect(ids).toContain("operation_plan")
       expect(ids).toContain("operation_recover")
       expect(ids).toContain("operation_status")

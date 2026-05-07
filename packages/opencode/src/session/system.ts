@@ -139,6 +139,7 @@ async function ulmOperationContext(worktree: string) {
       ? `runtime_system: kind=${inventory.system.runtimeKind ?? "unknown"} distro=${inventory.system.distro ?? "unknown"} package_managers=${inventory.system.packageManagers?.join(",") || "none"} browsers=${inventory.system.browsers?.join(",") || "none"} containers=${inventory.system.containerTools?.join(",") || "none"}`
       : undefined,
     memory ? `operation_memory: ${memory.file}` : "operation_memory: missing; call operation_memory append when important details must survive compaction",
+    "credential_policy: if the operator offers credentials, use operation_credentials create/list/get/materialize_env; never store raw secrets in chat, operation memory, evidence, reports, command text, task metadata, or final deliverables",
     "planning_gate_policy: for pentest runs of 2h or more, ask scope questions until actionable, write a Discovery Charter for research/recon/questions/time investment, wait for explicit Discovery Charter approval, then write the full duration-aware operation_plan",
     "discovery_charter_policy: the Discovery Charter is not the final execution plan; it is the strategy for learning where to invest time, what to ask, what to recon, and whether enough safe deep work exists to fill the budget",
     "full_plan_confidence_policy: do not write the actual full operation_plan for 2h+ runs until duration-fit confidence is duration_sized with evidence and an overflow backlog",
