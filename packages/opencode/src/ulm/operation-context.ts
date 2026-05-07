@@ -89,7 +89,9 @@ export async function readOperationPlanExcerpt(
   const root = operationPath(worktree, operationID)
   return (
     (await readPlanCandidate(path.join(root, "plans", "operation-plan.json"), "json", maxChars)) ??
-    (await readPlanCandidate(path.join(root, "plans", "operation-plan.md"), "markdown", maxChars)) ?? {
+    (await readPlanCandidate(path.join(root, "plans", "operation-plan.md"), "markdown", maxChars)) ??
+    (await readPlanCandidate(path.join(root, "plans", "discovery-charter.json"), "json", maxChars)) ??
+    (await readPlanCandidate(path.join(root, "plans", "discovery-charter.md"), "markdown", maxChars)) ?? {
       maxChars,
       truncated: false,
       chars: 0,

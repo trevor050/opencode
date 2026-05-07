@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
-import { writeCoverageContract, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import { writeCoverageContract, writeOperationDiscoveryCharter, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { superviseOperation } from "@/ulm/operation-supervisor"
@@ -41,6 +41,35 @@ describe("ULM operation supervisor", () => {
     const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
 
     expect(review.decisions[0]?.requiredNextTool).toBe("operation_plan")
+  })
+
+  test("does not block approved Discovery Charter runs before bounded discovery evidence exists", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized three hour assessment", targetDurationHours: 3 })
+    await writeOperationDiscoveryCharter(dir.path, {
+      operationID: "school",
+      planningApproval: {
+        status: "approved",
+        discoveryCharterPath: "plans/discovery-charter.md",
+        approver: "operator kickoff",
+      },
+      discoveryCharter: {
+        purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
+        researchQuestions: ["What is in scope?", "Which services exist?", "What evidence is needed?"],
+        reconInvestments: ["Passive interface inventory", "Local host discovery", "Safe service classification"],
+        operatorQuestions: ["Are credentials available?", "Are disruptive checks excluded?"],
+        candidateDeepWorkLanes: ["Router review", "IoT inventory", "Web surface validation"],
+        decisionCriteriaForFullPlan: ["Safe lanes exist", "Scope is bounded", "Report closeout is budgeted"],
+      },
+    })
+
+    const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
+
+    expect(review.decisions.map((item) => item.reason)).not.toContain("operation plan is missing")
+    expect(review.decisions[0]?.reason).toBe("approved Discovery Charter needs bounded discovery before the full operation plan")
+    expect(review.decisions[0]?.requiredNextTool).toBe("command_supervise")
+    expect(review.planExcerpt?.path).toContain("discovery-charter.json")
+    expect(review.planExcerpt?.content).toContain("operator kickoff")
   })
 
   test("blocks long-run graphs that omit a supervisor lane", async () => {

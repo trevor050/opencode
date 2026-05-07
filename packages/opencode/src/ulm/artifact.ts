@@ -279,6 +279,8 @@ export type OperationStatusSummary = {
   }
   plans: {
     operation: boolean
+    discoveryCharter: boolean
+    discoveryCharterApproval?: PlanningApproval["status"]
   }
   findings: {
     total: number
@@ -373,6 +375,10 @@ type ToolInventoryStatusRecord = {
     installed?: boolean
     highValue?: boolean
   }>
+}
+
+type OperationPlanStatusRecord = {
+  planningApproval?: PlanningApproval
 }
 
 export type OperationResumeBrief = {
@@ -730,7 +736,7 @@ export type OperationPlanResult = {
 
 export type OperationDiscoveryCharterInput = Omit<
   OperationPlanInput,
-  "planningApproval" | "timeBudget" | "coverageContract" | "phases" | "reportingCloseout"
+  "timeBudget" | "coverageContract" | "phases" | "reportingCloseout"
 > & {
   discoveryCharter: DiscoveryCharterInvestmentStrategy
 }
@@ -3134,6 +3140,10 @@ export async function readOperationStatus(
     },
     plans: {
       operation: await exists(path.join(root, "plans", "operation-plan.json")),
+      discoveryCharter: await exists(path.join(root, "plans", "discovery-charter.json")),
+      discoveryCharterApproval: await readJson<OperationPlanStatusRecord>(
+        path.join(root, "plans", "discovery-charter.json"),
+      ).then((plan) => plan?.planningApproval?.status),
     },
     findings: {
       total: findings.length,
@@ -3334,7 +3344,7 @@ export async function writeOperationDiscoveryCharter(
   const record: OperationPlanRecord = {
     ...input,
     operationID,
-    planningApproval: { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
+    planningApproval: input.planningApproval ?? { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
     phases: [],
     reportingCloseout: [],
     writtenAt: new Date().toISOString(),

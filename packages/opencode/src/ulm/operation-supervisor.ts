@@ -118,6 +118,10 @@ function longRunGoal(goal: OperationGoalRecord | undefined) {
   return (goal?.targetDurationHours ?? 0) >= 1
 }
 
+function approvedDiscoveryCharter(status: OperationStatusSummary) {
+  return status.plans.discoveryCharter && status.plans.discoveryCharterApproval === "approved"
+}
+
 function decisionsFor(input: {
   reviewKind: OperationSupervisorReviewKind
   goal?: OperationGoalRecord
@@ -139,7 +143,20 @@ function decisionsFor(input: {
       }),
     )
   }
-  if (!input.status.plans.operation) {
+  if (!input.status.plans.operation && approvedDiscoveryCharter(input.status)) {
+    decisions.push(
+      decision({
+        action: "continue_coverage",
+        reason: "approved Discovery Charter needs bounded discovery before the full operation plan",
+        requiredNextTool: "command_supervise",
+        requiredArtifacts: ["plans/discovery-charter.json", "evidence/"],
+        operatorMessage: "Use the approved charter to gather bounded discovery evidence, then write the full operation plan.",
+        modelPrompt:
+          "Run only bounded passive/basic discovery through safe foreground commands or command_supervise, record evidence, then call operation_plan with planningMode=full-duration once duration-fit is defensible.",
+      }),
+    )
+  }
+  if (!input.status.plans.operation && !approvedDiscoveryCharter(input.status)) {
     decisions.push(
       decision({
         action: "blocked",

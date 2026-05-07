@@ -108,6 +108,7 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
                   operationMemory: params.operationMemory,
                   reportDesignProfile: params.reportDesignProfile,
                   assumptions: params.assumptions,
+                  planningApproval: params.planningApproval,
                   discoveryCharter: params.discoveryCharter ?? {
                     purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
                     researchQuestions: [],

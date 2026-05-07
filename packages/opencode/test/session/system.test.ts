@@ -177,6 +177,9 @@ describe("session.system", () => {
         expect(output).toContain("operator_availability_policy")
         expect(output).toContain("assume the operator is unavailable after execution starts")
         expect(output).toContain("do not wait for new operator input")
+        expect(output).toContain("operator_go_ahead_policy")
+        expect(output).toContain("do not ask for duplicate Discovery Charter approval")
+        expect(output).toContain("stale_operation_policy")
       }),
     ),
   )
