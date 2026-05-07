@@ -56,10 +56,11 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
+const cliName = process.env.OPENCODE_APP_NAME === "ulmcode" ? "ulmcode" : "opencode"
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("opencode ")) {
+  if (!text.startsWith(`${cliName} `)) {
     process.stderr.write(UI.logo() + EOL + EOL)
     process.stderr.write(text)
     return
@@ -69,7 +70,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName(cliName)
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
