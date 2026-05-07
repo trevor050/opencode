@@ -600,7 +600,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "ulm.operations",
       slash: {
         name: "ulm",
-        aliases: ["operations"],
+        aliases: ["operations", "all"],
       },
       onSelect: () => {
         route.navigate({ type: "ulmOperations" })

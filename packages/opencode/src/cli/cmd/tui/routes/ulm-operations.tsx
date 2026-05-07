@@ -1,10 +1,14 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { useEvent } from "@tui/context/event"
+import { useProject } from "@tui/context/project"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useSDK } from "@tui/context/sdk"
+import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
+import type { SessionID } from "@/session/schema"
+import { bindOperationSession, listOperationSessionBindings } from "@/ulm/operation-context"
 
 type OperationStatus = {
   operationID: string
@@ -48,6 +52,11 @@ type OperationStatus = {
   }
   reports?: Record<string, boolean>
   runtimeSummary?: boolean
+  session?: {
+    sessionID: string
+    boundAt?: string
+    source?: string
+  }
 }
 
 type OperationAudit = {
@@ -168,6 +177,7 @@ function mergeOperationUpdate(
     evidence?: OperationStatus["evidence"]
     reports?: OperationStatus["reports"]
     runtimeSummary?: boolean
+    session?: OperationStatus["session"]
   },
 ): OperationStatus {
   return {
@@ -181,19 +191,49 @@ function mergeOperationUpdate(
     evidence: update.evidence ?? previous?.evidence,
     reports: update.reports ?? previous?.reports,
     runtimeSummary: update.runtimeSummary ?? previous?.runtimeSummary,
+    session: update.session ?? previous?.session,
   }
 }
 
 export function UlmOperations() {
   const sdk = useSDK()
+  const sync = useSync()
   const event = useEvent()
   const route = useRoute()
+  const project = useProject()
   const data = useRouteData("ulmOperations")
   const { theme } = useTheme()
   const [selected, setSelected] = createSignal(0)
+
+  function root() {
+    const current = project.instance.path()
+    return current.worktree || current.directory || process.cwd()
+  }
+
+  async function attachSessionBindings(statuses: OperationStatus[]) {
+    const bindings = await listOperationSessionBindings(root())
+    const latest = new Map<string, (typeof bindings)[number]>()
+    for (const binding of bindings) {
+      if (!latest.has(binding.operationID)) latest.set(binding.operationID, binding)
+    }
+    return statuses.map((status) => {
+      const binding = latest.get(status.operationID)
+      if (!binding) return status
+      return {
+        ...status,
+        session: {
+          sessionID: String(binding.sessionID),
+          boundAt: binding.boundAt,
+          source: binding.source,
+        },
+      }
+    })
+  }
+
   const [items, itemsActions] = createResource(async () => {
     const result = await sdk.client.ulm.operation.list({ eventLimit: "2" })
-    return (result.data ?? []).map(operationStatus).filter((item): item is OperationStatus => item !== undefined)
+    const statuses = (result.data ?? []).map(operationStatus).filter((item): item is OperationStatus => item !== undefined)
+    return attachSessionBindings(statuses)
   })
   const [detail, detailActions] = createResource(
     () => data.operationID ?? "",
@@ -203,8 +243,11 @@ export function UlmOperations() {
         sdk.client.ulm.operation.status({ operationID, eventLimit: "8" }),
         sdk.client.ulm.operation.audit({ operationID, finalHandoff: "true" }).catch(() => undefined),
       ])
+      const statuses = await attachSessionBindings(
+        [operationStatus(status.data)].filter((item): item is OperationStatus => item !== undefined),
+      )
       return {
-        status: operationStatus(status.data),
+        status: statuses[0],
         audit: operationAudit(audit?.data),
       }
     },
@@ -233,6 +276,38 @@ export function UlmOperations() {
     if (data.operationID) void detailActions.refetch()
   }
 
+  async function sessionExists(sessionID: string) {
+    if (sync.session.get(sessionID)) return true
+    try {
+      await sdk.client.session.get({ sessionID }, { throwOnError: true })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function openOperation(item: OperationStatus) {
+    let sessionID = item.session?.sessionID
+    if (sessionID && !(await sessionExists(sessionID))) sessionID = undefined
+    if (!sessionID) {
+      const created = await sdk.client.session.create({
+        title: `ULM operation: ${item.operationID}`,
+      })
+      if (created.error || !created.data?.id) return
+      sessionID = created.data.id
+      await bindOperationSession(root(), {
+        sessionID: sessionID as SessionID,
+        operationID: item.operationID,
+        source: "tui.ulm_operations.open",
+      })
+      await sync.session.refresh()
+      refresh()
+    } else {
+      await sync.session.sync(sessionID)
+    }
+    route.navigate({ type: "session", sessionID })
+  }
+
   useKeyboard((evt) => {
     if (evt.name === "r") {
       evt.preventDefault()
@@ -251,7 +326,7 @@ export function UlmOperations() {
     }
     if (evt.name === "enter" && selectedItem()) {
       evt.preventDefault()
-      route.navigate({ type: "ulmOperations", operationID: selectedItem()!.operationID })
+      void openOperation(selectedItem()!)
       return
     }
     if (evt.name === "backspace" && data.operationID) {
@@ -291,7 +366,7 @@ export function UlmOperations() {
         <text fg={theme.text} attributes={TextAttributes.BOLD}>
           ULM Operations
         </text>
-        <text fg={theme.textMuted}>r refresh / enter detail / backspace list / esc home</text>
+        <text fg={theme.textMuted}>r refresh / enter chat / backspace list / esc home</text>
       </box>
       <box flexDirection="row" flexGrow={1} gap={2} minHeight={0}>
         <box width={34} flexShrink={0} borderColor={theme.border} borderStyle="single" paddingLeft={1} paddingRight={1}>
@@ -302,7 +377,7 @@ export function UlmOperations() {
                   <box
                     onMouseUp={() => {
                       setSelected(index())
-                      route.navigate({ type: "ulmOperations", operationID: item.operationID })
+                      void openOperation(item)
                     }}
                   >
                     <text
@@ -315,6 +390,10 @@ export function UlmOperations() {
                     <text fg={theme.textMuted}>
                       {"  "}
                       {stageLabel(item)} - {countLabel(item)}
+                    </text>
+                    <text fg={theme.textMuted}>
+                      {"  "}
+                      chat {item.session?.sessionID ?? "not bound yet"}
                     </text>
                   </box>
                 )}

@@ -7,7 +7,7 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
 import { Permission } from "../../src/permission"
 import { SystemPrompt } from "../../src/session/system"
-import { bindOperationSession } from "@/ulm/operation-context"
+import { bindOperationSession, listOperationSessionBindings, sessionForOperation, sessionsForOperation } from "@/ulm/operation-context"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { provideInstance, tmpdir } from "../fixture/fixture"
@@ -200,6 +200,42 @@ describe("session.system", () => {
         expect(output).toContain("do not wait for new operator input")
         expect(output).toContain("operation_binding_policy")
         expect(output).toContain("New sessions must not inherit active operations")
+      }),
+    ),
+  )
+
+  it.effect("records operation session bindings for operation chat routing", () =>
+    withTmpInstance((dir) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          bindOperationSession(dir, {
+            sessionID: "ses_old" as any,
+            operationID: "School",
+            now: "2026-05-06T00:00:00.000Z",
+          }),
+        )
+        yield* Effect.promise(() =>
+          bindOperationSession(dir, {
+            sessionID: "ses_new" as any,
+            operationID: "school",
+            now: "2026-05-07T00:00:00.000Z",
+          }),
+        )
+        yield* Effect.promise(() =>
+          bindOperationSession(dir, {
+            sessionID: "ses_other" as any,
+            operationID: "other",
+            now: "2026-05-07T01:00:00.000Z",
+          }),
+        )
+
+        const all = yield* Effect.promise(() => listOperationSessionBindings(dir))
+        const school = yield* Effect.promise(() => sessionsForOperation(dir, "School"))
+        const latest = yield* Effect.promise(() => sessionForOperation(dir, "School"))
+
+        expect(all.map((binding) => String(binding.sessionID))).toEqual(["ses_other", "ses_new", "ses_old"])
+        expect(school.map((binding) => String(binding.sessionID))).toEqual(["ses_new", "ses_old"])
+        expect(String(latest?.sessionID)).toBe("ses_new")
       }),
     ),
   )

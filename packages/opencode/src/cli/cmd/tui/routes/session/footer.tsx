@@ -1,5 +1,5 @@
 import path from "path"
-import { createMemo, createSignal, Match, onCleanup, onMount, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useSync } from "../../context/sync"
 import { useConnected } from "../../component/use-connected"
@@ -41,6 +41,14 @@ export function Footer() {
       operation ? path.join(operationPath(operation.worktree, operation.operationID), "goals", "operation-goal.json") : undefined,
     )
   }
+
+  createEffect(() => {
+    if (route.data.type !== "session") {
+      setOperationFile(undefined)
+      return
+    }
+    void refreshOperationFile()
+  })
 
   onMount(() => {
     // Track all timeouts to ensure proper cleanup

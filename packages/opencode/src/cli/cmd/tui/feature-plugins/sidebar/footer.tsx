@@ -1,6 +1,6 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import nodePath from "path"
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { operationForSession } from "@/ulm/operation-context"
 import { operationPath } from "@/ulm/artifact"
 import type { SessionID } from "@/session/schema"
@@ -31,6 +31,10 @@ function View(props: { api: TuiPluginApi; session_id?: string }) {
         : undefined,
     )
   }
+
+  createEffect(() => {
+    void refreshOperationFile()
+  })
 
   onMount(() => {
     void refreshOperationFile()

@@ -73,6 +73,34 @@ export async function operationForSession(worktree: string, sessionID: SessionID
   return { worktree, operationID: goal.operationID ?? binding.operationID, goal }
 }
 
+export async function listOperationSessionBindings(worktree: string): Promise<OperationSessionBinding[]> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(sessionBindingsRoot(worktree))
+  } catch {
+    return []
+  }
+  const bindings = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map((entry) => readJson<OperationSessionBinding>(path.join(sessionBindingsRoot(worktree), entry))),
+    )
+  )
+    .filter((binding): binding is OperationSessionBinding => !!binding?.sessionID && !!binding.operationID)
+    .sort((a, b) => parseTime(b.boundAt) - parseTime(a.boundAt))
+  return bindings
+}
+
+export async function sessionsForOperation(worktree: string, operationID: string): Promise<OperationSessionBinding[]> {
+  const id = slug(operationID, "operation")
+  return (await listOperationSessionBindings(worktree)).filter((binding) => binding.operationID === id)
+}
+
+export async function sessionForOperation(worktree: string, operationID: string): Promise<OperationSessionBinding | undefined> {
+  return (await sessionsForOperation(worktree, operationID))[0]
+}
+
 export async function activeOperationGoal(worktree: string): Promise<ActiveOperationContext | undefined> {
   const root = operationsRoot(worktree)
   let entries: string[]
