@@ -20,6 +20,7 @@ import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTi
 import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "permission" })
+const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
 
 export const Action = Schema.Literals(["allow", "deny", "ask"])
   .annotate({ identifier: "PermissionAction" })
@@ -43,6 +44,9 @@ export type Ruleset = Schema.Schema.Type<typeof Ruleset>
 export class Request extends Schema.Class<Request>("PermissionRequest")({
   id: PermissionID,
   sessionID: SessionID,
+  createdAt: Schema.optional(Schema.String),
+  timeoutAt: Schema.optional(Schema.String),
+  holdUntil: Schema.optional(Schema.String),
   permission: Schema.String,
   patterns: Schema.Array(Schema.String),
   metadata: Schema.Record(Schema.String, Schema.Unknown),
@@ -116,6 +120,9 @@ export type Error = DeniedError | RejectedError | CorrectedError
 export const AskInput = Schema.Struct({
   ...Request.fields,
   id: Schema.optional(PermissionID),
+  createdAt: Schema.optional(Schema.String),
+  timeoutAt: Schema.optional(Schema.String),
+  holdUntil: Schema.optional(Schema.String),
   ruleset: Ruleset,
 })
   .annotate({ identifier: "PermissionAskInput" })
@@ -132,6 +139,7 @@ export type ReplyInput = Schema.Schema.Type<typeof ReplyInput>
 
 export interface Interface {
   readonly ask: (input: AskInput) => Effect.Effect<void, Error>
+  readonly touch: (input: { requestID: PermissionID; holdMillis?: number }) => Effect.Effect<boolean>
   readonly reply: (input: ReplyInput) => Effect.Effect<void>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 }
@@ -139,6 +147,7 @@ export interface Interface {
 interface PendingEntry {
   info: Request
   deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+  timeoutExpiresAt?: number
 }
 
 interface State {
@@ -199,15 +208,6 @@ export const layer = Layer.effect(
       if (!needsAsk) return
 
       const id = request.id ?? PermissionID.ascending()
-      const info = Schema.decodeUnknownSync(Request)({
-        id,
-        ...request,
-      })
-      log.info("asking", { id, permission: info.permission, patterns: info.patterns })
-
-      const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
-      pending.set(id, { info, deferred })
-      yield* bus.publish(Event.Asked, info)
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
       const ulmConfig = yield* Effect.promise(() => readULMConfig(ctx))
@@ -223,53 +223,85 @@ export const layer = Layer.effect(
               }),
             )
           : undefined
+      const now = Date.now()
+      const timeoutExpiresAt = timeoutMillis === undefined ? undefined : now + timeoutMillis
+      const info = Schema.decodeUnknownSync(Request)({
+        id,
+        ...request,
+        createdAt: new Date(now).toISOString(),
+        timeoutAt: timeoutExpiresAt === undefined ? undefined : new Date(timeoutExpiresAt).toISOString(),
+      })
+      log.info("asking", { id, permission: info.permission, patterns: info.patterns })
+
+      const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
+      pending.set(id, { info, deferred, timeoutExpiresAt })
+      yield* bus.publish(Event.Asked, info)
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
           ? undefined
-          : Effect.sleep(`${timeoutMillis} millis`).pipe(
-              Effect.flatMap(() =>
-                Effect.gen(function* () {
-                  if (!pending.has(id)) return
-                  pending.delete(id)
-                  const sensitive = isSensitiveOperatorPrompt(
-                    [info.permission, ...info.patterns, JSON.stringify(info.metadata)].join(" "),
-                  )
-                  yield* Effect.promise(() =>
-                    recordOperatorTimeout(activeOperation.worktree, {
-                      operationID: activeOperation.operationID,
-                      kind: "permission",
-                      requestID: String(id),
-                      sessionID: info.sessionID,
-                      fallback: "reject",
-                      prompt: `${info.permission}: ${info.patterns.join(", ")}`,
-                      sensitive,
-                    }),
-                  )
-                  yield* bus.publish(Event.Replied, {
+          : Effect.gen(function* () {
+              while (true) {
+                const entry = pending.get(id)
+                if (!entry?.timeoutExpiresAt) return
+                const remaining = entry.timeoutExpiresAt - Date.now()
+                if (remaining <= 0) break
+                yield* Effect.sleep(`${remaining} millis`)
+              }
+              return yield* Effect.gen(function* () {
+                if (!pending.has(id)) return
+                pending.delete(id)
+                const sensitive = isSensitiveOperatorPrompt(
+                  [info.permission, ...info.patterns, JSON.stringify(info.metadata)].join(" "),
+                )
+                yield* Effect.promise(() =>
+                  recordOperatorTimeout(activeOperation.worktree, {
+                    operationID: activeOperation.operationID,
+                    kind: "permission",
+                    requestID: String(id),
                     sessionID: info.sessionID,
-                    requestID: info.id,
-                    reply: "reject",
-                  })
-                  yield* Deferred.fail(
-                    deferred,
-                    new CorrectedError({
-                      feedback:
-                        "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
-                    }),
-                  )
-                  return yield* new CorrectedError({
+                    fallback: "reject",
+                    prompt: `${info.permission}: ${info.patterns.join(", ")}`,
+                    sensitive,
+                  }),
+                )
+                yield* bus.publish(Event.Replied, {
+                  sessionID: info.sessionID,
+                  requestID: info.id,
+                  reply: "reject",
+                })
+                yield* Deferred.fail(
+                  deferred,
+                  new CorrectedError({
                     feedback:
                       "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
-                  })
-                }),
-              ),
-            )
+                  }),
+                )
+                return yield* new CorrectedError({
+                  feedback:
+                    "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
+                })
+              })
+            })
       return yield* Effect.ensuring(
         timeout ? Effect.raceFirst(Deferred.await(deferred), timeout) : Deferred.await(deferred),
         Effect.sync(() => {
           pending.delete(id)
         }),
       )
+    })
+
+    const touch = Effect.fn("Permission.touch")(function* (input: { requestID: PermissionID; holdMillis?: number }) {
+      const entry = (yield* InstanceState.get(state)).pending.get(input.requestID)
+      if (!entry?.timeoutExpiresAt) return false
+      const holdUntil = Date.now() + (input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+      entry.timeoutExpiresAt = Math.max(entry.timeoutExpiresAt, holdUntil)
+      entry.info = Schema.decodeUnknownSync(Request)({
+        ...entry.info,
+        timeoutAt: new Date(entry.timeoutExpiresAt).toISOString(),
+        holdUntil: new Date(holdUntil).toISOString(),
+      })
+      yield* bus.publish(Event.Asked, entry.info)
+      return true
     })
 
     const reply = Effect.fn("Permission.reply")(function* (input: ReplyInput) {
@@ -335,7 +367,7 @@ export const layer = Layer.effect(
       return Array.from(pending.values(), (item) => item.info)
     })
 
-    return Service.of({ ask, reply, list })
+    return Service.of({ ask, touch, reply, list })
   }),
 )
 

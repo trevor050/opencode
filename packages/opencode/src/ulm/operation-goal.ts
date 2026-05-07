@@ -21,6 +21,7 @@ export type OperationGoalContinuation = {
   operatorFallbackTimeoutSeconds: number
   operatorFallbackEnabled: boolean
   maxRepeatedOperatorTimeoutsPerKind: number
+  operatorFallbackSuppressionWindowSeconds: number
 }
 
 export type OperationGoalRecord = {
@@ -90,6 +91,7 @@ const defaultContinuation: OperationGoalContinuation = {
   operatorFallbackTimeoutSeconds: 180,
   operatorFallbackEnabled: true,
   maxRepeatedOperatorTimeoutsPerKind: 2,
+  operatorFallbackSuppressionWindowSeconds: 600,
 }
 
 const operationNameWords = [
@@ -226,6 +228,7 @@ function goalMarkdown(goal: OperationGoalRecord) {
     `- operator_fallback_timeout_seconds: ${goal.continuation.operatorFallbackTimeoutSeconds}`,
     `- operator_fallback_enabled: ${goal.continuation.operatorFallbackEnabled}`,
     `- max_repeated_operator_timeouts_per_kind: ${goal.continuation.maxRepeatedOperatorTimeoutsPerKind}`,
+    `- operator_fallback_suppression_window_seconds: ${goal.continuation.operatorFallbackSuppressionWindowSeconds}`,
     "",
     "## Time",
     "",

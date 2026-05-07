@@ -9,6 +9,7 @@ import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../component/border"
 import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useDialog } from "../../ui/dialog"
+import { OperatorAutoResume } from "./operator-auto-resume"
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
@@ -20,6 +21,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const tabs = createMemo(() => (single() ? 1 : questions().length + 1)) // questions + confirm tab (no confirm for single select)
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
+  const [pausedUntil, setPausedUntil] = createSignal(0)
   const [store, setStore] = createStore({
     tab: 0,
     answers: [] as QuestionAnswer[],
@@ -29,6 +31,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   })
 
   let textarea: TextareaRenderable | undefined
+  let lastTouch = 0
 
   const question = createMemo(() => questions()[store.tab])
   const confirm = createMemo(() => !single() && store.tab === questions().length)
@@ -42,6 +45,18 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     if (!value) return false
     return store.answers[store.tab]?.includes(value) ?? false
   })
+
+  function touchOperatorPrompt() {
+    if (!props.request.timeoutAt) return
+    const now = Date.now()
+    setPausedUntil(now + 30_000)
+    if (now - lastTouch < 5_000) return
+    lastTouch = now
+    void sdk.client.question.touch({
+      requestID: props.request.id,
+      holdMillis: 30_000,
+    })
+  }
 
   function submit() {
     const answers = questions().map((_, i) => store.answers[i] ?? [])
@@ -125,6 +140,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   useKeyboard((evt) => {
     // Skip processing if a dialog (e.g., command palette) is open
     if (dialog.stack.length > 0) return
+    touchOperatorPrompt()
 
     // When editing custom answer textarea
     if (store.editing && !confirm()) {
@@ -279,7 +295,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                     }
                     onMouseOver={() => setTabHover(index())}
                     onMouseOut={() => setTabHover(null)}
-                    onMouseUp={() => selectTab(index())}
+                    onMouseUp={() => {
+                      touchOperatorPrompt()
+                      selectTab(index())
+                    }}
                   >
                     <text
                       fg={
@@ -304,7 +323,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
               }
               onMouseOver={() => setTabHover("confirm")}
               onMouseOut={() => setTabHover(null)}
-              onMouseUp={() => selectTab(questions().length)}
+              onMouseUp={() => {
+                touchOperatorPrompt()
+                selectTab(questions().length)
+              }}
             >
               <text fg={confirm() ? selectedForeground(theme, theme.accent) : theme.textMuted}>Confirm</text>
             </box>
@@ -328,7 +350,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                     <box
                       onMouseOver={() => moveTo(i())}
                       onMouseDown={() => moveTo(i())}
-                      onMouseUp={() => selectOption()}
+                      onMouseUp={() => {
+                        touchOperatorPrompt()
+                        selectOption()
+                      }}
                     >
                       <box flexDirection="row">
                         <box backgroundColor={active() ? theme.backgroundElement : undefined} paddingRight={1}>
@@ -357,7 +382,10 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                 <box
                   onMouseOver={() => moveTo(options().length)}
                   onMouseDown={() => moveTo(options().length)}
-                  onMouseUp={() => selectOption()}
+                  onMouseUp={() => {
+                    touchOperatorPrompt()
+                    selectOption()
+                  }}
                 >
                   <box flexDirection="row">
                     <box backgroundColor={other() ? theme.backgroundElement : undefined} paddingRight={1}>
@@ -441,6 +469,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         justifyContent="space-between"
       >
         <box flexDirection="row" gap={2}>
+          <OperatorAutoResume
+            timeoutAt={props.request.timeoutAt}
+            holdUntil={props.request.holdUntil}
+            pausedUntil={pausedUntil()}
+          />
           <Show when={!single()}>
             <text fg={theme.text}>
               {"⇆"} <span style={{ fg: theme.textMuted }}>tab</span>

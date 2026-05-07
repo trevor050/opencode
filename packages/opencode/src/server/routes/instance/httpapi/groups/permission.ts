@@ -12,6 +12,9 @@ const ReplyPayload = Schema.Struct({
   reply: Permission.Reply,
   message: Schema.optional(Schema.String),
 })
+const TouchPayload = Schema.Struct({
+  holdMillis: Schema.optional(Schema.Number),
+})
 
 export const PermissionApi = HttpApi.make("permission")
   .add(
@@ -36,6 +39,18 @@ export const PermissionApi = HttpApi.make("permission")
             identifier: "permission.reply",
             summary: "Respond to permission request",
             description: "Approve or deny a permission request from the AI assistant.",
+          }),
+        ),
+        HttpApiEndpoint.post("touch", `${root}/:requestID/touch`, {
+          params: { requestID: PermissionID },
+          payload: TouchPayload,
+          success: described(Schema.Boolean, "Permission timeout extended successfully"),
+          error: [HttpApiError.BadRequest, HttpApiError.NotFound],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "permission.touch",
+            summary: "Touch permission request",
+            description: "Extend a pending permission timeout while the operator is actively reviewing.",
           }),
         ),
       )

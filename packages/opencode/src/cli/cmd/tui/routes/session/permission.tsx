@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -19,6 +19,7 @@ import { ShellID } from "@/tool/shell/id"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { OperatorAutoResume } from "./operator-auto-resume"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -138,6 +139,8 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
+  const [pausedUntil, setPausedUntil] = createSignal(0)
+  let lastTouch = 0
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -154,6 +157,18 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   })
 
   const { theme } = useTheme()
+  function touchOperatorPrompt() {
+    if (!props.request.timeoutAt) return
+    const now = Date.now()
+    setPausedUntil(now + 30_000)
+    if (now - lastTouch < 5_000) return
+    lastTouch = now
+    void sdk.client.permission.touch({
+      requestID: props.request.id,
+      holdMillis: 30_000,
+      workspace: project.workspace.current(),
+    })
+  }
 
   return (
     <Switch>
@@ -197,6 +212,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
       </Match>
       <Match when={store.stage === "reject"}>
         <RejectPrompt
+          onActivity={touchOperatorPrompt}
           onConfirm={(message) => {
             void sdk.client.permission.reply({
               reply: "reject",
@@ -427,6 +443,10 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
               escapeKey="reject"
               fullscreen
+              timeoutAt={props.request.timeoutAt}
+              holdUntil={props.request.holdUntil}
+              pausedUntil={pausedUntil()}
+              onActivity={touchOperatorPrompt}
               onSelect={(option) => {
                 if (option === "always") {
                   setStore("stage", "always")
@@ -460,7 +480,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   )
 }
 
-function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void }) {
+function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void; onActivity?: () => void }) {
   let input: TextareaRenderable
   const { theme } = useTheme()
   const keybind = useKeybind()
@@ -471,6 +491,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
+    props.onActivity?.()
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
@@ -543,6 +564,10 @@ function Prompt<const T extends Record<string, string>>(props: {
   escapeKey?: keyof T
   fullscreen?: boolean
   onSelect: (option: keyof T) => void
+  timeoutAt?: string
+  holdUntil?: string
+  pausedUntil?: number
+  onActivity?: () => void
 }) {
   const { theme } = useTheme()
   const keybind = useKeybind()
@@ -558,6 +583,7 @@ function Prompt<const T extends Record<string, string>>(props: {
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
+    props.onActivity?.()
 
     if (evt.name === "left" || evt.name == "h") {
       evt.preventDefault()
@@ -647,6 +673,7 @@ function Prompt<const T extends Record<string, string>>(props: {
                 backgroundColor={option === store.selected ? theme.warning : theme.backgroundMenu}
                 onMouseOver={() => setStore("selected", option)}
                 onMouseUp={() => {
+                  props.onActivity?.()
                   setStore("selected", option)
                   props.onSelect(option)
                 }}
@@ -659,6 +686,7 @@ function Prompt<const T extends Record<string, string>>(props: {
           </For>
         </box>
         <box flexDirection="row" gap={2} flexShrink={0}>
+          <OperatorAutoResume timeoutAt={props.timeoutAt} holdUntil={props.holdUntil} pausedUntil={props.pausedUntil} />
           <Show when={props.fullscreen}>
             <text fg={theme.text}>
               {"ctrl+f"} <span style={{ fg: theme.textMuted }}>{hint()}</span>

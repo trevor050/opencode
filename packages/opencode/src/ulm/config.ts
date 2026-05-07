@@ -16,6 +16,7 @@ export type ULMRuntimeConfig = {
   operator_fallback_enabled?: boolean
   operator_timeout_seconds?: number
   max_repeated_operator_timeouts_per_kind?: number
+  operator_timeout_suppression_window_seconds?: number
 }
 
 export const ULM_CONFIG_FILE = "ULMconfig.toml"
@@ -30,6 +31,10 @@ export function effectiveULMContinuation(goal: OperationGoalRecord, config: ULMR
     operatorFallbackEnabled: config.operator_fallback_enabled ?? goal.continuation?.operatorFallbackEnabled ?? true,
     maxRepeatedOperatorTimeoutsPerKind:
       config.max_repeated_operator_timeouts_per_kind ?? goal.continuation?.maxRepeatedOperatorTimeoutsPerKind ?? 2,
+    operatorFallbackSuppressionWindowSeconds:
+      config.operator_timeout_suppression_window_seconds ??
+      goal.continuation?.operatorFallbackSuppressionWindowSeconds ??
+      600,
   }
 }
 
@@ -138,6 +143,10 @@ export function parseULMConfigToml(text: string): ULMRuntimeConfig {
     if (key === "max_repeated_operator_timeouts_per_kind") {
       result.max_repeated_operator_timeouts_per_kind =
         normalizeNonNegativeInteger(value) ?? result.max_repeated_operator_timeouts_per_kind
+    }
+    if (key === "operator_timeout_suppression_window_seconds") {
+      result.operator_timeout_suppression_window_seconds =
+        normalizeNonNegativeInteger(value) ?? result.operator_timeout_suppression_window_seconds
     }
   }
 

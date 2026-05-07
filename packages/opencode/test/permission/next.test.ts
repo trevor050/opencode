@@ -72,6 +72,12 @@ const reply = (input: Parameters<Permission.Interface["reply"]>[0]) =>
     return yield* permission.reply(input)
   })
 
+const touch = (input: Parameters<Permission.Interface["touch"]>[0]) =>
+  Effect.gen(function* () {
+    const permission = yield* Permission.Service
+    return yield* permission.touch(input)
+  })
+
 const list = () =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
@@ -687,6 +693,41 @@ it.live("ask - active unattended ULM operation times out and rejects", () =>
         fs.readdir(path.join(ctx.worktree, ".ulmcode", "operations", "school", "operator-timeouts")),
       )
       expect(timeoutFiles.some((file) => file.includes("permission"))).toBe(true)
+    }),
+  ),
+)
+
+it.live("ask - active operator touch extends an unattended permission timeout", () =>
+  withDir({ git: true }, () =>
+    Effect.gen(function* () {
+      const ctx = yield* InstanceState.context
+      yield* Effect.promise(() =>
+        createOperationGoal(ctx.worktree, {
+          operationID: "school",
+          objective: "Authorized unattended run",
+          targetDurationHours: 20,
+          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
+        }),
+      )
+
+      const fiber = yield* ask({
+        id: PermissionID.make("per_timeout_touch"),
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["optional validation"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "bash", pattern: "*", action: "ask" }],
+      }).pipe(Effect.forkScoped)
+
+      const pending = yield* waitForPending(1)
+      expect(pending[0].timeoutAt).toBeString()
+      yield* Effect.sleep("20 millis")
+      yield* touch({ requestID: pending[0].id })
+      yield* Effect.sleep("40 millis")
+      expect(yield* list()).toHaveLength(1)
+      yield* rejectAll()
+      yield* Fiber.await(fiber)
     }),
   ),
 )

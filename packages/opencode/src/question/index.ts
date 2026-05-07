@@ -12,6 +12,7 @@ import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTi
 import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "question" })
+const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
 
 // Schemas
 
@@ -64,6 +65,9 @@ export class Tool extends Schema.Class<Tool>("QuestionTool")({
 export class Request extends Schema.Class<Request>("QuestionRequest")({
   id: QuestionID,
   sessionID: SessionID,
+  createdAt: Schema.optional(Schema.String),
+  timeoutAt: Schema.optional(Schema.String),
+  holdUntil: Schema.optional(Schema.String),
   questions: Schema.Array(Info).annotate({
     description: "Questions to ask",
   }),
@@ -111,6 +115,7 @@ export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("Que
 interface PendingEntry {
   info: Request
   deferred: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
+  timeoutAt?: number
 }
 
 interface State {
@@ -134,6 +139,7 @@ export interface Interface {
   }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
   readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
+  readonly touch: (input: { requestID: QuestionID; holdMillis?: number }) => Effect.Effect<boolean>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 }
 
@@ -172,14 +178,6 @@ export const layer = Layer.effect(
       log.info("asking", { id, questions: input.questions.length })
 
       const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
-      const info = Schema.decodeUnknownSync(Request)({
-        id,
-        sessionID: input.sessionID,
-        questions: input.questions,
-        tool: input.tool,
-      })
-      pending.set(id, { info, deferred })
-      yield* bus.publish(Event.Asked, info)
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
       const ulmConfig = yield* Effect.promise(() => readULMConfig(ctx))
@@ -195,39 +193,53 @@ export const layer = Layer.effect(
               }),
             )
           : undefined
+      const now = Date.now()
+      const timeoutAt = timeoutMillis === undefined ? undefined : now + timeoutMillis
+      const info = Schema.decodeUnknownSync(Request)({
+        id,
+        sessionID: input.sessionID,
+        createdAt: new Date(now).toISOString(),
+        timeoutAt: timeoutAt === undefined ? undefined : new Date(timeoutAt).toISOString(),
+        questions: input.questions,
+        tool: input.tool,
+      })
+      pending.set(id, { info, deferred, timeoutAt })
+      yield* bus.publish(Event.Asked, info)
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
           ? undefined
-          : Effect.sleep(`${timeoutMillis} millis`).pipe(
-              Effect.flatMap(() =>
-                Effect.gen(function* () {
-                  if (!pending.has(id)) return []
-                  pending.delete(id)
-                  const answers = input.questions.map(fallbackAnswer)
-                  const sensitive = input.questions.some((question) =>
-                    isSensitiveOperatorPrompt(`${question.header} ${question.question}`),
-                  )
-                  yield* Effect.promise(() =>
-                    recordOperatorTimeout(activeOperation.worktree, {
-                      operationID: activeOperation.operationID,
-                      kind: "question",
-                      requestID: String(id),
-                      sessionID: input.sessionID,
-                      fallback: answers.map((answer) => answer.join(", ")).join(" | "),
-                      prompt: input.questions.map((question) => question.question).join(" | "),
-                      sensitive,
-                    }),
-                  )
-                  yield* bus.publish(Event.Replied, {
-                    sessionID: input.sessionID,
-                    requestID: id,
-                    answers: answers.map((answer) => [...answer]),
-                  })
-                  yield* Deferred.succeed(deferred, answers)
-                  return answers
+          : Effect.gen(function* loop(): Generator<Effect.Effect<unknown>, ReadonlyArray<Answer>, unknown> {
+              const entry = pending.get(id)
+              if (!entry) return []
+              const wait = Math.max(0, Math.ceil((entry.timeoutAt ?? Date.now()) - Date.now()))
+              if (wait > 0) yield* Effect.sleep(`${wait} millis`)
+              const latest = pending.get(id)
+              if (!latest) return []
+              if ((latest.timeoutAt ?? 0) > Date.now()) return yield* loop()
+              pending.delete(id)
+              const answers = input.questions.map(fallbackAnswer)
+              const sensitive = input.questions.some((question) =>
+                isSensitiveOperatorPrompt(`${question.header} ${question.question}`),
+              )
+              yield* Effect.promise(() =>
+                recordOperatorTimeout(activeOperation.worktree, {
+                  operationID: activeOperation.operationID,
+                  kind: "question",
+                  requestID: String(id),
+                  sessionID: input.sessionID,
+                  fallback: answers.map((answer) => answer.join(", ")).join(" | "),
+                  prompt: input.questions.map((question) => question.question).join(" | "),
+                  sensitive,
                 }),
-              ),
-            )
+              )
+              yield* bus.publish(Event.Replied, {
+                sessionID: input.sessionID,
+                requestID: id,
+                answers: answers.map((answer) => [...answer]),
+              })
+              yield* Deferred.succeed(deferred, answers)
+              return answers
+            })
 
       return yield* Effect.ensuring(
         timeout ? Effect.raceFirst(Deferred.await(deferred), timeout) : Deferred.await(deferred),
@@ -273,12 +285,28 @@ export const layer = Layer.effect(
       yield* Deferred.fail(existing.deferred, new RejectedError())
     })
 
+    const touch = Effect.fn("Question.touch")(function* (input: { requestID: QuestionID; holdMillis?: number }) {
+      const pending = (yield* InstanceState.get(state)).pending
+      const existing = pending.get(input.requestID)
+      if (!existing || existing.timeoutAt === undefined) return false
+      const holdUntil = Date.now() + (input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+      const timeoutAt = Math.max(existing.timeoutAt, holdUntil)
+      existing.timeoutAt = timeoutAt
+      existing.info = Schema.decodeUnknownSync(Request)({
+        ...existing.info,
+        timeoutAt: new Date(timeoutAt).toISOString(),
+        holdUntil: new Date(holdUntil).toISOString(),
+      })
+      yield* bus.publish(Event.Asked, existing.info)
+      return true
+    })
+
     const list = Effect.fn("Question.list")(function* () {
       const pending = (yield* InstanceState.get(state)).pending
       return Array.from(pending.values(), (x) => x.info)
     })
 
-    return Service.of({ ask, reply, reject, list })
+    return Service.of({ ask, reply, reject, touch, list })
   }),
 )
 

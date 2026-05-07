@@ -40,6 +40,11 @@ const rejectEffect = Effect.fn("QuestionTest.reject")(function* (id: QuestionID)
   yield* question.reject(id)
 })
 
+const touchEffect = Effect.fn("QuestionTest.touch")(function* (id: QuestionID) {
+  const question = yield* Question.Service
+  yield* question.touch({ requestID: id })
+})
+
 afterEach(async () => {
   await disposeAllInstances()
 })
@@ -178,6 +183,43 @@ it.instance(
       })
 
       expect(answers).toEqual([["Skip"]])
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - active operator touch extends an unattended question timeout",
+  () =>
+    Effect.gen(function* () {
+      const ctx = yield* InstanceState.context
+      yield* Effect.promise(() =>
+        createOperationGoal(ctx.worktree, {
+          operationID: "school",
+          objective: "Authorized unattended run",
+          targetDurationHours: 20,
+          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
+        }),
+      )
+
+      const fiber = yield* askEffect({
+        sessionID: SessionID.make("ses_test"),
+        questions: [
+          {
+            question: "Type any operator note?",
+            header: "Note",
+            options: [{ label: "Skip", description: "Continue without a note" }],
+          },
+        ],
+      }).pipe(Effect.forkScoped)
+
+      const pending = yield* waitForPending(1)
+      expect(pending[0].timeoutAt).toBeString()
+      yield* Effect.sleep("20 millis")
+      yield* touchEffect(pending[0].id)
+      yield* Effect.sleep("40 millis")
+      expect(yield* listEffect).toHaveLength(1)
+      yield* rejectAll
+      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
     }),
   { git: true },
 )

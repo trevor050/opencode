@@ -24,6 +24,16 @@ export const permissionHandlers = HttpApiBuilder.group(InstanceHttpApi, "permiss
       return true
     })
 
-    return handlers.handle("list", list).handle("reply", reply)
+    const touch = Effect.fn("PermissionHttpApi.touch")(function* (ctx: {
+      params: { requestID: PermissionID }
+      payload: { holdMillis?: number }
+    }) {
+      return yield* svc.touch({
+        requestID: ctx.params.requestID,
+        holdMillis: ctx.payload.holdMillis,
+      })
+    })
+
+    return handlers.handle("list", list).handle("reply", reply).handle("touch", touch)
   }),
 )

@@ -85,6 +85,8 @@ import type {
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PermissionTouchErrors,
+  PermissionTouchResponses,
   ProjectCurrentResponses,
   ProjectInitGitResponses,
   ProjectListResponses,
@@ -117,6 +119,8 @@ import type {
   QuestionRejectResponses,
   QuestionReplyErrors,
   QuestionReplyResponses,
+  QuestionTouchErrors,
+  QuestionTouchResponses,
   SessionAbortErrors,
   SessionAbortResponses,
   SessionChildrenErrors,
@@ -2523,6 +2527,45 @@ export class Question extends HeyApiClient {
       ...params,
     })
   }
+
+  /**
+   * Touch question request
+   *
+   * Extend a pending question timeout while the operator is actively reviewing or typing.
+   */
+  public touch<ThrowOnError extends boolean = false>(
+    parameters: {
+      requestID: string
+      directory?: string
+      workspace?: string
+      holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "requestID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "holdMillis" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<QuestionTouchResponses, QuestionTouchErrors, ThrowOnError>({
+      url: "/question/{requestID}/touch",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
 }
 
 export class Permission extends HeyApiClient {
@@ -2587,6 +2630,45 @@ export class Permission extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<PermissionReplyResponses, PermissionReplyErrors, ThrowOnError>({
       url: "/permission/{requestID}/reply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Touch permission request
+   *
+   * Extend a pending permission timeout while the operator is actively reviewing.
+   */
+  public touch<ThrowOnError extends boolean = false>(
+    parameters: {
+      requestID: string
+      directory?: string
+      workspace?: string
+      holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "requestID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "holdMillis" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PermissionTouchResponses, PermissionTouchErrors, ThrowOnError>({
+      url: "/permission/{requestID}/touch",
       ...options,
       ...params,
       headers: {

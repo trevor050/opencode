@@ -13,6 +13,9 @@ const ReplyPayload = Schema.Struct({
     description: "User answers in order of questions (each answer is an array of selected labels)",
   }),
 })
+const TouchPayload = Schema.Struct({
+  holdMillis: Schema.optional(Schema.Number),
+})
 
 export const QuestionApi = HttpApi.make("question")
   .add(
@@ -48,6 +51,18 @@ export const QuestionApi = HttpApi.make("question")
             identifier: "question.reject",
             summary: "Reject question request",
             description: "Reject a question request from the AI assistant.",
+          }),
+        ),
+        HttpApiEndpoint.post("touch", `${root}/:requestID/touch`, {
+          params: { requestID: QuestionID },
+          payload: TouchPayload,
+          success: described(Schema.Boolean, "Question timeout extended successfully"),
+          error: [HttpApiError.BadRequest, HttpApiError.NotFound],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "question.touch",
+            summary: "Touch question request",
+            description: "Extend a pending question timeout while the operator is actively reviewing or typing.",
           }),
         ),
       )

@@ -73,6 +73,17 @@ export async function operatorTimeoutCount(
   ).length
 }
 
+async function operatorRecentTimeoutCount(
+  worktree: string,
+  input: { operationID: string; kind: OperatorTimeoutKind; since: Date },
+) {
+  return (await readOperatorTimeouts(worktree, slug(input.operationID, "operation"))).filter((record) => {
+    if (record.kind !== input.kind) return false
+    const timestamp = Date.parse(record.timedOutAt)
+    return Number.isFinite(timestamp) && timestamp >= input.since.getTime()
+  }).length
+}
+
 export async function operatorFallbackWaitMillis(
   worktree: string,
   input: {
@@ -80,13 +91,20 @@ export async function operatorFallbackWaitMillis(
     kind: OperatorTimeoutKind
     goal: OperationGoalRecord
     config?: ULMRuntimeConfig
+    now?: Date
   },
 ) {
   const continuation = effectiveULMContinuation(input.goal, input.config)
   if (!continuation.enabled || !continuation.operatorFallbackEnabled) return undefined
   const timeoutMillis = operatorFallbackTimeoutMillis(input.goal, input.config)
   if (timeoutMillis === undefined) return undefined
-  const count = await operatorTimeoutCount(worktree, { operationID: input.operationID, kind: input.kind })
+  if (continuation.maxRepeatedOperatorTimeoutsPerKind <= 0) return timeoutMillis
+  const now = input.now ?? new Date()
+  const count = await operatorRecentTimeoutCount(worktree, {
+    operationID: input.operationID,
+    kind: input.kind,
+    since: new Date(now.getTime() - continuation.operatorFallbackSuppressionWindowSeconds * 1000),
+  })
   if (count >= continuation.maxRepeatedOperatorTimeoutsPerKind) return 0
   return timeoutMillis
 }

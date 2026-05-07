@@ -33,6 +33,7 @@ describe("ULM operation goal", () => {
     expect(result.goal.continuation.operatorFallbackTimeoutSeconds).toBe(180)
     expect(result.goal.continuation.operatorFallbackEnabled).toBe(true)
     expect(result.goal.continuation.maxRepeatedOperatorTimeoutsPerKind).toBe(2)
+    expect(result.goal.continuation.operatorFallbackSuppressionWindowSeconds).toBe(600)
     expect(await fs.readFile(result.files.markdown, "utf8")).toContain("Authorized overnight district network assessment")
 
     const read = await readOperationGoal(dir.path, "School Night Run")

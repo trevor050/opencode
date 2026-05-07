@@ -11,6 +11,7 @@ export type Event =
   | EventLspClientDiagnostics
   | EventLspUpdated
   | EventMessagePartDelta
+  | EventOperationUpdated
   | EventPermissionAsked
   | EventPermissionReplied
   | EventSessionDiff
@@ -28,7 +29,6 @@ export type Event =
   | EventTuiCommandExecute
   | EventTuiToastShow1
   | EventTuiSessionSelect
-  | EventOperationUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -107,6 +107,9 @@ export type Auth = OAuth | ApiAuth | WellKnownAuth
 export type PermissionRequest = {
   id: string
   sessionID: string
+  createdAt?: string
+  timeoutAt?: string
+  holdUntil?: string
   permission: string
   patterns: Array<string>
   metadata: {
@@ -224,6 +227,9 @@ export type QuestionTool = {
 export type QuestionRequest = {
   id: string
   sessionID: string
+  createdAt?: string
+  timeoutAt?: string
+  holdUntil?: string
   /**
    * Questions to ask
    */
@@ -778,6 +784,7 @@ export type GlobalEvent = {
     | EventLspClientDiagnostics
     | EventLspUpdated
     | EventMessagePartDelta
+    | EventOperationUpdated
     | EventPermissionAsked
     | EventPermissionReplied
     | EventSessionDiff
@@ -795,7 +802,6 @@ export type GlobalEvent = {
     | EventTuiCommandExecute
     | EventTuiToastShow
     | EventTuiSessionSelect
-    | EventOperationUpdated
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
@@ -2516,6 +2522,45 @@ export type EventMessagePartDelta = {
   }
 }
 
+export type EventOperationUpdated = {
+  id: string
+  type: "operation.updated"
+  properties: {
+    operationID: string
+    artifact:
+      | "checkpoint"
+      | "operation_plan"
+      | "evidence"
+      | "finding"
+      | "report_outline"
+      | "report_render"
+      | "runtime_summary"
+      | "eval_scorecard"
+      | "stage_gate"
+      | "operation_audit"
+    path?: string
+    operation?: {
+      objective?: string
+      stage?: string
+      status?: string
+      summary?: string
+      riskLevel?: string
+      nextActions?: Array<string>
+      blockers?: Array<string>
+    }
+    findings?: {
+      total: number
+    }
+    evidence?: {
+      total: number
+    }
+    reports?: {
+      [key: string]: boolean
+    }
+    runtimeSummary?: boolean
+  }
+}
+
 export type EventPermissionAsked = {
   id: string
   type: "permission.asked"
@@ -2622,44 +2667,6 @@ export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
-  }
-}
-
-export type EventOperationUpdated = {
-  id: string
-  type: "operation.updated"
-  properties: {
-    operationID: string
-    artifact:
-      | "checkpoint"
-      | "operation_plan"
-      | "evidence"
-      | "finding"
-      | "report_outline"
-      | "report_render"
-      | "runtime_summary"
-      | "stage_gate"
-      | "operation_audit"
-    path?: string
-    operation?: {
-      objective?: string
-      stage?: string
-      status?: string
-      summary?: string
-      riskLevel?: string
-      nextActions?: Array<string>
-      blockers?: Array<string>
-    }
-    findings?: {
-      total: number
-    }
-    evidence?: {
-      total: number
-    }
-    reports?: {
-      [key: string]: boolean
-    }
-    runtimeSummary?: boolean
   }
 }
 
@@ -5096,6 +5103,42 @@ export type QuestionRejectResponses = {
 
 export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejectResponses]
 
+export type QuestionTouchData = {
+  body?: {
+    holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/question/{requestID}/touch"
+}
+
+export type QuestionTouchErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type QuestionTouchError = QuestionTouchErrors[keyof QuestionTouchErrors]
+
+export type QuestionTouchResponses = {
+  /**
+   * Question timeout extended successfully
+   */
+  200: boolean
+}
+
+export type QuestionTouchResponse = QuestionTouchResponses[keyof QuestionTouchResponses]
+
 export type PermissionListData = {
   body?: never
   path?: never
@@ -5151,6 +5194,42 @@ export type PermissionReplyResponses = {
 }
 
 export type PermissionReplyResponse = PermissionReplyResponses[keyof PermissionReplyResponses]
+
+export type PermissionTouchData = {
+  body?: {
+    holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/permission/{requestID}/touch"
+}
+
+export type PermissionTouchErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PermissionTouchError = PermissionTouchErrors[keyof PermissionTouchErrors]
+
+export type PermissionTouchResponses = {
+  /**
+   * Permission timeout extended successfully
+   */
+  200: boolean
+}
+
+export type PermissionTouchResponse = PermissionTouchResponses[keyof PermissionTouchResponses]
 
 export type ProviderListData = {
   body?: never
@@ -5526,7 +5605,7 @@ export type SessionCostErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }

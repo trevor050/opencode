@@ -28,6 +28,16 @@ export const questionHandlers = HttpApiBuilder.group(InstanceHttpApi, "question"
       return true
     })
 
-    return handlers.handle("list", list).handle("reply", reply).handle("reject", reject)
+    const touch = Effect.fn("QuestionHttpApi.touch")(function* (ctx: {
+      params: { requestID: QuestionID }
+      payload: { holdMillis?: number }
+    }) {
+      return yield* svc.touch({
+        requestID: ctx.params.requestID,
+        holdMillis: ctx.payload.holdMillis,
+      })
+    })
+
+    return handlers.handle("list", list).handle("reply", reply).handle("reject", reject).handle("touch", touch)
   }),
 )

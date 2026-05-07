@@ -14,6 +14,7 @@ inject_plan_max_chars = 24000
 operator_fallback_enabled = false
 operator_timeout_seconds = 300
 max_repeated_operator_timeouts_per_kind = 4
+operator_timeout_suppression_window_seconds = 600
 trust_level = "unattended"
 scan_profile = "balanced"
 max_parallel_commands = 6
@@ -29,6 +30,7 @@ agent_no_tool_timeout_seconds = 300
     operator_fallback_enabled: false,
     operator_timeout_seconds: 300,
     max_repeated_operator_timeouts_per_kind: 4,
+    operator_timeout_suppression_window_seconds: 600,
     trust_level: "unattended",
     scan_profile: "balanced",
     max_parallel_commands: 6,
@@ -109,6 +111,7 @@ test("operator fallback wait is immediate after repeated timeouts hit the config
       operationID: "school",
       kind: "question",
       goal: result.goal,
+      now: new Date("2026-05-07T10:04:00.000Z"),
     }),
   ).toBe(0)
   expect(
@@ -116,6 +119,46 @@ test("operator fallback wait is immediate after repeated timeouts hit the config
       operationID: "school",
       kind: "permission",
       goal: result.goal,
+    }),
+  ).toBe(180_000)
+})
+
+test("operator fallback suppression expires after the recent-timeout window", async () => {
+  await using dir = await tmpdir()
+  const result = await createOperationGoal(dir.path, {
+    operationID: "school",
+    objective: "Authorized unattended run",
+    continuation: {
+      operatorFallbackTimeoutSeconds: 180,
+      maxRepeatedOperatorTimeoutsPerKind: 2,
+    },
+  })
+
+  await recordOperatorTimeout(dir.path, {
+    operationID: "school",
+    kind: "question",
+    requestID: "que_old_1",
+    sessionID: "ses_1",
+    fallback: "Skip",
+    sensitive: false,
+    timedOutAt: "2026-05-07T10:00:00.000Z",
+  })
+  await recordOperatorTimeout(dir.path, {
+    operationID: "school",
+    kind: "question",
+    requestID: "que_old_2",
+    sessionID: "ses_1",
+    fallback: "Skip",
+    sensitive: false,
+    timedOutAt: "2026-05-07T10:03:00.000Z",
+  })
+
+  expect(
+    await operatorFallbackWaitMillis(dir.path, {
+      operationID: "school",
+      kind: "question",
+      goal: result.goal,
+      now: new Date("2026-05-07T10:28:00.000Z"),
     }),
   ).toBe(180_000)
 })
@@ -135,6 +178,7 @@ test("effectiveULMContinuation applies config overrides", async () => {
       inject_plan_max_chars: 24000,
       operator_fallback_enabled: false,
       max_repeated_operator_timeouts_per_kind: 4,
+      operator_timeout_suppression_window_seconds: 900,
     }),
   ).toEqual({
     enabled: false,
@@ -143,5 +187,6 @@ test("effectiveULMContinuation applies config overrides", async () => {
     injectPlanMaxChars: 24000,
     operatorFallbackEnabled: false,
     maxRepeatedOperatorTimeoutsPerKind: 4,
+    operatorFallbackSuppressionWindowSeconds: 900,
   })
 })
