@@ -436,6 +436,15 @@ export type OperationAuditResult = {
       }
     }
     coverage: CoverageReadiness
+    credentialHandoff: {
+      ok: boolean
+      required: boolean
+      status: "ready" | "attention_required" | "not_required"
+      gaps: string[]
+      credentialCount: number
+      submittedAt?: string
+      reviewFile: string
+    }
   }
   blockers: string[]
   recommendedTools: string[]
@@ -795,6 +804,52 @@ async function readText(file: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
     throw error
   }
+}
+
+type CredentialReviewSubmission = {
+  operationID?: string
+  submittedAt?: string
+  credentials?: unknown[]
+  file?: string
+}
+
+export function operationPlanRequiresCredentialHandoff(plan: unknown) {
+  if (!plan) return false
+  const text = JSON.stringify(plan).toLowerCase()
+  if (!/\bcredential|\bauthenticated\b/.test(text)) return false
+  if (/\b(?:no|without)\s+(?:[a-z0-9_-]+\s+){0,4}credentials?\b/.test(text) || /\bunauthenticated\b/.test(text)) {
+    return false
+  }
+  return (
+    /\b(?:provided|available|submitted|vault|test|use|using|required|credentialed)\b.{0,120}\bcredentials?\b/.test(text) ||
+    /\bcredentials?\b.{0,120}\b(?:provided|available|submitted|vault|test|use|using|required)\b/.test(text) ||
+    /\bauthenticated\b.{0,120}\b(?:checks?|validation|review|router|portal|ad|ldap|login|service)\b/.test(text)
+  )
+}
+
+async function evaluateCredentialHandoff(root: string, plan: unknown) {
+  const required = operationPlanRequiresCredentialHandoff(plan)
+  const reviewFile = path.join(root, "credentials", "review-submission.json")
+  const review = await readJson<CredentialReviewSubmission>(reviewFile)
+  const credentialCount = Array.isArray(review?.credentials) ? review.credentials.length : 0
+  const submitted = Boolean(review?.submittedAt && credentialCount > 0)
+  const gaps =
+    required && !submitted
+      ? [
+          review?.submittedAt
+            ? "credentialed plan requires at least one submitted credential vault record"
+            : "credentialed plan requires submitted credential vault review",
+        ]
+      : []
+  return {
+    ok: !required || submitted,
+    required,
+    status: required ? (submitted ? "ready" : "attention_required") : "not_required",
+    gaps,
+    credentialCount,
+    submittedAt: review?.submittedAt,
+    reviewFile,
+  } as const
 }
 
 async function writeJson(file: string, data: unknown) {
@@ -1499,6 +1554,9 @@ export function formatOperationAudit(audit: OperationAuditResult) {
     `final_handoff: ${audit.checks.finalHandoff.status}`,
     ...listLines(audit.checks.finalHandoff.gaps, "none"),
     "",
+    `credential_handoff: ${audit.checks.credentialHandoff.status}`,
+    ...listLines(audit.checks.credentialHandoff.gaps, "none"),
+    "",
     `coverage: ${audit.checks.coverage.ok ? "ready" : "attention_required"} (${audit.checks.coverage.status})`,
     ...listLines(audit.checks.coverage.gaps, "none"),
     "",
@@ -1542,6 +1600,7 @@ export async function buildOperationAudit(
     requireRuntimeSummary: options.requireRuntimeSummary,
   })
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
+  const credentialHandoff = await evaluateCredentialHandoff(root, plan)
   const generatedAt = new Date().toISOString()
   const files = {
     json: path.join(root, "deliverables", "operation-audit.json"),
@@ -1551,7 +1610,7 @@ export async function buildOperationAudit(
     operationID: slug(operationID, "operation"),
     root,
     generatedAt,
-    ok: resume.health.ready && finalHandoff.ok && coverage.ok,
+    ok: resume.health.ready && finalHandoff.ok && coverage.ok && credentialHandoff.ok,
     checks: {
       resume: {
         ok: resume.health.ready,
@@ -1568,15 +1627,18 @@ export async function buildOperationAudit(
         },
       },
       coverage,
+      credentialHandoff,
     },
     blockers: [
       ...resume.health.gaps.map((gap) => `resume: ${gap}`),
       ...coverage.gaps.map((gap) => `coverage: ${gap}`),
+      ...credentialHandoff.gaps.map((gap) => `credential_handoff: ${gap}`),
       ...finalHandoff.gaps.map((gap) => `final_handoff: ${gap}`),
     ],
     recommendedTools: unique([
       ...resume.recommendedTools,
       ...(coverage.ok ? [] : ["operation_run", "operation_supervise"]),
+      ...(credentialHandoff.ok ? [] : ["operation_credentials"]),
       ...lintToolRecommendations(finalHandoff.gaps),
     ]),
     files,

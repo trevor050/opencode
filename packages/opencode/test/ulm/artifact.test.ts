@@ -1376,6 +1376,67 @@ describe("ULM artifact ledger", () => {
     expect(audit.recommendedTools).toContain("report_outline")
   })
 
+  test("operation audit requires submitted credential review for credentialed plans", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff review.",
+    })
+    const root = path.join(worktree, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          timeBudget: {
+            targetHours: 20,
+            allocations: [{ stage: "validation", hours: 18, work: "Use provided credentials for authenticated checks." }],
+          },
+          phases: [
+            {
+              actions: ["Use credential vault records for authenticated router and portal validation."],
+              successCriteria: ["Credentialed checks cite vault credential IDs only."],
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const audit = await buildOperationAudit(worktree, "school", { finalHandoff: true })
+
+    expect(audit.ok).toBe(false)
+    expect(audit.checks.credentialHandoff.status).toBe("attention_required")
+    expect(audit.blockers).toContain("credential_handoff: credentialed plan requires submitted credential vault review")
+    expect(audit.recommendedTools).toContain("operation_credentials")
+
+    const credentialDir = path.join(root, "credentials")
+    await fs.mkdir(credentialDir, { recursive: true, mode: 0o700 })
+    await fs.writeFile(
+      path.join(credentialDir, "review-submission.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          submittedAt: new Date().toISOString(),
+          credentials: [{ credentialID: "router-admin", label: "Router Admin", password: "********", tags: [] }],
+          file: path.join(credentialDir, "review-submission.json"),
+        },
+        null,
+        2,
+      ) + "\n",
+      { mode: 0o600 },
+    )
+
+    const reviewed = await buildOperationAudit(worktree, "school", { finalHandoff: true })
+    expect(reviewed.checks.credentialHandoff.status).toBe("ready")
+    expect(JSON.stringify(reviewed)).not.toContain("router-password")
+  })
+
   test("blocks validation stage gates until findings are report-ready", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {

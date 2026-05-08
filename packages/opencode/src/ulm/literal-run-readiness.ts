@@ -1,6 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, slug } from "./artifact"
+import { operationPath, operationPlanRequiresCredentialHandoff, slug } from "./artifact"
 
 export type LiteralRunReadinessStatus = "passed" | "ready" | "incomplete" | "blocked"
 export type LiteralRunCheckStatus = "ok" | "warn" | "fail"
@@ -197,6 +197,7 @@ export async function auditLiteralRunReadiness(
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
   const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
   const requiredAuditMinOutlineTargetPages = (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+  const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
   checks.push(
     check({
       id: "operation-graph",
@@ -323,7 +324,10 @@ export async function auditLiteralRunReadiness(
     ok?: boolean
     blockers?: unknown[]
     generatedAt?: string
-    checks?: { finalHandoff?: { gates?: { minOutlineTargetPages?: number } } }
+    checks?: {
+      finalHandoff?: { gates?: { minOutlineTargetPages?: number } }
+      credentialHandoff?: { ok?: boolean; required?: boolean; credentialCount?: number }
+    }
   }>(finalAuditPath)
   const finalAuditTime = timestamp(finalAudit?.generatedAt)
   const finalAuditFresh = heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)
@@ -331,13 +335,32 @@ export async function auditLiteralRunReadiness(
   const finalAuditGatesOk =
     requiredAuditMinOutlineTargetPages === undefined ||
     (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages
+  const finalAuditCredentialHandoff = finalAudit?.checks?.credentialHandoff
+  const finalAuditCredentialHandoffOk =
+    !requiresCredentialHandoff ||
+    (finalAuditCredentialHandoff?.ok === true &&
+      finalAuditCredentialHandoff.required === true &&
+      (finalAuditCredentialHandoff.credentialCount ?? 0) > 0)
   checks.push(
     check({
       id: "final-operation-audit",
-      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 && finalAuditFresh && finalAuditGatesOk ? "ok" : "fail",
+      status:
+        finalAudit?.ok === true &&
+        countItems(finalAudit.blockers) === 0 &&
+        finalAuditFresh &&
+        finalAuditGatesOk &&
+        finalAuditCredentialHandoffOk
+          ? "ok"
+          : "fail",
       required: true,
       detail: finalAudit
-        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}`
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; credential_handoff=${
+            requiresCredentialHandoff
+              ? finalAuditCredentialHandoffOk
+                ? "proved"
+                : "missing"
+              : "not_required"
+          }`
         : "final operation audit is missing",
       path: finalAuditPath,
     }),

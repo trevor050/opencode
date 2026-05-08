@@ -245,6 +245,70 @@ describe("ULM literal run readiness audit", () => {
     )
   })
 
+  test("rejects credentialed runs whose final audit does not prove credential handoff", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Credentialed Run"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await fs.mkdir(path.join(root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify(
+        {
+          operationID: "credentialed-run",
+          timeBudget: { targetHours: 20 },
+          phases: [{ actions: ["Use provided credentials for authenticated router checks."] }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "credentialed-run",
+          elapsedSeconds: 20 * 60 * 60,
+          endedAt: "2026-05-08T20:00:00.000Z",
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "final", "manifest.json"),
+      JSON.stringify({ operationID, artifacts: { html: "report.html", pdf: "report.pdf" } }, null, 2) + "\n",
+    )
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID,
+          ok: true,
+          blockers: [],
+          generatedAt: "2026-05-08T20:05:00.000Z",
+          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50 } } },
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("fail")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
+      "credential_handoff=missing",
+    )
+  })
+
   test("runs through the operator script and supports strict mode", async () => {
     await using dir = await tmpdir({ git: true })
     const script = path.join(__dirname, "..", "..", "script", "ulm-literal-run-readiness.ts")
