@@ -193,7 +193,7 @@ describe("ULM runtime daemon", () => {
     expect(result.reason).toBe("max scheduler cycles reached")
   })
 
-  test("does not treat complete lanes as a completed literal wall-clock run before the target window elapses", async () => {
+  test("stops early when no scheduled operation work remains before the literal window elapses", async () => {
     await using dir = await tmpdir({ git: true })
     const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
     const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
@@ -215,8 +215,8 @@ describe("ULM runtime daemon", () => {
       sleep: async () => {},
     })
 
-    expect(result.stopped).toBe(false)
-    expect(result.reason).toBe("target runtime window is still open; scheduler is idle")
+    expect(result.stopped).toBe(true)
+    expect(result.reason).toBe("no scheduled operation work remains before target runtime elapsed")
   })
 
   test("enables supervisor review from the daemon target window even when the stored goal is short", async () => {
