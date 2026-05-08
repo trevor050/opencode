@@ -204,6 +204,7 @@ import type {
   UlmOperationCredentialCreateResponses,
   UlmOperationCredentialDeleteResponses,
   UlmOperationCredentialMaterializeEnvResponses,
+  UlmOperationCredentialReviewSubmitResponses,
   UlmOperationCredentialsResponses,
   UlmOperationListResponses,
   UlmOperationResumeResponses,
@@ -4821,6 +4822,40 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Review extends HeyApiClient {
+  /**
+   * Submit ULM credential review
+   *
+   * Mark the current redacted credential handles as reviewed and ready for the agent.
+   */
+  public submit<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationCredentialReviewSubmitResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials/submit",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Credential extends HeyApiClient {
   /**
    * Create ULM operation credential
@@ -4952,6 +4987,11 @@ export class Credential extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _review?: Review
+  get review(): Review {
+    return (this._review ??= new Review({ client: this.client }))
   }
 }
 

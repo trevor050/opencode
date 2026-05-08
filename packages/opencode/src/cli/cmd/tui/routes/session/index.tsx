@@ -14,6 +14,7 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import path from "path"
+import open from "open"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
@@ -48,6 +49,7 @@ import type { WebFetchTool } from "@/tool/webfetch"
 import type { WebSearchTool } from "@/tool/websearch"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
+import type { OperationCredentialsTool } from "@/tool/operation_credentials"
 import type { SkillTool } from "@/tool/skill"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
@@ -60,9 +62,11 @@ import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
+import { Link } from "../../ui/link"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { buildULMToolView } from "./ulm-tool-view"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -1593,6 +1597,19 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "operation_credentials"}>
+          <OperationCredentials {...toolprops} />
+        </Match>
+        <Match
+          when={
+            props.part.tool.startsWith("operation_") ||
+            props.part.tool === "command_supervise" ||
+            props.part.tool === "runtime_scheduler" ||
+            props.part.tool === "runtime_daemon"
+          }
+        >
+          <ULMOperationTool {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
@@ -2220,6 +2237,91 @@ function Question(props: ToolProps<typeof QuestionTool>) {
         </InlineTool>
       </Match>
     </Switch>
+  )
+}
+
+function OperationCredentials(props: ToolProps<typeof OperationCredentialsTool>) {
+  const { theme } = useTheme()
+  const action = createMemo(() => props.input.action)
+  const operationID = createMemo(() => props.metadata.operationID ?? props.input.operationID ?? "")
+  const vaultUrl = createMemo(() => props.metadata.fullVaultUrl ?? props.metadata.vaultUrl ?? "")
+  const opened = createMemo(() => props.metadata.opened)
+  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
+
+  return (
+    <Switch>
+      <Match when={isVault()}>
+        <BlockTool title="# Credential Vault" part={props.part}>
+          <box gap={1}>
+            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
+            <text fg={opened() ? theme.success : theme.warning}>
+              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
+            </text>
+            <Show when={vaultUrl()}>
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.textMuted}>Fallback:</text>
+                <Link href={String(vaultUrl())} fg={theme.primary} />
+              </box>
+            </Show>
+            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <ULMOperationTool {...props} />
+      </Match>
+    </Switch>
+  )
+}
+
+function ULMOperationTool(props: ToolProps<any>) {
+  const { theme } = useTheme()
+  const running = createMemo(() => props.part.state.status === "running")
+  const view = createMemo(() =>
+    buildULMToolView({
+      tool: props.part.tool,
+      input: props.input,
+      metadata: props.metadata,
+      output: props.output,
+    }),
+  )
+
+  return (
+    <BlockTool title={view().title} spinner={running()} part={props.part}>
+      <box gap={1}>
+        <For each={view().rows}>
+          {(row) => (
+            <box flexDirection="row" gap={1}>
+              <text fg={theme.textMuted}>{row.label}:</text>
+              <text fg={theme.text}>{row.value}</text>
+            </box>
+          )}
+        </For>
+        <Show when={view().preview.length}>
+          <box gap={1} paddingTop={1}>
+            <text fg={theme.textMuted}>Preview</text>
+            <For each={view().preview}>
+              {(line) => <text fg={theme.text}>{line}</text>}
+            </For>
+          </box>
+        </Show>
+        <For each={view().sections}>
+          {(section) => (
+            <box gap={1} paddingTop={1}>
+              <text fg={theme.textMuted}>{section.title}</text>
+              <For each={section.rows}>
+                {(row) => (
+                  <box flexDirection="row" gap={1}>
+                    <text fg={theme.textMuted}>{row.label}.</text>
+                    <text fg={theme.text}>{row.value}</text>
+                  </box>
+                )}
+              </For>
+            </box>
+          )}
+        </For>
+      </box>
+    </BlockTool>
   )
 }
 

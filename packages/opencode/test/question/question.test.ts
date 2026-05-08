@@ -41,9 +41,9 @@ const rejectEffect = Effect.fn("QuestionTest.reject")(function* (id: QuestionID)
   yield* question.reject(id)
 })
 
-const touchEffect = Effect.fn("QuestionTest.touch")(function* (id: QuestionID) {
+const touchEffect = Effect.fn("QuestionTest.touch")(function* (id: QuestionID, holdMillis?: number) {
   const question = yield* Question.Service
-  yield* question.touch({ requestID: id })
+  yield* question.touch({ requestID: id, holdMillis })
 })
 
 afterEach(async () => {
@@ -219,9 +219,49 @@ it.instance(
       const pending = yield* waitForPending(1)
       expect(pending[0].timeoutAt).toBeString()
       yield* Effect.sleep("20 millis")
-      yield* touchEffect(pending[0].id)
+      yield* touchEffect(pending[0].id, 30)
       yield* Effect.sleep("40 millis")
       expect(yield* listEffect).toHaveLength(1)
+      yield* rejectAll
+      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - active operator touch renews the configured unattended question timeout",
+  () =>
+    Effect.gen(function* () {
+      const ctx = yield* InstanceState.context
+      yield* Effect.promise(() =>
+        createOperationGoal(ctx.worktree, {
+          operationID: "school",
+          objective: "Authorized unattended run",
+          targetDurationHours: 20,
+          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
+        }),
+      )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
+
+      const fiber = yield* askEffect({
+        sessionID: SessionID.make("ses_test"),
+        questions: [
+          {
+            question: "Type any operator note?",
+            header: "Note",
+            options: [{ label: "Skip", description: "Continue without a note" }],
+          },
+        ],
+      }).pipe(Effect.forkScoped)
+
+      const pending = yield* waitForPending(1)
+      const firstTimeout = Date.parse(pending[0].timeoutAt ?? "")
+      expect(Number.isFinite(firstTimeout)).toBe(true)
+      yield* Effect.sleep("80 millis")
+      yield* touchEffect(pending[0].id, 30)
+      const updated = (yield* listEffect)[0]
+      const renewedTimeout = Date.parse(updated?.timeoutAt ?? "")
+      expect(renewedTimeout).toBeGreaterThan(firstTimeout + 50)
       yield* rejectAll
       expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
     }),

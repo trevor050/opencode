@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
 import { buildCommandPlan, writeCommandPlan } from "@/ulm/tool-manifest"
+import { errorMessage } from "@/util/error"
 import * as Tool from "./tool"
 import DESCRIPTION from "./command_supervise.txt"
 
@@ -51,6 +52,13 @@ type Metadata = {
   heartbeatPath: string
   jobID?: string
   dryRun: boolean
+}
+
+function toolPromise<T>(try_: () => Promise<T>) {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (error) => new Error(errorMessage(error)),
+  })
 }
 
 async function runCommand(input: {
@@ -162,7 +170,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>) =>
         Effect.gen(function* () {
-          const plan = yield* Effect.tryPromise(() =>
+          const plan = yield* toolPromise(() =>
             buildCommandPlan({
               worktree: params.worktree ?? Instance.worktree,
               operationID: params.operationID,
@@ -172,7 +180,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
               manifestPath: params.manifestPath,
             }),
           ).pipe(Effect.orDie)
-          yield* Effect.tryPromise(() => writeCommandPlan(plan)).pipe(Effect.orDie)
+          yield* toolPromise(() => writeCommandPlan(plan)).pipe(Effect.orDie)
 
           const dryRun = params.dryRun ?? true
           let jobID: string | undefined
@@ -198,7 +206,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
                 restartable: plan.profile.restartable,
                 worktree: params.worktree ?? Instance.worktree,
               },
-              run: Effect.tryPromise(() =>
+              run: toolPromise(() =>
                 runCommand({
                   command: plan.command,
                   cwd: plan.operationRoot,

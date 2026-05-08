@@ -4,6 +4,7 @@ import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
 import { useTheme } from "@tui/context/theme"
 import { useLocal } from "@tui/context/local"
+import { Link } from "@tui/ui/link"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { TextAttributes, type BoxRenderable, type SyntaxStyle } from "@opentui/core"
 import { Locale } from "@/util/locale"
@@ -402,7 +403,8 @@ function AssistantTool(props: { part: SessionMessageAssistantTool }) {
       return input()
     },
     get metadata() {
-      return props.part.provider?.metadata ?? {}
+      const state = props.part.state as { structured?: unknown }
+      return isRecord(state.structured) ? state.structured : (props.part.provider?.metadata ?? {})
     },
     get output() {
       return props.part.state.status === "pending" ? undefined : toolOutput(props.part.state.content)
@@ -446,6 +448,9 @@ function AssistantTool(props: { part: SessionMessageAssistantTool }) {
       </Match>
       <Match when={props.part.name === "question"}>
         <Question {...toolprops} />
+      </Match>
+      <Match when={props.part.name === "operation_credentials"}>
+        <OperationCredentials {...toolprops} />
       </Match>
       <Match when={props.part.name === "skill"}>
         <Skill {...toolprops} />
@@ -967,6 +972,40 @@ function Question(props: ToolProps) {
         <InlineTool icon="→" pending="Asking questions..." complete={questions().length} part={props.part}>
           Asked {questions().length} question{questions().length === 1 ? "" : "s"}
         </InlineTool>
+      </Match>
+    </Switch>
+  )
+}
+
+function OperationCredentials(props: ToolProps) {
+  const { theme } = useTheme()
+  const action = createMemo(() => stringValue(props.input.action))
+  const operationID = createMemo(() => stringValue(props.metadata.operationID) ?? stringValue(props.input.operationID) ?? "")
+  const vaultUrl = createMemo(() => stringValue(props.metadata.fullVaultUrl) ?? stringValue(props.metadata.vaultUrl) ?? "")
+  const opened = createMemo(() => props.metadata.opened === true)
+  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
+
+  return (
+    <Switch>
+      <Match when={isVault()}>
+        <BlockTool title="# Credential Vault" part={props.part}>
+          <box gap={1}>
+            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
+            <text fg={opened() ? theme.success : theme.warning}>
+              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
+            </text>
+            <Show when={vaultUrl()}>
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.textMuted}>Fallback:</text>
+                <Link href={vaultUrl()} fg={theme.primary} />
+              </box>
+            </Show>
+            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <GenericTool {...props} />
       </Match>
     </Switch>
   )

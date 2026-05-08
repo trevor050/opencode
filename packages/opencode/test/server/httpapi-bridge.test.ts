@@ -248,17 +248,22 @@ describe("HttpApi server", () => {
 
     expect(honoRoutes.filter((route) => !effectRoutes.includes(route))).toEqual([])
     expect(effectRoutes.filter((route) => !honoRoutes.includes(route))).toEqual([
+      "DELETE /ulm/operation/{operationID}/credentials/{credentialID}",
       "GET /api/model",
       "GET /api/session",
       "GET /api/session/{sessionID}/context",
       "GET /api/session/{sessionID}/message",
       "GET /ulm/operation",
       "GET /ulm/operation/{operationID}/audit",
+      "GET /ulm/operation/{operationID}/credentials",
       "GET /ulm/operation/{operationID}/resume",
       "GET /ulm/operation/{operationID}/status",
       "POST /api/session/{sessionID}/compact",
       "POST /api/session/{sessionID}/prompt",
       "POST /api/session/{sessionID}/wait",
+      "POST /ulm/operation/{operationID}/credentials",
+      "POST /ulm/operation/{operationID}/credentials/materialize-env",
+      "POST /ulm/operation/{operationID}/credentials/submit",
     ])
   })
 

@@ -46,6 +46,16 @@ type Metadata = {
   }
 }
 
+function normalizeContinuation(input: Schema.Schema.Type<typeof Parameters>["continuation"]) {
+  if (!input) return undefined
+  const timeout = input.operatorFallbackTimeoutSeconds
+  if (timeout === undefined || timeout === 0 || timeout >= 300) return input
+  return {
+    ...input,
+    operatorFallbackTimeoutSeconds: 300,
+  }
+}
+
 export const OperationGoalTool = Tool.define<typeof Parameters, Metadata, never>(
   "operation_goal",
   Effect.succeed({
@@ -61,7 +71,7 @@ export const OperationGoalTool = Tool.define<typeof Parameters, Metadata, never>
               objective: params.objective!,
               targetDurationHours: params.targetDurationHours,
               completionPolicy: params.completionPolicy,
-              continuation: params.continuation,
+              continuation: normalizeContinuation(params.continuation),
             }),
           ).pipe(Effect.orDie)
           yield* Effect.promise(() =>

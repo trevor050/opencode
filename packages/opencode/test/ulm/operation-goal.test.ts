@@ -30,7 +30,7 @@ describe("ULM operation goal", () => {
     expect(result.goal.continuation.maxNoToolContinuationTurns).toBe(1)
     expect(result.goal.continuation.turnEndReview).toBe(true)
     expect(result.goal.continuation.injectPlanMaxChars).toBe(12000)
-    expect(result.goal.continuation.operatorFallbackTimeoutSeconds).toBe(180)
+    expect(result.goal.continuation.operatorFallbackTimeoutSeconds).toBe(300)
     expect(result.goal.continuation.operatorFallbackEnabled).toBe(true)
     expect(result.goal.continuation.maxRepeatedOperatorTimeoutsPerKind).toBe(2)
     expect(result.goal.continuation.operatorFallbackSuppressionWindowSeconds).toBe(600)

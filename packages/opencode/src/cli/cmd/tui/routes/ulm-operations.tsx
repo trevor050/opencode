@@ -8,7 +8,7 @@ import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
 import type { SessionID } from "@/session/schema"
-import { bindOperationSession, listOperationSessionBindings } from "@/ulm/operation-context"
+import { bindOperationSession, listOperationSessionBindings, readOperationPlanExcerpt } from "@/ulm/operation-context"
 
 type OperationStatus = {
   operationID: string
@@ -43,6 +43,11 @@ type OperationStatus = {
   }
   policies?: {
     foregroundCommand?: string
+  }
+  plans?: {
+    operation?: boolean
+    discoveryCharter?: boolean
+    discoveryCharterApproval?: string
   }
   findings?: {
     total?: number
@@ -85,6 +90,7 @@ function operationStatus(value: unknown): OperationStatus | undefined {
   const supervisor = record(item.supervisor)
   const toolInventory = record(item.toolInventory)
   const policies = record(item.policies)
+  const plans = record(item.plans)
   return {
     operationID: item.operationID,
     operation: operation
@@ -129,6 +135,14 @@ function operationStatus(value: unknown): OperationStatus | undefined {
           foregroundCommand: typeof policies.foregroundCommand === "string" ? policies.foregroundCommand : undefined,
         }
       : undefined,
+    plans: plans
+      ? {
+          operation: typeof plans.operation === "boolean" ? plans.operation : undefined,
+          discoveryCharter: typeof plans.discoveryCharter === "boolean" ? plans.discoveryCharter : undefined,
+          discoveryCharterApproval:
+            typeof plans.discoveryCharterApproval === "string" ? plans.discoveryCharterApproval : undefined,
+        }
+      : undefined,
     findings: findings && typeof findings.total === "number" ? { total: findings.total } : undefined,
     evidence: evidence && typeof evidence.total === "number" ? { total: evidence.total } : undefined,
     reports: reports
@@ -164,6 +178,21 @@ function readyReports(item: OperationStatus) {
     .map(([key]) => key)
 }
 
+function planLabel(item: OperationStatus) {
+  if (item.plans?.operation) return "full operation plan"
+  if (item.plans?.discoveryCharter) return `discovery charter / ${item.plans.discoveryCharterApproval ?? "pending"}`
+  return "missing"
+}
+
+function previewText(content: string | undefined) {
+  if (!content) return "No plan artifact found yet."
+  return content
+    .split("\n")
+    .filter((line) => line.trim().length)
+    .slice(0, 18)
+    .join("\n")
+}
+
 function mergeOperationUpdate(
   previous: OperationStatus | undefined,
   update: {
@@ -173,6 +202,7 @@ function mergeOperationUpdate(
     supervisor?: OperationStatus["supervisor"]
     toolInventory?: OperationStatus["toolInventory"]
     policies?: OperationStatus["policies"]
+    plans?: OperationStatus["plans"]
     findings?: OperationStatus["findings"]
     evidence?: OperationStatus["evidence"]
     reports?: OperationStatus["reports"]
@@ -187,6 +217,7 @@ function mergeOperationUpdate(
     supervisor: update.supervisor ?? previous?.supervisor,
     toolInventory: update.toolInventory ?? previous?.toolInventory,
     policies: update.policies ?? previous?.policies,
+    plans: update.plans ?? previous?.plans,
     findings: update.findings ?? previous?.findings,
     evidence: update.evidence ?? previous?.evidence,
     reports: update.reports ?? previous?.reports,
@@ -258,6 +289,13 @@ export function UlmOperations() {
   const activeStatus = createMemo(() => detail()?.status ?? selectedItem())
   const activeAudit = createMemo(() => detail()?.audit)
   const reports = createMemo(() => (activeStatus() ? readyReports(activeStatus()!) : []))
+  const [planPreview, planPreviewActions] = createResource(
+    () => activeStatus()?.operationID ?? "",
+    async (operationID) => {
+      if (!operationID) return
+      return readOperationPlanExcerpt(root(), operationID, 2600)
+    },
+  )
 
   createEffect(() => {
     if (selected() < visibleItems().length) return
@@ -274,6 +312,7 @@ export function UlmOperations() {
   const refresh = () => {
     void itemsActions.refetch()
     if (data.operationID) void detailActions.refetch()
+    void planPreviewActions.refetch()
   }
 
   async function sessionExists(sessionID: string) {
@@ -358,6 +397,7 @@ export function UlmOperations() {
       audit: current?.audit,
     }))
     if (evt.properties.artifact === "operation_audit") void detailActions.refetch()
+    if (evt.properties.artifact === "operation_plan") void planPreviewActions.refetch()
   })
 
   return (
@@ -390,6 +430,10 @@ export function UlmOperations() {
                     <text fg={theme.textMuted}>
                       {"  "}
                       {stageLabel(item)} - {countLabel(item)}
+                    </text>
+                    <text fg={theme.textMuted}>
+                      {"  "}
+                      plan {planLabel(item)}
                     </text>
                     <text fg={theme.textMuted}>
                       {"  "}
@@ -439,7 +483,26 @@ export function UlmOperations() {
                       ? `${status().toolInventory?.installed ?? 0}/${status().toolInventory?.total ?? 0} installed, ${status().toolInventory?.highValueMissing ?? 0} high-value missing`
                       : "inventory missing; run tool_inventory"}
                   </text>
+                  <text fg={theme.textMuted} wrapMode="word">
+                    plan: {planLabel(status())}
+                  </text>
                 </box>
+                <Show when={planPreview()}>
+                  {(plan) => (
+                    <box>
+                      <text fg={theme.text}>
+                        current plan
+                        <span style={{ fg: theme.textMuted }}>
+                          {plan().path ? ` / ${plan().path}` : ""}
+                          {plan().truncated ? " / truncated" : ""}
+                        </span>
+                      </text>
+                      <text fg={theme.textMuted} wrapMode="word">
+                        {previewText(plan().content)}
+                      </text>
+                    </box>
+                  )}
+                </Show>
                 <box>
                   <text fg={theme.text}>
                     {countLabel(status())}

@@ -148,6 +148,7 @@ interface PendingEntry {
   info: Request
   deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
   timeoutExpiresAt?: number
+  timeoutWindowMillis?: number
 }
 
 interface State {
@@ -234,7 +235,7 @@ export const layer = Layer.effect(
       log.info("asking", { id, permission: info.permission, patterns: info.patterns })
 
       const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
-      pending.set(id, { info, deferred, timeoutExpiresAt })
+      pending.set(id, { info, deferred, timeoutExpiresAt, timeoutWindowMillis: timeoutMillis })
       yield* bus.publish(Event.Asked, info)
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
@@ -293,7 +294,8 @@ export const layer = Layer.effect(
     const touch = Effect.fn("Permission.touch")(function* (input: { requestID: PermissionID; holdMillis?: number }) {
       const entry = (yield* InstanceState.get(state)).pending.get(input.requestID)
       if (!entry?.timeoutExpiresAt) return false
-      const holdUntil = Date.now() + (input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+      const holdUntil =
+        Date.now() + Math.max(entry.timeoutWindowMillis ?? 0, input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
       entry.timeoutExpiresAt = Math.max(entry.timeoutExpiresAt, holdUntil)
       entry.info = Schema.decodeUnknownSync(Request)({
         ...entry.info,

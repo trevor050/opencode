@@ -8,11 +8,17 @@ Usage notes:
 - When `custom` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
 - Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
 - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
-- During active unattended ULM operations, unanswered questions time out. Include a clear skip/decline/unavailable option when the operator can safely be absent; timeout fallback prefers that over a recommended action.
+- During active unattended ULM operations, unanswered questions time out. Ask only real decision options; do not add "Pause/abort" or "Pause/clarify" as routine choices. If the operator does not answer, the timeout fallback chooses the conservative path.
 
 ULMCode pentest kickoff guidance:
-- Ask for target duration when it is missing. The answer controls compact planning versus Discovery Charter versus overnight planning.
-- Ask authorization, scope, safety-limit, credential, tool-installation, and report-audience questions before broad execution.
+- Kickoff questions are staged. Round 1 asks only missing time budget and autonomy/operator-availability questions. Skip anything already stated.
+- After round 1, run only very fast local/passive context collection when scope allows, then ask round 2 authorization/scope, safety-limit, credential availability, tool-installation, and mandatory exclusions before broad execution. Round 2 should be compact and must be a separate question call from round 3.
+- After round 2 returns, send a short visible transition message that says round 2 is complete, the next step is deeper questions, and first you are doing a fast bounded network read. Then run ultra-quick general recon before round 3. This should take at most 5 minutes in normal LAN cases; use parallel low-impact commands and narrow/supervised chunks instead of slow foreground scans.
+- Credential questions must say that choosing the available-credentials option will open/show the secure operation credential vault and that secrets must not be pasted into chat. Do not mark "No credentials" as recommended when authenticated checks may help; use an affirmative first option such as "Open vault (Recommended if available)".
+- After the operator chooses the available-credentials option, send a short user-visible note that the secure vault is opening, then immediately call `operation_credentials` with only `operationID` and `action: "open_vault"` for the active operation. Do not pass empty optional fields. The vault tool should visibly open/show the fallback link and wait for the Submit to agent button. After it returns, call `operation_credentials review_status` before round 3.
+- Round 3 happens after the credential-vault handoff and ultra-fast bounded non-destructive discovery/research. Use it for concrete discovery-informed follow-up questions, not generic boilerplate.
+- Treat "autonomous" as meaning the operator is likely leaving after kickoff questions, credential handoff, Discovery Charter approval, and the execution plan unless they explicitly say they are walking away immediately. Do not skip initial waits just because the final run is autonomous.
+- Discovery Charter and full-plan approval questions must include a compact summary, the markdown path, and the rendered plan preview when `operation_plan` produced one. Do not point the operator at fake slash commands as the primary review path. When the operator approves, the approval is recorded on the active operation before the tool returns; continue from that durable state instead of treating approval as only chat text.
 - For runs under two hours, ask only questions that change immediate execution.
 - For long and overnight runs, do not wait on discovery-driven questions after execution starts. Record conservative assumptions, honor the original authorized scope, and continue bounded work.
 - Do not use questions to avoid progress. If the missing answer does not affect the next safe bounded action, record the assumption in `operation_plan` and continue.

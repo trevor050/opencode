@@ -81,6 +81,10 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
 
+export function allowsULMTurnEndSupervisor(agent: string | undefined) {
+  return agent === "pentest"
+}
+
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts>
@@ -392,18 +396,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: input.agent.name,
         messages: input.messages,
         metadata: (val) =>
-          input.processor.updateToolCall(options.toolCallId, (match) => {
-            if (!["running", "pending"].includes(match.state.status)) return match
-            return {
-              ...match,
-              state: {
-                title: val.title,
-                metadata: val.metadata,
-                status: "running",
-                input: args,
-                time: { start: Date.now() },
-              },
-            }
+          Effect.gen(function* () {
+            yield* input.processor.updateToolCall(options.toolCallId, (match) => {
+              if (!["running", "pending"].includes(match.state.status)) return match
+              return {
+                ...match,
+                state: {
+                  title: val.title,
+                  metadata: val.metadata,
+                  status: "running",
+                  input: args,
+                  time: { start: Date.now() },
+                },
+              }
+            })
+            EventV2.run(SessionEvent.Tool.Progress.Sync, {
+              sessionID: input.session.id,
+              callID: options.toolCallId,
+              structured: val.metadata ?? {},
+              content: val.title
+                ? [
+                    {
+                      type: "text",
+                      text: val.title,
+                    },
+                  ]
+                : [],
+              timestamp: DateTime.makeUnsafe(Date.now()),
+            })
           }),
         ask: (req) =>
           permission
@@ -1455,6 +1475,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       lastAssistantMsg?: MessageV2.WithParts
       messages: MessageV2.WithParts[]
     }) {
+      if (!allowsULMTurnEndSupervisor(input.lastUser.agent)) return false
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       if (!operation) return false
@@ -1708,7 +1729,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
-            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+            // Keep stable instructions before volatile environment/ULM context so provider prompt caches
+            // can reuse the longest exact prefix across turns.
+            const system = [...instructions, ...(skills ? [skills] : []), ...env]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({

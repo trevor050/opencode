@@ -60,16 +60,7 @@ export function credentialVaultHtml() {
         background-size: 100% 4px;
         opacity: .2;
       }
-      .bar, .scope, .tabs, .content { position: relative; z-index: 1; }
-      .bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        padding: 8px;
-        border-bottom: 1px solid var(--line);
-        background: #000;
-      }
+      .scope, .tabs, .content { position: relative; z-index: 1; }
       .badge {
         display: inline-flex;
         align-items: center;
@@ -88,7 +79,7 @@ export function credentialVaultHtml() {
         border: 2px solid #000;
         border-radius: 2px;
       }
-      .esc, .subtle {
+      .subtle {
         color: var(--faint);
         font-size: 10px;
         text-transform: uppercase;
@@ -261,7 +252,7 @@ export function credentialVaultHtml() {
         cursor: not-allowed;
         opacity: .5;
       }
-      .clear, .delete, .materialize {
+      .clear, .delete, .materialize, .back {
         border: 0;
         background: transparent;
         color: var(--quiet);
@@ -272,6 +263,13 @@ export function credentialVaultHtml() {
       }
       .delete:hover, .clear:hover { color: var(--danger); }
       .materialize:hover { color: var(--accent); }
+      .review-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-top: 16px;
+      }
       .handles {
         display: grid;
         gap: 8px;
@@ -350,10 +348,6 @@ export function credentialVaultHtml() {
   <body>
     <main class="page">
       <section class="vault" aria-label="ULMCode Credential Vault">
-        <div class="bar">
-          <div><span class="badge">ULM_VAULT</span> <span class="subtle">v1</span></div>
-          <button class="esc" type="button" onclick="window.close()">[ esc ]</button>
-        </div>
         <div class="scope">
           <div>
             <span class="label">Operation</span>
@@ -367,7 +361,7 @@ export function credentialVaultHtml() {
         <nav class="tabs" aria-label="Vault tabs">
           <button class="active" data-tab="add">add secret</button>
           <button data-tab="import">import</button>
-          <button data-tab="handles">handles <span id="handle-count"></span></button>
+          <button data-tab="overview">overview <span id="credential-count"></span></button>
         </nav>
         <div class="content">
           <section id="tab-add" class="view active">
@@ -379,23 +373,29 @@ export function credentialVaultHtml() {
               </div>
             </div>
             <form id="credential-form" class="stack">
-              <div class="field"><span class="prefix">name</span><input name="label" placeholder="Handle name (e.g. lan-ssh-foothold)" required /></div>
+              <div class="field"><span class="prefix">name</span><input name="label" placeholder="Credential name (e.g. router-admin)" required /></div>
               <div class="field">
                 <span class="prefix">type</span>
-                <select name="type">
-                  <option>SSH / Local Auth</option>
-                  <option>Web Login</option>
-                  <option>API Token</option>
-                  <option>Session Cookie</option>
-                  <option>Freeform Note</option>
+                <select id="secret-type" name="type">
+                  <option value="Router/Admin Login">Router/Admin Login</option>
+                  <option value="Web App Login">Web App Login</option>
+                  <option value="SSH / Local Auth">SSH / Local Auth</option>
+                  <option value="API Token">API Token</option>
+                  <option value="Session Cookie">Session Cookie</option>
+                  <option value="Wi-Fi / Network">Wi-Fi / Network</option>
+                  <option value="Raw Note">Raw Note</option>
                 </select>
               </div>
               <div id="structured-fields" class="stack">
-                <div class="field"><span class="prefix">user</span><input name="username" placeholder="Username or identity" /></div>
-                <div class="field"><span class="prefix">auth</span><input name="secret" type="password" placeholder="Password, token, key, or browser instruction" /></div>
-                <div class="field"><span class="prefix">host</span><input name="target" placeholder="Target IP, URL, command, or domain" /></div>
+                <div class="field" data-row="username"><span class="prefix" data-prefix="username">user</span><input name="username" placeholder="Username or identity" /></div>
+                <div class="field" data-row="password"><span class="prefix" data-prefix="password">pass</span><input name="password" type="password" placeholder="Password" /></div>
+                <div class="field" data-row="secret"><span class="prefix" data-prefix="secret">secret</span><input name="secret" type="password" placeholder="Token, private key, cookie, or other secret" /></div>
+                <div class="field" data-row="url"><span class="prefix" data-prefix="url">url</span><input name="url" placeholder="Login/admin URL" /></div>
+                <div class="field" data-row="target"><span class="prefix" data-prefix="target">host</span><input name="target" placeholder="Target IP, hostname, SSID, or command" /></div>
+                <div class="field" data-row="extra1"><span class="prefix" data-prefix="extra1">extra</span><input name="extra1" placeholder="Additional detail" /></div>
+                <div class="field" data-row="extra2"><span class="prefix" data-prefix="extra2">extra</span><input name="extra2" placeholder="Additional detail" /></div>
               </div>
-              <textarea id="raw-secret" class="raw" name="rawSecret" hidden placeholder="# Paste exact content (.env, notes, key material, raw JSON, browser steps)\n# Saved outside chat and redacted in the handle list."></textarea>
+              <textarea id="raw-secret" class="raw" name="rawSecret" hidden placeholder="# Paste exact content (.env, notes, key material, raw JSON, browser steps)\n# Saved outside chat and redacted in the credential overview."></textarea>
               <div class="divider">Rules of Engagement</div>
               <textarea name="rules" placeholder="Agent instructions, scope limits, acceptable use, reveal rules..."></textarea>
               <div class="divider">Operator Notes</div>
@@ -414,12 +414,19 @@ export function credentialVaultHtml() {
               <button id="save-bulk" class="save" type="button">save bulk &gt;</button>
             </div>
           </section>
-          <section id="tab-handles" class="view">
+          <section id="tab-overview" class="view">
             <div class="section-head">
-              <span>Active Handles</span>
-              <button id="refresh" class="clear" type="button">[ refresh ]</button>
+              <span>Credential Overview</span>
+              <div>
+                <button id="back-to-add" class="back" type="button">[ back ]</button>
+                <button id="refresh" class="clear" type="button">[ refresh ]</button>
+              </div>
             </div>
             <div id="handles" class="handles"></div>
+            <div class="review-actions">
+              <span class="subtle">review, delete mistakes, then submit to agent</span>
+              <button id="submit-review" class="save" type="button">submit to agent &gt;</button>
+            </div>
           </section>
           <p id="message" class="message" role="status"></p>
         </div>
@@ -428,9 +435,55 @@ export function credentialVaultHtml() {
     <script>
       const params = new URLSearchParams(location.search)
       const operationID = params.get("operationID") || params.get("operation") || "default-operation"
+      const directory = params.get("directory") || ""
+      const apiQuery = directory ? "?directory=" + encodeURIComponent(directory) : ""
       const apiBase = "/ulm/operation/" + encodeURIComponent(operationID) + "/credentials"
       let mode = "structured"
       let credentials = []
+      const fieldConfigs = {
+        "Router/Admin Login": {
+          username: ["user", "Router username"],
+          password: ["pass", "Router/admin password"],
+          url: ["url", "Router admin URL, e.g. https://192.168.1.1"],
+          target: ["host", "Router IP or hostname"],
+          extra1: ["mfa", "MFA or browser-login note"],
+        },
+        "Web App Login": {
+          username: ["user", "Web/app username"],
+          password: ["pass", "Web/app password"],
+          url: ["url", "Application login URL"],
+          target: ["scope", "Authorized app, host, or environment"],
+          extra1: ["mfa", "MFA or SSO expectation"],
+        },
+        "SSH / Local Auth": {
+          username: ["user", "SSH/local username"],
+          password: ["pass", "Password or passphrase, if needed"],
+          secret: ["key", "Private key or key note, if needed"],
+          target: ["host", "ssh user@host, IP, or hostname"],
+          extra1: ["port", "SSH port, default 22"],
+        },
+        "API Token": {
+          username: ["id", "Key ID, service account, or owner"],
+          secret: ["token", "API token or bearer token"],
+          url: ["url", "API base URL or dashboard URL"],
+          target: ["scope", "Allowed API scope/use"],
+          extra1: ["header", "Header name, e.g. Authorization"],
+        },
+        "Session Cookie": {
+          username: ["user", "Associated user/account"],
+          secret: ["cookie", "Cookie value or cookie header"],
+          url: ["url", "Site or origin URL"],
+          target: ["domain", "Cookie domain/path"],
+          extra1: ["name", "Cookie name"],
+        },
+        "Wi-Fi / Network": {
+          password: ["key", "Wi-Fi password / PSK"],
+          target: ["ssid", "SSID or network name"],
+          extra1: ["sec", "Security mode, e.g. WPA2/WPA3"],
+          extra2: ["band", "Band/VLAN/location note"],
+        },
+        "Raw Note": {},
+      }
 
       document.getElementById("operation-label").textContent = operationID
 
@@ -452,11 +505,36 @@ export function credentialVaultHtml() {
       document.querySelectorAll("[data-mode]").forEach((item) => {
         item.addEventListener("click", () => {
           mode = item.dataset.mode
-          document.querySelectorAll("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === mode))
-          document.getElementById("structured-fields").hidden = mode === "raw"
-          document.getElementById("raw-secret").hidden = mode !== "raw"
+          applyMode()
         })
       })
+
+      function applyMode() {
+        document.querySelectorAll("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === mode))
+        document.getElementById("structured-fields").hidden = mode === "raw"
+        document.getElementById("raw-secret").hidden = mode !== "raw"
+      }
+
+      function applySecretType() {
+        const selected = document.getElementById("secret-type").value
+        const config = fieldConfigs[selected] || fieldConfigs["Router/Admin Login"]
+        const forceRaw = selected === "Raw Note"
+        if (forceRaw && mode !== "raw") mode = "raw"
+        if (!forceRaw && mode === "raw" && !document.getElementById("raw-secret").value.trim()) mode = "structured"
+        applyMode()
+        ;["username", "password", "secret", "url", "target", "extra1", "extra2"].forEach((name) => {
+          const row = document.querySelector('[data-row="' + name + '"]')
+          const input = row?.querySelector("input")
+          const prefix = row?.querySelector("[data-prefix]")
+          const definition = config[name]
+          if (!row || !input || !prefix) return
+          row.hidden = !definition
+          prefix.textContent = definition?.[0] || "extra"
+          input.placeholder = definition?.[1] || "Additional detail"
+        })
+      }
+
+      document.getElementById("secret-type").addEventListener("change", applySecretType)
 
       async function request(path, options = {}) {
         const response = await fetch(path, {
@@ -468,7 +546,7 @@ export function credentialVaultHtml() {
       }
 
       function render() {
-        document.getElementById("handle-count").textContent = credentials.length ? "(" + credentials.length + ")" : ""
+        document.getElementById("credential-count").textContent = credentials.length ? "(" + credentials.length + ")" : ""
         const root = document.getElementById("handles")
         root.innerHTML = credentials.length
           ? credentials.map((item) => [
@@ -487,7 +565,7 @@ export function credentialVaultHtml() {
             '</div>',
             '</article>',
           ].join("")).join("")
-          : '<div class="subtle">No active handles</div>'
+          : '<div class="subtle">No saved credentials</div>'
         root.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => remove(button.dataset.delete)))
         root.querySelectorAll("[data-env]").forEach((button) => button.addEventListener("click", () => materialize(button.dataset.env)))
       }
@@ -498,7 +576,7 @@ export function credentialVaultHtml() {
 
       async function load() {
         try {
-          const result = await request(apiBase)
+          const result = await request(apiBase + apiQuery)
           credentials = result.credentials || []
           render()
         } catch (error) {
@@ -507,44 +585,74 @@ export function credentialVaultHtml() {
       }
 
       async function save(payload) {
-        const result = await request(apiBase, { method: "POST", body: JSON.stringify(payload) })
+        const result = await request(apiBase + apiQuery, { method: "POST", body: JSON.stringify(payload) })
         credentials = result.credentials || []
         render()
-        selectedTab("handles")
-        setMessage("credential handle added. raw secret stayed out of chat.")
+        selectedTab("overview")
+        setMessage("credential saved. raw secret stayed out of chat.")
       }
 
       async function remove(credentialID) {
-        await request(apiBase + "/" + encodeURIComponent(credentialID), { method: "DELETE" })
+        await request(apiBase + "/" + encodeURIComponent(credentialID) + apiQuery, { method: "DELETE" })
         await load()
         setMessage("credential deleted: " + credentialID)
       }
 
       async function materialize(credentialID) {
-        const result = await request(apiBase + "/materialize-env", {
+        const result = await request(apiBase + "/materialize-env" + apiQuery, {
           method: "POST",
           body: JSON.stringify({ credentialIDs: [credentialID] }),
         })
         setMessage("env file ready: " + result.envFile)
       }
 
+      async function submitReview() {
+        const result = await request(apiBase + "/submit" + apiQuery, { method: "POST", body: JSON.stringify({}) })
+        credentials = result.credentials || []
+        render()
+        setMessage("credential review submitted to agent: " + credentials.length + " credential(s)")
+      }
+
+      function visibleFormValue(data, name) {
+        const row = document.querySelector('[data-row="' + name + '"]')
+        if (row?.hidden) return undefined
+        const value = String(data.get(name) || "")
+        return value.trim() || undefined
+      }
+
       document.getElementById("credential-form").addEventListener("submit", async (event) => {
         event.preventDefault()
-        const data = new FormData(event.currentTarget)
+        const form = event.currentTarget
+        const data = new FormData(form)
         const label = String(data.get("label") || "").trim()
         if (!label) return
+        const extraNotes = []
+        ;["extra1", "extra2"].forEach((name) => {
+          const row = document.querySelector('[data-row="' + name + '"]')
+          if (row?.hidden) return
+          const value = String(data.get(name) || "").trim()
+          const prefix = row?.querySelector("[data-prefix]")?.textContent?.trim()
+          if (value) extraNotes.push((prefix || name) + ": " + value)
+        })
+        const notes = [
+          String(data.get("notes") || "").trim(),
+          extraNotes.length ? "Additional fields:\\n- " + extraNotes.join("\\n- ") : "",
+        ].filter(Boolean).join("\\n\\n") || undefined
         try {
           await save({
             label,
             type: String(data.get("type") || "").trim() || undefined,
-            username: mode === "structured" ? String(data.get("username") || "").trim() || undefined : undefined,
-            secret: mode === "structured" ? String(data.get("secret") || "") || undefined : String(data.get("rawSecret") || "") || undefined,
-            target: mode === "structured" ? String(data.get("target") || "").trim() || undefined : "raw vault item",
+            username: mode === "structured" ? visibleFormValue(data, "username") : undefined,
+            password: mode === "structured" ? visibleFormValue(data, "password") : undefined,
+            secret: mode === "structured" ? visibleFormValue(data, "secret") : String(data.get("rawSecret") || "") || undefined,
+            url: mode === "structured" ? visibleFormValue(data, "url") : undefined,
+            target: mode === "structured" ? visibleFormValue(data, "target") : "raw vault item",
             rules: String(data.get("rules") || "").trim() || undefined,
-            notes: String(data.get("notes") || "").trim() || undefined,
+            notes,
             tags: [mode],
           })
-          event.currentTarget.reset()
+          form.reset()
+          applySecretType()
         } catch (error) {
           setMessage("save failed: " + error.message, true)
         }
@@ -562,6 +670,9 @@ export function credentialVaultHtml() {
       })
 
       document.getElementById("refresh").addEventListener("click", load)
+      document.getElementById("back-to-add").addEventListener("click", () => selectedTab("add"))
+      document.getElementById("submit-review").addEventListener("click", () => submitReview().catch((error) => setMessage("submit failed: " + error.message, true)))
+      applySecretType()
       load()
     </script>
   </body>

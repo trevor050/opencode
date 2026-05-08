@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer } from "effect"
 import { QuestionTool } from "../../src/tool/question"
 import { Question } from "../../src/question"
@@ -7,6 +7,10 @@ import { Agent } from "../../src/agent/agent"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Truncate } from "@/tool/truncate"
 import { testEffect } from "../lib/effect"
+import { createOperationGoal } from "@/ulm/operation-goal"
+import { bindOperationSession } from "@/ulm/operation-context"
+import { writeOperationDiscoveryCharter } from "@/ulm/artifact"
+import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const ctx = {
   sessionID: SessionID.make("ses_test-session"),
@@ -19,9 +23,8 @@ const ctx = {
   ask: () => Effect.void,
 }
 
-const it = testEffect(
-  Layer.mergeAll(Question.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer, Agent.defaultLayer),
-)
+const layer = Layer.mergeAll(Question.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer, Agent.defaultLayer)
+const it = testEffect(layer)
 
 const pending = Effect.fn("QuestionToolTest.pending")(function* (question: Question.Interface) {
   for (;;) {
@@ -78,6 +81,139 @@ describe("tool.question", () => {
 
       const result = yield* Fiber.join(fiber)
       expect(result.output).toContain(`"What is your favorite animal?"="Dog"`)
+    }),
+  )
+
+  test("records Discovery Charter approval on the active session-bound operation", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const sessionID = SessionID.make("ses_question-approval")
+            yield* Effect.promise(() =>
+              createOperationGoal(dir.path, {
+                operationID: "home-network-run",
+                objective: "Authorized test operation",
+                targetDurationHours: 4,
+              }),
+            )
+            yield* Effect.promise(() =>
+              bindOperationSession(dir.path, {
+                sessionID,
+                operationID: "home-network-run",
+                source: "test",
+              }),
+            )
+            yield* Effect.promise(() =>
+              writeOperationDiscoveryCharter(dir.path, {
+                operationID: "home-network-run",
+                discoveryCharter: {
+                  purpose: "Bounded discovery before full plan.",
+                  researchQuestions: ["What is live?"],
+                  reconInvestments: ["Safe inventory"],
+                  operatorQuestions: ["Approve charter?"],
+                  candidateDeepWorkLanes: ["Router review"],
+                  decisionCriteriaForFullPlan: ["Enough targets exist"],
+                },
+              }),
+            )
+
+            const question = yield* Question.Service
+            const toolInfo = yield* QuestionTool
+            const tool = yield* toolInfo.init()
+            const fiber = yield* tool
+              .execute(
+                {
+                  questions: [
+                    {
+                      question: "Discovery Charter is written. Approve this charter?",
+                      header: "Approve charter",
+                      options: [
+                        { label: "Approve charter", description: "Proceed with bounded discovery." },
+                        { label: "Revise charter", description: "Pause for changes." },
+                      ],
+                    },
+                  ],
+                },
+                { ...ctx, sessionID },
+              )
+              .pipe(Effect.forkScoped)
+            const item = yield* pending(question)
+            yield* question.reply({ requestID: item.id, answers: [["Approve charter"]] })
+
+            const result = yield* Fiber.join(fiber)
+            expect(result.output).toContain("Discovery Charter approval recorded")
+            expect(result.metadata.operationApproval?.status).toBe("approved")
+            const record = yield* Effect.promise(
+              async () =>
+                (await Bun.file(`${dir.path}/.ulmcode/operations/home-network-run/plans/discovery-charter.json`).json()) as {
+                  planningApproval: { status: string }
+                },
+            )
+            expect(record.planningApproval.status).toBe("approved")
+          }).pipe(Effect.scoped, Effect.provide(layer)),
+        ),
+    })
+  })
+
+  it.instance("rejects credential kickoff questions that recommend no credentials", () =>
+    Effect.gen(function* () {
+      const toolInfo = yield* QuestionTool
+      const tool = yield* toolInfo.init()
+
+      const exit = yield* tool
+        .execute(
+          {
+            questions: [
+              {
+                question:
+                  "Credentials: do you have router/admin/app/device credentials you want used for authenticated checks? If unavailable, I'll do unauthenticated testing only.",
+                header: "Credentials",
+                options: [
+                  { label: "No credentials (Recommended)", description: "Proceed unauthenticated." },
+                  { label: "Credentials available", description: "Open secure vault." },
+                ],
+              },
+            ],
+          },
+          ctx,
+        )
+        .pipe(Effect.exit)
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag !== "Failure") throw new Error("expected question tool to reject the credential anti-pattern")
+      expect(String(exit.cause)).toContain('must not recommend "No credentials"')
+    }),
+  )
+
+  it.instance("rejects pause or abort options in ULM kickoff questions", () =>
+    Effect.gen(function* () {
+      const toolInfo = yield* QuestionTool
+      const tool = yield* toolInfo.init()
+
+      const exit = yield* tool
+        .execute(
+          {
+            questions: [
+              {
+                question: "Round 2 scope authorization: what may I test from this host during the autonomous run?",
+                header: "Scope",
+                options: [
+                  { label: "LAN + gateway", description: "Test local LAN and gateway." },
+                  { label: "Pause/abort", description: "Do not continue." },
+                ],
+              },
+            ],
+          },
+          ctx,
+        )
+        .pipe(Effect.exit)
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag !== "Failure") throw new Error("expected question tool to reject pause/abort option")
+      expect(String(exit.cause)).toContain("must not include")
     }),
   )
 

@@ -82,6 +82,32 @@ describe("tool.operation_goal", () => {
     })
   })
 
+  test("clamps model-supplied unattended operator timeouts below five minutes", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationGoalTool
+            const def = yield* tool.init()
+            const created = yield* def.execute(
+              {
+                action: "create",
+                operationID: "Home Network",
+                objective: "Authorized unattended home network test",
+                targetDurationHours: 4.3,
+                continuation: { operatorFallbackTimeoutSeconds: 120 },
+              },
+              context,
+            )
+
+            expect(created.output).toContain('"operatorFallbackTimeoutSeconds": 300')
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
   test("reports blockers when completion artifacts are missing", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({

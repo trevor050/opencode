@@ -139,8 +139,9 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
-  const [pausedUntil, setPausedUntil] = createSignal(0)
   let lastTouch = 0
+  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
+  const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -160,12 +161,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setPausedUntil(now + 30_000)
+    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.permission.touch({
       requestID: props.request.id,
-      holdMillis: 30_000,
       workspace: project.workspace.current(),
     })
   }
@@ -444,8 +444,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               escapeKey="reject"
               fullscreen
               timeoutAt={props.request.timeoutAt}
-              holdUntil={props.request.holdUntil}
-              pausedUntil={pausedUntil()}
+              resetTimeoutAt={resetTimeoutAt()}
               onActivity={touchOperatorPrompt}
               onSelect={(option) => {
                 if (option === "always") {
@@ -565,8 +564,7 @@ function Prompt<const T extends Record<string, string>>(props: {
   fullscreen?: boolean
   onSelect: (option: keyof T) => void
   timeoutAt?: string
-  holdUntil?: string
-  pausedUntil?: number
+  resetTimeoutAt?: string
   onActivity?: () => void
 }) {
   const { theme } = useTheme()
@@ -686,7 +684,7 @@ function Prompt<const T extends Record<string, string>>(props: {
           </For>
         </box>
         <box flexDirection="row" gap={2} flexShrink={0}>
-          <OperatorAutoResume timeoutAt={props.timeoutAt} holdUntil={props.holdUntil} pausedUntil={props.pausedUntil} />
+          <OperatorAutoResume timeoutAt={props.timeoutAt} resetTimeoutAt={props.resetTimeoutAt} />
           <Show when={props.fullscreen}>
             <text fg={theme.text}>
               {"ctrl+f"} <span style={{ fg: theme.textMuted }}>{hint()}</span>

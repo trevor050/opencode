@@ -6,6 +6,11 @@ proof references real non-empty expected artifacts, syncs completed/failed backg
 metadata, calls the next-action logic, marks launchable lanes as running, and
 writes `plans/operation-run.jsonl`.
 
+`operationID` may be omitted only when the current chat session is already bound
+to an active operation by `operation_goal`, `operation_resume`, or another
+explicit operation read. Fresh chats never inherit the newest operation from the
+worktree; pass `operationID` explicitly when resuming from a new chat.
+
 For long and overnight operations, run `operation_supervise` on startup, heartbeat, post-compaction, and pre-handoff cycles. If the supervisor returns `blocked`, `recover`, `schedule`, or `queue_work`, resolve that decision before blindly advancing the graph. `operation_run` advances lanes; it is not a substitute for supervisor review.
 
 Modes:

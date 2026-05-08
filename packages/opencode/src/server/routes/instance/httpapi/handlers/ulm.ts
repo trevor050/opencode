@@ -9,6 +9,7 @@ import {
   deleteOperationCredential,
   materializeOperationCredentials,
   readOperationCredentials,
+  submitOperationCredentialReview,
   writeOperationCredential,
 } from "@/ulm/operation-credentials"
 import { Storage } from "@/storage/storage"
@@ -123,6 +124,16 @@ export const ulmHandlers = HttpApiBuilder.group(InstanceHttpApi, "ulm", (handler
       }).pipe(Effect.orDie)
     })
 
+    const credentialReviewSubmit = Effect.fn("UlmHttpApi.credentialReviewSubmit")(function* (ctx: {
+      params: { operationID: string }
+    }) {
+      const root = yield* worktree
+      return yield* Effect.tryPromise({
+        try: () => submitOperationCredentialReview(root, { operationID: ctx.params.operationID }),
+        catch: (error) => new Error(`Unable to submit ULM credential review: ${errorText(error)}`),
+      }).pipe(Effect.orDie)
+    })
+
     const credentialDelete = Effect.fn("UlmHttpApi.credentialDelete")(function* (ctx: {
       params: { operationID: string; credentialID: string }
     }) {
@@ -159,6 +170,7 @@ export const ulmHandlers = HttpApiBuilder.group(InstanceHttpApi, "ulm", (handler
       .handle("audit", audit)
       .handle("credentials", credentials)
       .handle("credentialCreate", credentialCreate)
+      .handle("credentialReviewSubmit", credentialReviewSubmit)
       .handle("credentialDelete", credentialDelete)
       .handle("credentialMaterializeEnv", credentialMaterializeEnv)
   }),

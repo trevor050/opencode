@@ -1958,6 +1958,13 @@ export type UlmCredentialListResult = {
   credentials: Array<UlmCredentialRecord>
 }
 
+export type UlmCredentialReviewSubmitResult = {
+  operationID: string
+  submittedAt: string
+  file: string
+  credentials: Array<UlmCredentialRecord>
+}
+
 export type UlmCredentialDeleteResult = {
   operationID: string
   credentialID: string
@@ -7167,6 +7174,28 @@ export type UlmOperationCredentialCreateResponses = {
 
 export type UlmOperationCredentialCreateResponse =
   UlmOperationCredentialCreateResponses[keyof UlmOperationCredentialCreateResponses]
+
+export type UlmOperationCredentialReviewSubmitData = {
+  body?: never
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials/submit"
+}
+
+export type UlmOperationCredentialReviewSubmitResponses = {
+  /**
+   * ULMCode submitted credential review
+   */
+  200: UlmCredentialReviewSubmitResult
+}
+
+export type UlmOperationCredentialReviewSubmitResponse =
+  UlmOperationCredentialReviewSubmitResponses[keyof UlmOperationCredentialReviewSubmitResponses]
 
 export type UlmOperationCredentialDeleteData = {
   body?: never

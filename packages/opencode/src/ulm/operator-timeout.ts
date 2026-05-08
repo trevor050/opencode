@@ -36,7 +36,7 @@ const sensitivePatterns = [
 
 export function operatorFallbackTimeoutMillis(goal: OperationGoalRecord, config: ULMRuntimeConfig = {}) {
   if (config.operator_timeout_seconds === 0) return undefined
-  return Math.max(1, Math.round((config.operator_timeout_seconds ?? goal.continuation?.operatorFallbackTimeoutSeconds ?? 180) * 1000))
+  return Math.max(1, Math.round((config.operator_timeout_seconds ?? goal.continuation?.operatorFallbackTimeoutSeconds ?? 300) * 1000))
 }
 
 async function readOperatorTimeouts(worktree: string, operationID: string) {

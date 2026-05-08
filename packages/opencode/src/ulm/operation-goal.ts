@@ -88,7 +88,7 @@ const defaultContinuation: OperationGoalContinuation = {
   maxNoToolContinuationTurns: 1,
   turnEndReview: true,
   injectPlanMaxChars: 12_000,
-  operatorFallbackTimeoutSeconds: 180,
+  operatorFallbackTimeoutSeconds: 300,
   operatorFallbackEnabled: true,
   maxRepeatedOperatorTimeoutsPerKind: 2,
   operatorFallbackSuppressionWindowSeconds: 600,

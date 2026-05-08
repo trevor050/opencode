@@ -1912,6 +1912,13 @@ function operationPlanMarkdown(record: OperationPlanRecord) {
 }
 
 function operationDiscoveryCharterMarkdown(record: OperationPlanRecord) {
+  const approval = record.planningApproval?.status ?? "pending"
+  const nextStep =
+    approval === "approved"
+      ? "- Discovery Charter approved. Run bounded discovery, then write the full duration-aware operation_plan once duration-fit is defensible."
+      : approval === "rejected"
+        ? "- Discovery Charter rejected. Revise scope, safety, or investment strategy before any broad discovery."
+        : "- Wait for explicit Discovery Charter approval before writing the full duration-aware operation_plan."
   return [
     `# Discovery Charter: ${record.operationID}`,
     "",
@@ -1948,7 +1955,7 @@ function operationDiscoveryCharterMarkdown(record: OperationPlanRecord) {
     ...(record.discoveryCharter?.decisionCriteriaForFullPlan ?? []).map((item) => `- ${item}`),
     "",
     "## Next Step",
-    "- Wait for explicit Discovery Charter approval before writing the full duration-aware operation_plan.",
+    nextStep,
     "",
   ].join("\n")
 }
@@ -2072,15 +2079,12 @@ export function validateOperationPlan(input: OperationPlanInput) {
     if (!discoveryCharter) {
       gaps.push("2h+ operation plan requires discoveryCharter investment strategy")
     } else {
-      if (!discoveryCharter.purpose.toLowerCase().includes("research") && !discoveryCharter.purpose.toLowerCase().includes("recon")) {
-        gaps.push("2h+ operation plan requires discoveryCharter.purpose to describe research/recon/question strategy")
-      }
-      if (discoveryCharter.researchQuestions.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.researchQuestions")
-      if (discoveryCharter.reconInvestments.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.reconInvestments")
-      if (discoveryCharter.operatorQuestions.length < 2) gaps.push("2h+ operation plan requires discoveryCharter.operatorQuestions")
-      if (discoveryCharter.candidateDeepWorkLanes.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.candidateDeepWorkLanes")
-      if (discoveryCharter.decisionCriteriaForFullPlan.length < 3)
-        gaps.push("2h+ operation plan requires discoveryCharter.decisionCriteriaForFullPlan")
+      if (!discoveryCharter.purpose.trim()) gaps.push("2h+ operation plan requires discoveryCharter.purpose")
+      if (!discoveryCharter.researchQuestions.length) gaps.push("2h+ operation plan requires discoveryCharter.researchQuestions")
+      if (!discoveryCharter.reconInvestments.length) gaps.push("2h+ operation plan requires discoveryCharter.reconInvestments")
+      if (!discoveryCharter.operatorQuestions.length) gaps.push("2h+ operation plan requires discoveryCharter.operatorQuestions")
+      if (!discoveryCharter.candidateDeepWorkLanes.length) gaps.push("2h+ operation plan requires discoveryCharter.candidateDeepWorkLanes")
+      if (!discoveryCharter.decisionCriteriaForFullPlan.length) gaps.push("2h+ operation plan requires discoveryCharter.decisionCriteriaForFullPlan")
     }
     if (!input.timeBudget?.allocations.length) gaps.push("2h+ operation plan requires timeBudget.allocations")
     if (!input.timeBudget?.finalizationWindowHours) gaps.push("2h+ operation plan requires timeBudget.finalizationWindowHours")
@@ -3358,6 +3362,44 @@ export async function writeOperationDiscoveryCharter(
     type: "discovery_charter",
     operationID,
     writtenAt: record.writtenAt,
+  })
+  await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
+  return { operationID, json, markdown, phases: 0 }
+}
+
+export async function approveOperationDiscoveryCharter(
+  worktree: string,
+  input: { operationID: string; approver?: string; notes?: string[]; approvedAt?: string },
+): Promise<OperationPlanResult | undefined> {
+  const operationID = slug(input.operationID, "operation")
+  const root = operationPath(worktree, operationID)
+  const json = path.join(root, "plans", "discovery-charter.json")
+  const markdown = path.join(root, "plans", "discovery-charter.md")
+  const record = await readJson<OperationPlanRecord>(json)
+  if (!record) return undefined
+  const existing = record.planningApproval
+  const notes = [
+    ...(existing?.notes ?? []),
+    ...(input.notes ?? ["Approved through operator question response."]),
+  ].filter(Boolean)
+  const updated: OperationPlanRecord = {
+    ...record,
+    planningApproval: {
+      ...existing,
+      status: "approved",
+      discoveryCharterPath: existing?.discoveryCharterPath ?? "plans/discovery-charter.md",
+      approvedAt: input.approvedAt ?? existing?.approvedAt ?? new Date().toISOString(),
+      approver: input.approver ?? existing?.approver ?? "operator",
+      notes,
+    },
+  }
+  await writeJson(json, updated)
+  await fs.writeFile(markdown, operationDiscoveryCharterMarkdown(updated))
+  await appendJsonl(path.join(root, "events.jsonl"), {
+    type: "discovery_charter_approval",
+    operationID,
+    approvedAt: updated.planningApproval?.approvedAt,
+    approver: updated.planningApproval?.approver,
   })
   await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
   return { operationID, json, markdown, phases: 0 }

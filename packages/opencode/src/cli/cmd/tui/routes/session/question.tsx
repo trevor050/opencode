@@ -21,7 +21,6 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const tabs = createMemo(() => (single() ? 1 : questions().length + 1)) // questions + confirm tab (no confirm for single select)
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
-  const [pausedUntil, setPausedUntil] = createSignal(0)
   const [store, setStore] = createStore({
     tab: 0,
     answers: [] as QuestionAnswer[],
@@ -32,6 +31,8 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   let textarea: TextareaRenderable | undefined
   let lastTouch = 0
+  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
+  const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const question = createMemo(() => questions()[store.tab])
   const confirm = createMemo(() => !single() && store.tab === questions().length)
@@ -49,12 +50,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setPausedUntil(now + 30_000)
+    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.question.touch({
       requestID: props.request.id,
-      holdMillis: 30_000,
     })
   }
 
@@ -469,11 +469,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         justifyContent="space-between"
       >
         <box flexDirection="row" gap={2}>
-          <OperatorAutoResume
-            timeoutAt={props.request.timeoutAt}
-            holdUntil={props.request.holdUntil}
-            pausedUntil={pausedUntil()}
-          />
+          <OperatorAutoResume timeoutAt={props.request.timeoutAt} resetTimeoutAt={resetTimeoutAt()} />
           <Show when={!single()}>
             <text fg={theme.text}>
               {"⇆"} <span style={{ fg: theme.textMuted }}>tab</span>
