@@ -99,6 +99,13 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.expectedArtifacts).toContain(
       "commands/service-inventory/",
     )
+    expect(graph.lanes.find((lane) => lane.id === "evidence_normalization")?.dependsOn).toEqual([
+      "service_inventory",
+      "web_inventory",
+    ])
+    expect(graph.lanes.find((lane) => lane.id === "finding_validation")?.dependsOn).toEqual([
+      "evidence_normalization",
+    ])
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
     expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)
