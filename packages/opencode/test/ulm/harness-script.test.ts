@@ -58,9 +58,17 @@ describe("ULM harness runner script", () => {
       ok?: boolean
       output?: { json?: string; markdown?: string }
       coverage?: { missing?: string[] }
+      scenarios?: Array<{ id?: string; checks?: Array<{ id?: string; status?: string }> }>
     }
     expect(parsed.ok).toBe(true)
     expect(parsed.coverage?.missing).toEqual([])
+    const runtimeDrill = parsed.scenarios?.find((scenario) => scenario.id === "runtime-supervision-governor-drill")
+    expect(runtimeDrill?.checks?.some((check) => check.id === "operation-run-starts-lane" && check.status === "passed")).toBe(
+      true,
+    )
+    expect(runtimeDrill?.checks?.some((check) => check.id === "work-queue-next-claims-unit" && check.status === "passed")).toBe(
+      true,
+    )
     expect(parsed.output?.json).toContain(".artifacts/ulm-harness")
     expect(parsed.output?.markdown).toContain(".artifacts/ulm-harness")
   })
