@@ -104,7 +104,7 @@ describe("ULM runtime scheduler", () => {
       },
     })
 
-    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "opencode-go/default" }])
+    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "opencode-go/qwen3.6-plus" }])
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-district_profile"])
     const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
     expect(heartbeat.launchedJobs).toEqual(["job-district_profile"])

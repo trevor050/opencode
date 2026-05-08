@@ -71,4 +71,36 @@ describe("ULM operation graph", () => {
     expect(markdown).toContain("## Lanes")
     expect(markdown).toContain("report_review")
   })
+
+  test("builds internal-network lanes without district recon baggage", () => {
+    const graph = buildOperationGraph({
+      operationID: "Home Network",
+      template: "internal-network",
+      includeSupervisor: true,
+      budgetUSD: 30,
+      trustLevel: "unattended",
+      scanProfile: "aggressive",
+    })
+    const laneIDs = graph.lanes.map((lane) => lane.id)
+
+    expect(graph.operationID).toBe("home-network")
+    expect(graph.trustLevel).toBe("unattended")
+    expect(graph.scanProfile).toBe("aggressive")
+    expect(laneIDs).toContain("network_discovery")
+    expect(laneIDs).toContain("service_inventory")
+    expect(laneIDs).toContain("supervisor")
+    expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.status).toBe("ready")
+    expect(laneIDs).not.toContain("district_profile")
+    expect(laneIDs).not.toContain("person_recon")
+    expect(laneIDs).not.toContain("scope_intake")
+    expect(validateOperationGraph(graph)).toEqual([])
+    expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.allowedTools).toContain("command_supervise")
+    expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.allowedTools).toContain("operation_run")
+    expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.expectedArtifacts).toContain(
+      "commands/service-inventory/",
+    )
+    expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
+    expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
+    expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)
+  })
 })

@@ -73,6 +73,7 @@ describe("ULM tool manifest command plans", () => {
     expect(persisted.variables?.target).toBe("10.0.0.10")
     expect(persisted.outputPrefix).toBe("evidence/raw/school-services")
     expect(persisted.manifestPath).toBe(manifestPath)
+    await expect(fs.stat(path.join(dir.path, ".ulmcode", "operations", "school", "evidence", "raw"))).resolves.toBeTruthy()
   })
 
   test("rejects destructive command profiles for unattended supervision", async () => {

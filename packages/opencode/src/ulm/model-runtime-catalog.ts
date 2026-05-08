@@ -88,7 +88,7 @@ const DEFAULTS: ModelRuntimeCatalog = {
     cacheReadUSDPerMTok: 0.075,
     costCliffTokens: 270_000,
   },
-  "opencode-go/default": {
+  "opencode-go/qwen3.6-plus": {
     providerKind: "subscription",
     contextLimit: 200_000,
     outputLimit: 32_000,

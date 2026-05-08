@@ -77,6 +77,7 @@ function blockedDependencies(graph: OperationGraphRecord, lane: OperationLane) {
 
 function selectReadyLane(graph: OperationGraphRecord) {
   return graph.lanes.find((lane) => {
+    if (lane.id === "supervisor") return false
     if (lane.status !== "ready" && lane.status !== "pending") return false
     return dependenciesComplete(graph, lane)
   })
@@ -101,6 +102,7 @@ function promptForLane(lane: OperationLane) {
     `Restart policy: max ${lane.restartPolicy.maxAttempts} attempts, stale after ${lane.restartPolicy.staleAfterMinutes} minutes.`,
     "",
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
+    "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
   ].join("\n")
 }
 

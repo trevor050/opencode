@@ -21,7 +21,7 @@ describe("ULM operation run controller", () => {
     expect(result.action).toBe("launch_lane")
     expect(result.laneID).toBe("district_profile")
     expect(result.taskParams?.background).toBe(true)
-    expect(result.taskParams?.modelRoute).toBe("opencode-go/default")
+    expect(result.taskParams?.modelRoute).toBe("opencode-go/qwen3.6-plus")
     expect(result.commandProfiles).toEqual([])
     const graph = JSON.parse(await fs.readFile(result.graphPath, "utf8"))
     expect(graph.lanes.find((lane: { id: string }) => lane.id === "district_profile")?.status).toBe("running")

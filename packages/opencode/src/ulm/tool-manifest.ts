@@ -153,6 +153,12 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
 
 export async function writeCommandPlan(plan: CommandPlan) {
   await fs.mkdir(path.dirname(plan.planPath), { recursive: true })
+  for (const artifact of plan.artifacts) {
+    if (!artifact || path.isAbsolute(artifact) || artifact.includes("..")) continue
+    const resolved = path.resolve(plan.operationRoot, artifact)
+    if (!resolved.startsWith(path.resolve(plan.operationRoot) + path.sep)) continue
+    await fs.mkdir(path.dirname(resolved), { recursive: true })
+  }
   await fs.writeFile(
     plan.planPath,
     JSON.stringify(

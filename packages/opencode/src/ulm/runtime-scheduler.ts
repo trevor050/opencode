@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
-import { operationPath, slug } from "./artifact"
+import { operationPath, slug, writeRuntimeSummary } from "./artifact"
 import { readOperationGoal } from "./operation-goal"
 import {
   superviseOperation,
@@ -215,8 +215,22 @@ async function ensureReadinessProofArtifacts(
       }),
     )
   }
-  if (!(await exists(path.join(root, "deliverables", "model-route-audit.json")))) {
-    await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  if (!(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
+    const graph = await readJson<{ lanes?: Array<{ budget?: { maxUSD?: number } }> }>(
+      path.join(root, "plans", "operation-graph.json"),
+    )
+    const budgetUSD = graph?.lanes?.reduce((sum, lane) => sum + (lane.budget?.maxUSD ?? 0), 0)
+    await writeRuntimeSummary(worktree, {
+      operationID: input.operationID,
+      modelCalls: { total: 0, byModel: {} },
+      usage: {
+        costUSD: 0,
+        ...(budgetUSD && budgetUSD > 0 ? { budgetUSD: Number(budgetUSD.toFixed(4)) } : {}),
+      },
+      compaction: { count: 0, pressure: "low" },
+      notes: ["Bootstrapped by runtime scheduler readiness proof before the first literal long-run cycle."],
+    })
   }
 }
 

@@ -15,7 +15,7 @@ describe("ULM background restart args", () => {
         description: "Recon lane",
         prompt: "resume recon",
         subagent_type: "recon",
-        modelRoute: "opencode-go/default",
+        modelRoute: "opencode-go/qwen3.6-plus",
       },
     })
 
@@ -23,7 +23,7 @@ describe("ULM background restart args", () => {
       task_id: "task_1",
       operationID: "school",
       laneID: "recon",
-      modelRoute: "opencode-go/default",
+      modelRoute: "opencode-go/qwen3.6-plus",
       prompt: "resume recon",
       subagent_type: "recon",
     })

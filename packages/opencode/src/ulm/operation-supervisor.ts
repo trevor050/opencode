@@ -102,10 +102,14 @@ function hasRuntimeBlindSpot(status: OperationStatusSummary) {
 function hasStaleOrFailedLane(graph: OperationGraphLike | undefined) {
   return (
     graph?.lanes?.some(
-      (lane) =>
-        lane.status === "failed" ||
-        lane.status === "blocked" ||
-        lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled"),
+      (lane) => {
+        if (lane.status === "complete" || lane.status === "skipped") return false
+        return (
+          lane.status === "failed" ||
+          lane.status === "blocked" ||
+          lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled")
+        )
+      },
     ) ?? false
   )
 }

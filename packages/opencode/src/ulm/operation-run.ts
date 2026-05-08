@@ -303,6 +303,7 @@ async function syncBackgroundJobs(
     if (metadataOperation !== operationID || typeof laneID !== "string" || !laneID) continue
     const lane = graph.lanes.find((item) => item.id === laneID)
     if (!lane) continue
+    if (lane.status === "complete" || lane.status === "skipped" || lane.status === "blocked") continue
     lane.activeJobs = [
       ...(lane.activeJobs ?? []).filter((item) => item.id !== job.id),
       {
@@ -313,8 +314,8 @@ async function syncBackgroundJobs(
       },
     ]
     synced.push(job.id)
-    if (job.status === "running" && lane.status !== "complete") lane.status = "running"
-    if (job.status === "completed" && lane.status !== "complete") {
+    if (job.status === "running") lane.status = "running"
+    if (job.status === "completed") {
       const proof = await readLaneCompletionProof(root, lane)
       if (!proof || !(await proofIsValid(root, lane, proof))) continue
       lane.status = "complete"
@@ -348,6 +349,7 @@ function taskParamsForLane(lane: OperationLane) {
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
+      "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
     ].join("\n"),
     subagent_type: lane.agent,
     operationID: lane.operationID,

@@ -125,11 +125,6 @@ describe("ULM runtime daemon", () => {
   test("bootstraps readiness proof artifacts for literal long runs", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
-    await writeRuntimeSummary(dir.path, {
-      operationID: "School",
-      usage: { costUSD: 1, budgetUSD: 10 },
-      compaction: { pressure: "low" },
-    })
     const manifestPath = path.join(dir.path, "tool-manifest.json")
     await fs.writeFile(
       manifestPath,
@@ -164,9 +159,12 @@ describe("ULM runtime daemon", () => {
     const root = operationPath(dir.path, "School")
     const preflight = JSON.parse(await fs.readFile(path.join(root, "tools", "tool-preflight.json"), "utf8"))
     const routeAudit = JSON.parse(await fs.readFile(path.join(root, "deliverables", "model-route-audit.json"), "utf8"))
+    const runtime = JSON.parse(await fs.readFile(path.join(root, "deliverables", "runtime-summary.json"), "utf8"))
     expect(preflight.blocked).toBe(0)
     expect(preflight.tools[0]?.toolID).toBe("fixture-tool")
-    expect(routeAudit.routes.some((route: { route?: string }) => route.route === "opencode-go/default")).toBe(true)
+    expect(routeAudit.routes.some((route: { route?: string }) => route.route === "opencode-go/qwen3.6-plus")).toBe(true)
+    expect(runtime.usage.costUSD).toBe(0)
+    expect(runtime.compaction.pressure).toBe("low")
   })
 
   test("does not exit the wall-clock daemon on compact maintenance decisions", async () => {

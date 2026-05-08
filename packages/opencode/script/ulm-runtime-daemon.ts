@@ -330,6 +330,8 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
   const [provider, ...modelParts] = params.modelRoute.split("/")
   const model = provider && modelParts.length ? params.modelRoute : undefined
   const logPath = writeLaunchRecord("model", params.laneID, { ...record, dryRun: false, jobID })
+  const outputPath = launchRecordPath("model-output", params.laneID).replace(/\.json$/, ".log")
+  const outputFD = openSync(outputPath, "a")
   const child = spawn(
     process.execPath,
     [
@@ -348,12 +350,13 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
     {
       cwd: packageRoot,
       detached: true,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", outputFD, outputFD],
       env: { ...process.env, ULMCODE_DAEMON_CHILD: "1" },
     },
   )
   child.unref()
-  writeLaunchRecord("model-pid", params.laneID, { ...record, pid: child.pid, logPath, jobID })
+  closeSync(outputFD)
+  writeLaunchRecord("model-pid", params.laneID, { ...record, pid: child.pid, logPath, outputPath, jobID })
   return Promise.resolve({ jobID })
 }
 

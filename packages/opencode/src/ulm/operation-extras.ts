@@ -511,6 +511,8 @@ export async function createOperationFromTemplate(
   })
   const graph = await writeOperationGraph(worktree, {
     operationID: goal.operationID,
+    template: input.template,
+    includeSupervisor: (input.targetDurationHours ?? 0) >= 1,
     budgetUSD: input.budgetUSD,
     trustLevel: input.trustLevel,
     scanProfile: input.scanProfile,
