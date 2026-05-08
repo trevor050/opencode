@@ -8,6 +8,19 @@ import { writeOperationGraph } from "@/ulm/operation-graph"
 import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
+async function writeOperationalPreflight(root: string, operationID: string) {
+  await fs.mkdir(path.join(root, "tools"), { recursive: true })
+  await fs.writeFile(
+    path.join(root, "tools", "tool-preflight.json"),
+    JSON.stringify({ total: 1, available: 1, blocked: 0 }, null, 2) + "\n",
+  )
+  await fs.mkdir(path.join(root, "deliverables"), { recursive: true })
+  await fs.writeFile(
+    path.join(root, "deliverables", "model-route-audit.json"),
+    JSON.stringify({ operationID, ok: true }, null, 2) + "\n",
+  )
+}
+
 async function writeFinalHandoffProof(
   worktree: string,
   operationID: string,
@@ -15,6 +28,7 @@ async function writeFinalHandoffProof(
   options: { minOutlineTargetPages?: number } = { minOutlineTargetPages: 50 },
 ) {
   const root = operationPath(worktree, operationID)
+  await writeOperationalPreflight(root, operationID)
   await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
   await fs.writeFile(
     path.join(root, "deliverables", "final", "manifest.json"),
@@ -60,6 +74,7 @@ describe("ULM literal run readiness audit", () => {
       schedulerCyclesPerTick: 1,
       supervisor: "all",
     })
+    await writeOperationalPreflight(operationPath(dir.path, operationID), operationID)
 
     const ready = await auditLiteralRunReadiness(dir.path, { operationID })
     expect(ready.status).toBe("incomplete")
@@ -140,6 +155,7 @@ describe("ULM literal run readiness audit", () => {
     await using dir = await tmpdir({ git: true })
     const operationID = "Tool Owned Daemon"
     await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeOperationalPreflight(operationPath(dir.path, operationID), operationID)
 
     const schedulerDir = path.join(operationPath(dir.path, operationID), "scheduler")
     await fs.mkdir(schedulerDir, { recursive: true })
@@ -192,6 +208,55 @@ describe("ULM literal run readiness audit", () => {
     expect(result.checks.find((item) => item.id === "service-supervisor")?.status).toBe("fail")
     expect(result.checks.find((item) => item.id === "service-supervisor")?.required).toBe(false)
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("ok")
+  })
+
+  test("rejects literal 20h proof without tool preflight and model route audit", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Missing Preflight"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "missing-preflight",
+          elapsedSeconds: 20 * 60 * 60,
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+
+    const finalDir = path.join(root, "deliverables", "final")
+    await fs.mkdir(finalDir, { recursive: true })
+    await fs.writeFile(
+      path.join(finalDir, "manifest.json"),
+      JSON.stringify({ operationID, artifacts: { html: "report.html", pdf: "report.pdf" } }, null, 2) + "\n",
+    )
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID,
+          ok: true,
+          blockers: [],
+          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50 } } },
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("blocked")
+    expect(result.checks.find((item) => item.id === "tool-preflight")?.status).toBe("fail")
+    expect(result.checks.find((item) => item.id === "model-route-audit")?.status).toBe("fail")
   })
 
   test("rejects final audits generated before the daemon heartbeat", async () => {
@@ -304,6 +369,7 @@ describe("ULM literal run readiness audit", () => {
     const operationID = "Credentialed Run"
     const root = operationPath(dir.path, operationID)
     await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeOperationalPreflight(root, operationID)
     await fs.mkdir(path.join(root, "plans"), { recursive: true })
     await fs.writeFile(
       path.join(root, "plans", "operation-plan.json"),
@@ -368,6 +434,7 @@ describe("ULM literal run readiness audit", () => {
     const operationID = "Claimed Credentialed Run"
     const root = operationPath(dir.path, operationID)
     await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeOperationalPreflight(root, operationID)
     await fs.mkdir(path.join(root, "plans"), { recursive: true })
     await fs.writeFile(
       path.join(root, "plans", "operation-plan.json"),
@@ -456,6 +523,7 @@ describe("ULM literal run readiness audit", () => {
     const nestedPackageDir = path.join(dir.path, "packages", "opencode")
     await fs.mkdir(nestedPackageDir, { recursive: true })
     await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeOperationalPreflight(operationPath(dir.path, operationID), operationID)
 
     const proc = Bun.spawn(["bun", "run", script, operationID, "--json", "--strict"], {
       cwd: nestedPackageDir,

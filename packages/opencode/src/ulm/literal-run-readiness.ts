@@ -197,8 +197,9 @@ export async function auditLiteralRunReadiness(
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
   const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
+  const requiresLongRunProof = targetElapsedSeconds >= 20 * 60 * 60
   const requiredAuditMinOutlineTargetPages =
-    targetElapsedSeconds >= 20 * 60 * 60 || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+    requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
   const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
   const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
   const credentialReviewCount = countItems(credentialReview?.credentials)
@@ -252,8 +253,8 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "tool-preflight",
-      status: toolPreflight ? (toolPreflight.blocked === 0 ? "ok" : "warn") : "warn",
-      required: false,
+      status: toolPreflight ? (toolPreflight.blocked === 0 ? "ok" : requiresLongRunProof ? "fail" : "warn") : requiresLongRunProof ? "fail" : "warn",
+      required: requiresLongRunProof,
       detail: toolPreflight
         ? `available=${toolPreflight.available ?? 0}/${toolPreflight.total ?? 0}; blocked=${toolPreflight.blocked ?? 0}`
         : "tool-preflight.json is missing",
@@ -264,8 +265,8 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "model-route-audit",
-      status: (await exists(modelRouteAuditPath)) ? "ok" : "warn",
-      required: false,
+      status: (await exists(modelRouteAuditPath)) ? "ok" : requiresLongRunProof ? "fail" : "warn",
+      required: requiresLongRunProof,
       detail: (await exists(modelRouteAuditPath)) ? "model route audit exists" : "model-route-audit.json is missing",
       path: modelRouteAuditPath,
     }),
