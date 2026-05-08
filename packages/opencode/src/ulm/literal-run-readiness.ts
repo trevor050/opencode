@@ -71,7 +71,12 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
 }
 
 const runtimeProofChecks = new Set(["literal-runtime-proof", "literal-work-proof"])
-const handoffProofChecks = new Set(["final-package", "final-operation-audit", "credential-handoff-proof"])
+const handoffProofChecks = new Set([
+  "final-package",
+  "final-operation-audit",
+  "credential-handoff-proof",
+  "report-outline-proof",
+])
 
 function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | undefined, targetElapsedSeconds: number) {
   const requiredSetupFailed = checks.some(
@@ -97,6 +102,12 @@ function countItems(input: unknown) {
 function timestamp(value: string | undefined) {
   const parsed = value ? Date.parse(value) : Number.NaN
   return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function reportOutlineTargetPages(outline: string | undefined) {
+  const match = outline?.match(/^\s*-\s*target_pages:\s*(\d+)\s*$/im)
+  const pages = Number.parseInt(match?.[1] ?? "", 10)
+  return Number.isFinite(pages) ? pages : undefined
 }
 
 function workProofFromHeartbeat(heartbeat: {
@@ -188,6 +199,7 @@ export async function auditLiteralRunReadiness(
   const burnInProofPath = path.join(root, "burnin", "burnin-proof.json")
   const toolPreflightPath = path.join(root, "tools", "tool-preflight.json")
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
+  const reportOutlinePath = path.join(root, "reports", "report-outline.md")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
   const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
   const credentialReviewPath = path.join(root, "credentials", "review-submission.json")
@@ -204,6 +216,8 @@ export async function auditLiteralRunReadiness(
   const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
   const credentialReviewCount = countItems(credentialReview?.credentials)
   const credentialReviewTime = timestamp(credentialReview?.submittedAt)
+  const reportOutline = await readText(reportOutlinePath)
+  const outlineTargetPages = reportOutlineTargetPages(reportOutline)
   checks.push(
     check({
       id: "operation-graph",
@@ -280,6 +294,21 @@ export async function auditLiteralRunReadiness(
         ? `submitted_at=${credentialReview?.submittedAt ?? "missing"}; credential_count=${credentialReviewCount}`
         : "credentialed plan proof is not required",
       path: credentialReviewPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "report-outline-proof",
+      status:
+        requiredAuditMinOutlineTargetPages === undefined || (outlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages
+          ? "ok"
+          : "fail",
+      required: requiredAuditMinOutlineTargetPages !== undefined,
+      detail:
+        requiredAuditMinOutlineTargetPages === undefined
+          ? "long-report outline proof is not required"
+          : `target_pages=${outlineTargetPages ?? "missing"}; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}`,
+      path: reportOutlinePath,
     }),
   )
 

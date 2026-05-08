@@ -29,6 +29,15 @@ async function writeFinalHandoffProof(
 ) {
   const root = operationPath(worktree, operationID)
   await writeOperationalPreflight(root, operationID)
+  if (options.minOutlineTargetPages) {
+    await fs.mkdir(path.join(root, "reports"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "reports", "report-outline.md"),
+      ["# Report Outline", "", `- target_pages: ${options.minOutlineTargetPages}`, "", "## Page Budget", "- Executive Summary: 5 pages"].join(
+        "\n",
+      ) + "\n",
+    )
+  }
   await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
   await fs.writeFile(
     path.join(root, "deliverables", "final", "manifest.json"),
@@ -362,6 +371,45 @@ describe("ULM literal run readiness audit", () => {
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
       "required_min_outline_target_pages=50",
     )
+  })
+
+  test("rejects literal 20h proof when audit claims a long report but outline is undersized", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Fake Long Report"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await fs.mkdir(path.join(root, "reports"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "reports", "report-outline.md"),
+      ["# Report Outline", "", "- target_pages: 4", "", "## Page Budget", "- Executive Summary: 1 pages"].join("\n") + "\n",
+    )
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "fake-long-report",
+          elapsedSeconds: 20 * 60 * 60,
+          endedAt: "2026-05-08T20:00:00.000Z",
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z")
+    await fs.writeFile(
+      path.join(root, "reports", "report-outline.md"),
+      ["# Report Outline", "", "- target_pages: 4", "", "## Page Budget", "- Executive Summary: 1 pages"].join("\n") + "\n",
+    )
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
+    expect(result.checks.find((item) => item.id === "report-outline-proof")?.status).toBe("fail")
   })
 
   test("rejects credentialed runs whose final audit does not prove credential handoff", async () => {
