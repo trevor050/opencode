@@ -67,6 +67,7 @@ Last updated: 2026-02-16 (AutoPentest default + action mode + conversational pla
 - `report_writer` prompt now explicitly requires assembling polished `reports/report.md` before `report_finalize`, so authored client copy is retained and used for PDF output.
 - Contract update: `report_finalize` is now validation/bundling-first and requires model-authored report artifacts when invoked from reporting flow; it does not auto-generate report templates/PDF in that mode.
 - HTML-first contract: report runs should author `reports/report-render-plan.md`, `reports/report.html`, and `reports/report.pdf`; browser print-to-PDF is preferred over Python canvas pipelines.
+- Final handoff lint/audit can require `minPdfPages`; for 20h+ runs it defaults to the 50-page long-report gate and rejects rendered PDFs whose `/Pages /Count` is missing or too small.
 - Smoke-test efficiency: report_writer prompt now enforces concise artifact limits to reduce token/compute overhead during quick verification runs.
 - Quality telemetry is now emitted to `reports/quality-checks.json` and surfaced by `report_finalize`.
 - Config toggle: `cyber.report_quality_mode = "warn" | "strict"` (default `warn`).

@@ -38,6 +38,9 @@ export const Parameters = Schema.Struct({
   minFindingWords: Schema.optional(Schema.Number).annotate({
     description: "Minimum word count for each validated/report-ready finding section when a report file exists.",
   }),
+  minPdfPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum rendered page count required in deliverables/final/report.pdf.",
+  }),
   finalHandoff: Schema.optional(Schema.Boolean).annotate({
     description:
       "Require final handoff readiness: operation is complete in handoff stage, operation plan exists, rendered deliverables exist, and runtime summary exists.",
@@ -78,6 +81,7 @@ export const ReportLintTool = Tool.define<typeof Parameters, Metadata, never>(
             minOutlineSectionWordsPerPage: params.minOutlineSectionWordsPerPage,
             requireFindingSections: params.requireFindingSections,
             minFindingWords: params.minFindingWords,
+            minPdfPages: params.minPdfPages,
             finalHandoff: params.finalHandoff,
             requireOperationPlan: params.requireOperationPlan,
             requireRenderedDeliverables: params.requireRenderedDeliverables,

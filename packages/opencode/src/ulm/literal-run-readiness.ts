@@ -212,6 +212,7 @@ export async function auditLiteralRunReadiness(
   const requiresLongRunProof = targetElapsedSeconds >= 20 * 60 * 60
   const requiredAuditMinOutlineTargetPages =
     requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+  const requiredAuditMinPdfPages = requiredAuditMinOutlineTargetPages
   const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
   const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
   const credentialReviewCount = countItems(credentialReview?.credentials)
@@ -371,7 +372,7 @@ export async function auditLiteralRunReadiness(
     blockers?: unknown[]
     generatedAt?: string
     checks?: {
-      finalHandoff?: { gates?: { minOutlineTargetPages?: number } }
+      finalHandoff?: { gates?: { minOutlineTargetPages?: number; minPdfPages?: number } }
       credentialHandoff?: { ok?: boolean; required?: boolean; credentialCount?: number }
     }
   }>(finalAuditPath)
@@ -380,9 +381,11 @@ export async function auditLiteralRunReadiness(
     (heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)) &&
     (!requiresCredentialHandoff || credentialReviewTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= credentialReviewTime))
   const finalAuditMinOutlineTargetPages = finalAudit?.checks?.finalHandoff?.gates?.minOutlineTargetPages
+  const finalAuditMinPdfPages = finalAudit?.checks?.finalHandoff?.gates?.minPdfPages
   const finalAuditGatesOk =
-    requiredAuditMinOutlineTargetPages === undefined ||
-    (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages
+    (requiredAuditMinOutlineTargetPages === undefined ||
+      (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages) &&
+    (requiredAuditMinPdfPages === undefined || (finalAuditMinPdfPages ?? 0) >= requiredAuditMinPdfPages)
   const finalAuditCredentialHandoff = finalAudit?.checks?.credentialHandoff
   const finalAuditCredentialHandoffOk =
     !requiresCredentialHandoff ||
@@ -402,7 +405,7 @@ export async function auditLiteralRunReadiness(
           : "fail",
       required: true,
       detail: finalAudit
-        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; credential_handoff=${
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; min_pdf_pages=${finalAuditMinPdfPages ?? "missing"}${requiredAuditMinPdfPages ? `; required_min_pdf_pages=${requiredAuditMinPdfPages}` : ""}; credential_handoff=${
             requiresCredentialHandoff
               ? finalAuditCredentialHandoffOk
                 ? "proved"

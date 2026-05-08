@@ -41,6 +41,9 @@ export const Parameters = Schema.Struct({
   minFindingWords: Schema.optional(Schema.Number).annotate({
     description: "Minimum word count for each validated/report-ready finding section when a report file exists.",
   }),
+  minPdfPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum rendered page count required in deliverables/final/report.pdf.",
+  }),
   finalHandoff: Schema.optional(Schema.Boolean).annotate({
     description: "Require final handoff readiness. Defaults to true.",
   }),
@@ -78,6 +81,7 @@ export const OperationAuditTool = Tool.define<typeof Parameters, Metadata, never
             minOutlineSectionWordsPerPage: params.minOutlineSectionWordsPerPage,
             requireFindingSections: params.requireFindingSections,
             minFindingWords: params.minFindingWords,
+            minPdfPages: params.minPdfPages,
             finalHandoff: params.finalHandoff,
           }),
         ).pipe(Effect.orDie)

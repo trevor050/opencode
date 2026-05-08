@@ -25,7 +25,7 @@ async function writeFinalHandoffProof(
   worktree: string,
   operationID: string,
   generatedAt?: string,
-  options: { minOutlineTargetPages?: number } = { minOutlineTargetPages: 50 },
+  options: { minOutlineTargetPages?: number; minPdfPages?: number } = { minOutlineTargetPages: 50, minPdfPages: 50 },
 ) {
   const root = operationPath(worktree, operationID)
   await writeOperationalPreflight(root, operationID)
@@ -51,9 +51,17 @@ async function writeFinalHandoffProof(
         ok: true,
         blockers: [],
         generatedAt,
-        checks: options.minOutlineTargetPages
-          ? { finalHandoff: { gates: { minOutlineTargetPages: options.minOutlineTargetPages } } }
-          : undefined,
+        checks:
+          options.minOutlineTargetPages || options.minPdfPages
+            ? {
+                finalHandoff: {
+                  gates: {
+                    minOutlineTargetPages: options.minOutlineTargetPages,
+                    minPdfPages: options.minPdfPages,
+                  },
+                },
+              }
+            : undefined,
       },
       null,
       2,
@@ -255,7 +263,7 @@ describe("ULM literal run readiness audit", () => {
           operationID,
           ok: true,
           blockers: [],
-          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50 } } },
+          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50, minPdfPages: 50 } } },
         },
         null,
         2,
@@ -334,6 +342,42 @@ describe("ULM literal run readiness audit", () => {
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
       "required_min_outline_target_pages=50",
     )
+  })
+
+  test("rejects 20h final audits that do not prove the rendered PDF page gate", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Weak PDF Gate"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await fs.mkdir(path.join(root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify({ operationID: "weak-pdf-gate", timeBudget: { targetHours: 20 } }, null, 2) + "\n",
+    )
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "weak-pdf-gate",
+          elapsedSeconds: 20 * 60 * 60,
+          endedAt: "2026-05-08T20:00:00.000Z",
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", { minOutlineTargetPages: 50 })
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("fail")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain("required_min_pdf_pages=50")
   })
 
   test("requires long-report audit proof for default literal 20h checks even without plan time budget", async () => {
@@ -462,7 +506,7 @@ describe("ULM literal run readiness audit", () => {
           ok: true,
           blockers: [],
           generatedAt: "2026-05-08T20:05:00.000Z",
-          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50 } } },
+          checks: { finalHandoff: { gates: { minOutlineTargetPages: 50, minPdfPages: 50 } } },
         },
         null,
         2,
@@ -528,7 +572,7 @@ describe("ULM literal run readiness audit", () => {
           blockers: [],
           generatedAt: "2026-05-08T20:05:00.000Z",
           checks: {
-            finalHandoff: { gates: { minOutlineTargetPages: 50 } },
+            finalHandoff: { gates: { minOutlineTargetPages: 50, minPdfPages: 50 } },
             credentialHandoff: { ok: true, required: true, credentialCount: 1 },
           },
         },

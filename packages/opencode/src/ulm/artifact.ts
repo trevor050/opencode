@@ -241,6 +241,7 @@ export type ReportLintOptions = {
   minOutlineSectionWordsPerPage?: number
   requireFindingSections?: boolean
   minFindingWords?: number
+  minPdfPages?: number
   finalHandoff?: boolean
   requireOperationPlan?: boolean
   requireRenderedDeliverables?: boolean
@@ -433,6 +434,7 @@ export type OperationAuditResult = {
       counts: ReportLintResult["counts"]
       gates?: {
         minOutlineTargetPages?: number
+        minPdfPages?: number
       }
     }
     coverage: CoverageReadiness
@@ -1578,6 +1580,7 @@ export async function buildOperationAudit(
   const finalHandoffRequired = options.finalHandoff ?? true
   const plan = await readJson<OperationPlanRecord>(path.join(root, "plans", "operation-plan.json"))
   const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, { ...options, finalHandoff: finalHandoffRequired })
+  const minPdfPages = options.minPdfPages ?? (finalHandoffRequired ? minOutlineTargetPages : undefined)
   const resume = await buildOperationResumeBrief(worktree, operationID, {
     eventLimit: options.eventLimit,
     staleAfterMinutes: options.staleAfterMinutes,
@@ -1594,6 +1597,7 @@ export async function buildOperationAudit(
     minOutlineSectionWordsPerPage: options.minOutlineSectionWordsPerPage,
     requireFindingSections: options.requireFindingSections,
     minFindingWords: options.minFindingWords,
+    minPdfPages,
     finalHandoff: finalHandoffRequired,
     requireOperationPlan: options.requireOperationPlan,
     requireRenderedDeliverables: options.requireRenderedDeliverables,
@@ -1624,6 +1628,7 @@ export async function buildOperationAudit(
         counts: finalHandoff.counts,
         gates: {
           minOutlineTargetPages,
+          minPdfPages,
         },
       },
       coverage,
@@ -3675,6 +3680,7 @@ export async function lintReport(
       gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
   }
   const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, options)
+  const minPdfPages = options.minPdfPages ?? (options.finalHandoff ? minOutlineTargetPages : undefined)
   const requireOutlineBudget = options.requireOutlineBudget || minOutlineTargetPages || options.minOutlineWordsPerPage
   const requireOutlineSections =
     options.requireOutlineSections || options.minOutlineSectionWords || options.minOutlineSectionWordsPerPage
@@ -3759,7 +3765,7 @@ export async function lintReport(
         gaps.push(`deliverables/final/${file} is required`)
       }
     }
-    gaps.push(...(await finalPackageIntegrityGaps(root, { requireRuntimeSummary })))
+    gaps.push(...(await finalPackageIntegrityGaps(root, { requireRuntimeSummary, minPdfPages })))
   }
   if (requireRuntimeSummary && !(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
     gaps.push("deliverables/runtime-summary.json is required")
@@ -3867,7 +3873,13 @@ async function parseRequiredJson(file: string, gapLabel: string, gaps: string[])
   }
 }
 
-async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSummary: boolean }) {
+function pdfPageCount(pdf: string | undefined) {
+  const match = pdf?.match(/\/Type\s*\/Pages\b[\s\S]{0,500}?\/Count\s+(\d+)/)
+  const pages = Number.parseInt(match?.[1] ?? "", 10)
+  return Number.isFinite(pages) && pages > 0 ? pages : undefined
+}
+
+async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSummary: boolean; minPdfPages?: number }) {
   const gaps: string[] = []
   const finalDir = path.join(root, "deliverables", "final")
   const manifestPath = path.join(finalDir, "manifest.json")
@@ -3929,6 +3941,13 @@ async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSu
   }
   if (pdf !== undefined && pdf.includes("/BaseFont /Helvetica") && !pdf.includes("/ULMCodeRenderer (styled-html)")) {
     gaps.push("deliverables/final/report.pdf was rendered by the legacy text-only renderer")
+  }
+  if (pdf !== undefined && input.minPdfPages) {
+    const pages = pdfPageCount(pdf)
+    if (!pages) gaps.push("deliverables/final/report.pdf page count could not be read")
+    else if (pages < input.minPdfPages) {
+      gaps.push(`deliverables/final/report.pdf has ${pages} pages, expected at least ${input.minPdfPages}`)
+    }
   }
   const html = await readText(path.join(finalDir, "report.html"))
   if (html !== undefined) {

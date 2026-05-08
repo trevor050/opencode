@@ -6,13 +6,13 @@ Close out the ULMCode operation named below.
 
 Process:
 1. call `operation_status`
-2. call `report_lint` with `finalHandoff: true`; for long reports also pass `requireOutlineBudget: true`, `minOutlineTargetPages: 50`, `requireOutlineSections: true`, and `requireFindingSections: true`
+2. call `report_lint` with `finalHandoff: true`; for long reports also pass `requireOutlineBudget: true`, `minOutlineTargetPages: 50`, `minPdfPages: 50`, `requireOutlineSections: true`, and `requireFindingSections: true`
 3. if lint gaps exist, fix the missing artifacts or explain the blocker
 4. call `report_render` if final deliverables are missing or stale
 5. call `runtime_summary`
 6. call `report_lint` with the same final/outline/finding gates again
 7. if the plan uses provided/authenticated credentials, confirm the credential vault review was submitted and only redacted credential IDs appear in artifacts
-8. call `operation_audit` with `finalHandoff: true` and the same outline/finding gates used for final lint, including `minOutlineTargetPages` for long reports
+8. call `operation_audit` with `finalHandoff: true` and the same outline/PDF/finding gates used for final lint, including `minOutlineTargetPages` and `minPdfPages` for long reports
 9. summarize final paths in `deliverables/final/`, audit paths in `deliverables/`, and any residual risk
 
 Do not claim final handoff is ready unless the second `report_lint` and `operation_audit` both return ok.

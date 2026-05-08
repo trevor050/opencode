@@ -162,6 +162,10 @@ export const UlmAuditCommand = effectCmd({
         describe: "minimum report words per target outline page",
         type: "number",
       })
+      .option("min-pdf-pages", {
+        describe: "minimum rendered page count required in deliverables/final/report.pdf",
+        type: "number",
+      })
       .option("require-finding-sections", {
         describe: "require every validated/report-ready finding to have a report section",
         type: "boolean",
@@ -185,6 +189,7 @@ export const UlmAuditCommand = effectCmd({
         requireOutlineBudget: args.requireOutlineBudget,
         minOutlineTargetPages: args.minOutlineTargetPages,
         minOutlineWordsPerPage: args.minOutlineWordsPerPage,
+        minPdfPages: args.minPdfPages,
         requireFindingSections: args.requireFindingSections,
         minFindingWords: args.minFindingWords,
         finalHandoff: true,

@@ -932,6 +932,19 @@ describe("ULM artifact ledger", () => {
 
     await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
     await fs.writeFile(
+      result.pdf,
+      "%PDF-1.4\n% /ULMCodeRenderer (styled-html)\n2 0 obj\n<< /Type /Pages /Kids [] /Count 1 >>\nendobj\n%%EOF\n",
+    )
+    lint = await lintReport(worktree, "school", { finalHandoff: true, minPdfPages: 2 })
+    expect(lint.ok).toBe(false)
+    expect(lint.gaps).toContain("deliverables/final/report.pdf has 1 pages, expected at least 2")
+    const audit = await buildOperationAudit(worktree, "school", { finalHandoff: true, minPdfPages: 2 })
+    expect(audit.ok).toBe(false)
+    expect(audit.blockers).toContain("final_handoff: deliverables/final/report.pdf has 1 pages, expected at least 2")
+    expect(audit.checks.finalHandoff.gates?.minPdfPages).toBe(2)
+
+    await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
+    await fs.writeFile(
       result.manifest,
       JSON.stringify({ operationID: "school", artifacts: { html: "/tmp/missing.html" }, counts: {} }, null, 2),
     )
