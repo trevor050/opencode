@@ -3,7 +3,7 @@ import path from "path"
 import { operationPath, slug } from "./artifact"
 import { createOperationGoal } from "./operation-goal"
 import { writeOperationGraph, type OperationScanProfile, type OperationTrustLevel } from "./operation-graph"
-import { writeOperationPlan, writeReportOutline, type Stage } from "./artifact"
+import { writeOperationDiscoveryCharter, writeOperationPlan, writeReportOutline, type Stage } from "./artifact"
 
 export type OperationTemplateID =
   | "single-url-web"
@@ -353,6 +353,58 @@ const templateStages: Record<OperationTemplateID, Stage[]> = {
   "benchmark-suite": ["intake", "recon", "validation", "reporting", "handoff"],
 }
 
+function templateTimeBudget(input: { targetDurationHours?: number; stages: Stage[] }) {
+  const targetHours = input.targetDurationHours
+  if (!targetHours) return undefined
+  const base = Math.max(0.25, Number((targetHours / input.stages.length).toFixed(2)))
+  return {
+    targetHours,
+    finalizationWindowHours: Math.max(1, Math.min(4, Math.round(targetHours * 0.15))),
+    durationFit: {
+      confidence: targetHours >= 2 ? "duration_sized" as const : "medium" as const,
+      evidence: [
+        `Template target duration is ${targetHours}h.`,
+        "Operation graph includes recon, validation, reporting, handoff, supervisor, and recovery-capable lanes.",
+      ],
+      overflowBacklog: [
+        "Expand host/service inventory.",
+        "Run profile fallbacks for blocked command profiles.",
+        "Deepen evidence normalization, finding validation, and report review until gates pass.",
+      ],
+    },
+    allocations: input.stages.map((stage, index) => ({
+      stage,
+      hours: index === input.stages.length - 1 ? Math.max(0.25, Number((targetHours - base * (input.stages.length - 1)).toFixed(2))) : base,
+      work: `${stage} work for the template operation.`,
+    })),
+  }
+}
+
+function templateDiscoveryCharter(input: { template: OperationTemplateID; objective: string; targetDurationHours?: number; stages: Stage[] }) {
+  if ((input.targetDurationHours ?? 0) < 2) return undefined
+  return {
+    purpose: `Establish a duration-sized ${input.template} operation plan for ${input.objective}.`,
+    researchQuestions: [
+      "Which assets and services are in authorized scope?",
+      "Which command profiles and subagent lanes can safely fill the target window?",
+      "Which evidence is required for final report confidence?",
+    ],
+    reconInvestments: [
+      "Run bounded inventory before broad execution.",
+      "Use safe profile fallbacks when command profiles are blocked or noisy.",
+    ],
+    operatorQuestions: [
+      "Confirm scope exclusions and safety limits.",
+      "Confirm whether credentials are available through the secure vault.",
+    ],
+    candidateDeepWorkLanes: input.stages.map((stage) => `${stage} lane`),
+    decisionCriteriaForFullPlan: [
+      "The plan has enough safe queued work and fallback work to fill the requested duration.",
+      "The plan includes final report, runtime, and audit gates.",
+    ],
+  }
+}
+
 export async function createOperationFromTemplate(
   worktree: string,
   input: {
@@ -370,7 +422,34 @@ export async function createOperationFromTemplate(
     objective: input.objective,
     targetDurationHours: input.targetDurationHours,
   })
-  const phases = templateStages[input.template].map((stage) => ({
+  const stages = templateStages[input.template]
+  const discoveryCharter = templateDiscoveryCharter({
+    template: input.template,
+    objective: input.objective,
+    targetDurationHours: input.targetDurationHours,
+    stages,
+  })
+  const planningApproval = discoveryCharter
+    ? {
+        status: "approved" as const,
+        discoveryCharterPath: "plans/discovery-charter.md",
+        approver: "operation_template",
+        notes: ["Template-created operation charter approved because the operator requested a repeatable operation template."],
+      }
+    : undefined
+  if (discoveryCharter) {
+    await writeOperationDiscoveryCharter(worktree, {
+      operationID: goal.operationID,
+      templateName: input.template,
+      trustLevel: input.trustLevel,
+      scanProfile: input.scanProfile,
+      browserEvidence: input.template.includes("web") || input.template === "external-k12-district",
+      operationMemory: true,
+      planningApproval,
+      discoveryCharter,
+    })
+  }
+  const phases = stages.map((stage) => ({
     stage,
     objective: `${input.template} ${stage} phase for ${input.objective}`,
     actions: [
@@ -391,6 +470,33 @@ export async function createOperationFromTemplate(
     templateName: input.template,
     trustLevel: input.trustLevel,
     scanProfile: input.scanProfile,
+    planningApproval,
+    discoveryCharter,
+    timeBudget: templateTimeBudget({ targetDurationHours: input.targetDurationHours, stages }),
+    coverageContract: input.targetDurationHours
+      ? {
+          status: "unmet",
+          goals: [
+            "Complete all release-blocking graph lanes or record allowed coverage exceptions.",
+            "Produce durable evidence for every claimed finding and every explicit non-finding decision.",
+          ],
+          minimumEvidence: ["operation graph lane proof", "raw command evidence", "normalized evidence index", "final report package"],
+          requiredLanes: [
+            "recon",
+            "web_inventory",
+            "evidence_normalization",
+            "finding_validation",
+            "report_writing",
+            "report_review",
+            "operator_summary",
+          ],
+          allowedSkippedLanes: [],
+          fallbackRules: ["Retry timed-out command profiles with lower concurrency before marking a lane blocked."],
+          retryRules: ["Retry transient provider/tool failures before using a fallback model or command profile."],
+          subagentOpportunities: ["recon inventory", "validation", "report writing", "report review"],
+          reportGates: ["report_lint finalHandoff=true", "report_render", "runtime_summary", "operation_audit finalHandoff=true"],
+        }
+      : undefined,
     browserEvidence: input.template.includes("web") || input.template === "external-k12-district",
     operationMemory: true,
     phases,

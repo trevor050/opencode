@@ -73,13 +73,18 @@ describe("ULM operation extras", () => {
     const result = await createOperationFromTemplate(dir.path, {
       template: "single-url-web",
       objective: "Authorized single URL review",
+      targetDurationHours: 20,
       trustLevel: "unattended",
       scanProfile: "balanced",
       budgetUSD: 10,
     })
 
     expect(result.operationID).toMatch(/^[a-z]+-[a-z]+(-[a-z]+)?-[a-f0-9]{6}$/)
-    expect(await fs.readFile(result.plan.json, "utf8")).toContain('"templateName": "single-url-web"')
+    const plan = JSON.parse(await fs.readFile(result.plan.json, "utf8"))
+    expect(plan.templateName).toBe("single-url-web")
+    expect(plan.timeBudget.targetHours).toBe(20)
+    expect(plan.timeBudget.durationFit.confidence).toBe("duration_sized")
+    expect(plan.coverageContract.requiredLanes).toContain("recon")
     expect(await fs.readFile(result.graph.json, "utf8")).toContain('"trustLevel": "unattended"')
     expect(await fs.readFile(result.outline.file, "utf8")).toContain("Coverage, Browser Evidence, and Testing Limits")
     expect(await fs.readFile(result.memory, "utf8")).toContain("Started from single-url-web")
