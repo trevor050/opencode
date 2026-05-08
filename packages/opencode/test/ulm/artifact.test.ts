@@ -435,6 +435,52 @@ describe("ULM artifact ledger", () => {
     expect(result.gaps).toContain("reports/report-outline.md target_pages is too small: 4, expected at least 50")
   })
 
+  test("final handoff lint defaults to 50 target pages for 20h plans", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.mkdir(path.join(outline.root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(outline.root, "plans", "operation-plan.json"),
+      JSON.stringify({ operationID: "school", timeBudget: { targetHours: 20 } }, null, 2) + "\n",
+    )
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const result = await lintReport(worktree, "school", {
+      finalHandoff: true,
+      minOutlineWordsPerPage: 10,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.gaps).toContain("reports/report-outline.md target_pages is too small: 4, expected at least 50")
+  })
+
   test("lints missing outline report sections even when total report is long", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {

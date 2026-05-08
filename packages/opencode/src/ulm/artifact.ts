@@ -2981,6 +2981,12 @@ function outlineTargetPages(outline: string | undefined) {
   return Number.isFinite(pages) && pages > 0 ? pages : undefined
 }
 
+function defaultMinOutlineTargetPages(plan: OperationPlanRecord | undefined, options: ReportLintOptions) {
+  if (options.minOutlineTargetPages !== undefined) return options.minOutlineTargetPages
+  if (options.finalHandoff && (plan?.timeBudget?.targetHours ?? 0) >= 20) return 50
+  return undefined
+}
+
 type OutlineSectionBudget = {
   title: string
   pages: number
@@ -3560,6 +3566,7 @@ export async function lintReport(
     if (operation.stage !== "handoff") gaps.push("operation stage must be handoff for final handoff")
     if (operation.status !== "complete") gaps.push("operation status must be complete for final handoff")
   }
+  const plan = await readJson<OperationPlanRecord>(path.join(root, "plans", "operation-plan.json"))
 
   const findings = await readFindings(root)
   const evidenceRecords = await readEvidenceRecords(root)
@@ -3596,7 +3603,8 @@ export async function lintReport(
     if (words < options.minWords)
       gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
   }
-  const requireOutlineBudget = options.requireOutlineBudget || options.minOutlineTargetPages || options.minOutlineWordsPerPage
+  const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, options)
+  const requireOutlineBudget = options.requireOutlineBudget || minOutlineTargetPages || options.minOutlineWordsPerPage
   const requireOutlineSections =
     options.requireOutlineSections || options.minOutlineSectionWords || options.minOutlineSectionWordsPerPage
   if (requireOutlineBudget || requireOutlineSections) {
@@ -3605,9 +3613,9 @@ export async function lintReport(
       const targetPages = outlineTargetPages(outline)
       const sections = outlineSectionBudgets(outline)
       if (!targetPages) gaps.push("reports/report-outline.md with target_pages is required for outline budget lint")
-      if (targetPages && options.minOutlineTargetPages && targetPages < options.minOutlineTargetPages) {
+      if (targetPages && minOutlineTargetPages && targetPages < minOutlineTargetPages) {
         gaps.push(
-          `reports/report-outline.md target_pages is too small: ${targetPages}, expected at least ${options.minOutlineTargetPages}`,
+          `reports/report-outline.md target_pages is too small: ${targetPages}, expected at least ${minOutlineTargetPages}`,
         )
       }
       if (targetPages && sections.length) {
