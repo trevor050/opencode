@@ -322,7 +322,7 @@ const scenarios: HarnessScenario[] = [
       }
     },
     "Real local drill for supervision, acquisition, graph, evidence normalization, work queue, governor, and next-action primitives.",
-    "full",
+    "fast",
   ),
   scenario("provider_tool_chaos", "provider-tool-chaos-contract", async () => {
     const checks = [
