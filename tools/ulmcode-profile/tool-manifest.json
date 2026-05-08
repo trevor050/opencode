@@ -183,7 +183,7 @@
         { "platform": "darwin", "command": "brew install gobuster" },
         { "platform": "go", "command": "go install github.com/OJ/gobuster/v3@latest" }
       ],
-      "validate": "gobuster version",
+      "validate": "gobuster --version",
       "safeExamples": [
         "gobuster dir -u https://<authorized-host> -w wordlists/common.txt -o evidence/raw/gobuster.txt"
       ],
