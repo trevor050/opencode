@@ -339,7 +339,14 @@ function commandProfilesForLane(lane: OperationLane) {
   return []
 }
 
+function laneSpecificInstruction(lane: OperationLane) {
+  if (lane.id === "finding_validation")
+    return "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+  return undefined
+}
+
 function taskParamsForLane(lane: OperationLane) {
+  const specific = laneSpecificInstruction(lane)
   return {
     description: lane.title.slice(0, 60),
     prompt: [
@@ -350,6 +357,7 @@ function taskParamsForLane(lane: OperationLane) {
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
+      ...(specific ? [specific] : []),
       "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
       "Do not call operation_run with mode=advance and do not launch downstream lanes; runtime_scheduler owns the next-lane handoff.",
     ].join("\n"),

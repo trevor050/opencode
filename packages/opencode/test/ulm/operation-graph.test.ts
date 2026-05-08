@@ -106,6 +106,7 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "finding_validation")?.dependsOn).toEqual([
       "evidence_normalization",
     ])
+    expect(graph.lanes.find((lane) => lane.id === "finding_validation")?.allowedTools).toContain("operation_status")
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
     expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)

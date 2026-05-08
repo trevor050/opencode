@@ -92,6 +92,10 @@ function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date)
 }
 
 function promptForLane(lane: OperationLane) {
+  const specific =
+    lane.id === "finding_validation"
+      ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+      : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,
     "",
@@ -102,6 +106,7 @@ function promptForLane(lane: OperationLane) {
     `Restart policy: max ${lane.restartPolicy.maxAttempts} attempts, stale after ${lane.restartPolicy.staleAfterMinutes} minutes.`,
     "",
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
+    ...(specific ? [specific] : []),
     "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
     "Do not call operation_run with mode=advance and do not launch downstream lanes; runtime_scheduler owns the next-lane handoff.",
   ].join("\n")

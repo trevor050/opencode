@@ -380,7 +380,7 @@ const INTERNAL_NETWORK_LANES: typeof BASE_LANES = [
     title: "Finding validation and dedupe",
     agent: "validator",
     dependsOn: ["evidence_normalization"],
-    allowedTools: ["finding_record", "report_lint", "operation_stage_gate", "task"],
+    allowedTools: ["operation_status", "finding_record", "report_lint", "operation_stage_gate", "task"],
     expectedArtifacts: ["findings/", "deliverables/stage-gates/"],
     route: "reasoning",
     budgetWeight: 0.11,
