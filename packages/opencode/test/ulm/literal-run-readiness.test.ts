@@ -8,7 +8,12 @@ import { writeOperationGraph } from "@/ulm/operation-graph"
 import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
-async function writeFinalHandoffProof(worktree: string, operationID: string, generatedAt?: string) {
+async function writeFinalHandoffProof(
+  worktree: string,
+  operationID: string,
+  generatedAt?: string,
+  options: { minOutlineTargetPages?: number } = { minOutlineTargetPages: 50 },
+) {
   const root = operationPath(worktree, operationID)
   await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
   await fs.writeFile(
@@ -17,7 +22,19 @@ async function writeFinalHandoffProof(worktree: string, operationID: string, gen
   )
   await fs.writeFile(
     path.join(root, "deliverables", "operation-audit.json"),
-    JSON.stringify({ operationID, ok: true, blockers: [], generatedAt }, null, 2) + "\n",
+    JSON.stringify(
+      {
+        operationID,
+        ok: true,
+        blockers: [],
+        generatedAt,
+        checks: options.minOutlineTargetPages
+          ? { finalHandoff: { gates: { minOutlineTargetPages: options.minOutlineTargetPages } } }
+          : undefined,
+      },
+      null,
+      2,
+    ) + "\n",
   )
 }
 
@@ -235,11 +252,48 @@ describe("ULM literal run readiness audit", () => {
       ) + "\n",
     )
     await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
-    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z")
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", {})
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
     expect(result.status).toBe("incomplete")
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("fail")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
+      "required_min_outline_target_pages=50",
+    )
+  })
+
+  test("requires long-report audit proof for default literal 20h checks even without plan time budget", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Missing Time Budget Report Gate"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await fs.mkdir(path.join(root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify({ operationID: "missing-time-budget-report-gate", phases: [] }, null, 2) + "\n",
+    )
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "missing-time-budget-report-gate",
+          elapsedSeconds: 20 * 60 * 60,
+          endedAt: "2026-05-08T20:00:00.000Z",
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", {})
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
       "required_min_outline_target_pages=50",
     )

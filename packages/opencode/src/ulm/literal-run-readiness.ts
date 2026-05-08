@@ -197,7 +197,8 @@ export async function auditLiteralRunReadiness(
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
   const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
-  const requiredAuditMinOutlineTargetPages = (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+  const requiredAuditMinOutlineTargetPages =
+    targetElapsedSeconds >= 20 * 60 * 60 || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
   const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
   const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
   const credentialReviewCount = countItems(credentialReview?.credentials)
