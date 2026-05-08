@@ -38,6 +38,7 @@ export type OperationRunResult = {
     operationID: string
     laneID: string
     modelRoute: string
+    allowedTools: string[]
     background: boolean
   }
   commandProfiles?: string[]
@@ -367,6 +368,7 @@ function taskParamsForLane(lane: OperationLane) {
     operationID: lane.operationID,
     laneID: lane.id,
     modelRoute: lane.modelRoute,
+    allowedTools: lane.allowedTools,
     background: true,
   }
 }

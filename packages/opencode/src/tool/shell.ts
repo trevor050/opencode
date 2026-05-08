@@ -609,7 +609,7 @@ export const ShellTool = Tool.define(
           parameters: prompt.parameters,
           execute: (params: Parameters, ctx: Tool.Context) =>
             Effect.gen(function* () {
-              assertLaneToolAllowed("shell")
+              assertLaneToolAllowed(ShellID.ToolID)
               const executeInstance = yield* InstanceState.context
               const cwd = params.workdir
                 ? yield* resolvePath(params.workdir, executeInstance.directory, shell)

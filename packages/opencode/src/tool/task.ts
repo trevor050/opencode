@@ -45,6 +45,9 @@ export const Parameters = Schema.Struct({
   modelRoute: Schema.optional(Schema.String).annotate({
     description: "Optional provider/model route override for operation lanes, for example openai/gpt-5.5-fast.",
   }),
+  allowedTools: Schema.optional(Schema.Array(Schema.String)).annotate({
+    description: "Optional ULMCode lane tool allowlist enforced for the child task session.",
+  }),
   background: Schema.optional(Schema.Boolean).annotate({
     description: "When true, launch the subagent in the background and return immediately.",
   }),
@@ -109,6 +112,14 @@ function modelFromRoute(route: string | undefined) {
   const modelID = modelParts.join("/")
   if (!providerID || !modelID) return undefined
   return { providerID: ProviderID.make(providerID), modelID: ModelID.make(modelID) }
+}
+
+const LANE_GUARDED_TOOLS = ["operation_recover", "runtime_scheduler", "runtime_daemon", "task", "command_supervise", "bash"]
+
+function laneChildToolOverrides(allowedTools: readonly string[] | undefined) {
+  if (!allowedTools) return {}
+  const allowed = new Set(allowedTools)
+  return Object.fromEntries(LANE_GUARDED_TOOLS.map((tool) => [tool, allowed.has(tool)]))
 }
 
 function runtimeUsageMessage(message: MessageV2.WithParts): RuntimeUsageMessage {
@@ -271,6 +282,7 @@ export const TaskTool = Tool.define(
           tools: {
             ...(canTodo ? {} : { todowrite: false }),
             ...(canTask ? {} : { task: false }),
+            ...laneChildToolOverrides(params.allowedTools),
             ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
           },
           parts,
@@ -372,6 +384,7 @@ export const TaskTool = Tool.define(
             ...(params.operationID ? { operationID: params.operationID } : {}),
             ...(params.laneID ? { laneID: params.laneID } : {}),
             ...(params.modelRoute ? { modelRoute: params.modelRoute } : {}),
+            ...(params.allowedTools ? { allowedTools: params.allowedTools } : {}),
             ...(noToolTimeoutMs ? { agentNoToolTimeoutSeconds: Math.round(noToolTimeoutMs / 1000) } : {}),
             ...(worktree ? { worktree } : {}),
           },

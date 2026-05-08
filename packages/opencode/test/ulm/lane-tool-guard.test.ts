@@ -22,9 +22,9 @@ describe("ULM lane tool guard", () => {
     process.env.ULMCODE_LANE_ALLOWED_TOOLS = "runtime_summary, eval_scorecard, operation_audit, operation_checkpoint, operation_run"
 
     expect(laneToolAllowed("runtime_summary")).toBe(true)
-    expect(laneToolAllowed("operation_recover")).toBe(false)
-    expect(() => assertLaneToolAllowed("operation_recover")).toThrow(
-      "Tool operation_recover is not allowed for ULM lane operator_summary",
+    expect(laneToolAllowed("bash")).toBe(false)
+    expect(() => assertLaneToolAllowed("bash")).toThrow(
+      "Tool bash is not allowed for ULM lane operator_summary",
     )
   })
 })

@@ -316,7 +316,7 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
     writeLaunchRecord("model-reuse", params.laneID, { jobID: active.jobID, pid: active.pid })
     return Promise.resolve({ jobID: active.jobID })
   }
-  const allowedTools = params.prompt.match(/^Allowed tools:\s*(.+)$/m)?.[1]?.trim() ?? ""
+  const allowedTools = params.allowedTools.join(", ")
   const record = {
     laneID: params.laneID,
     agent: params.subagent_type,
