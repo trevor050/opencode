@@ -159,6 +159,23 @@ function workProofFromHeartbeat(heartbeat: {
   }
 }
 
+async function cliLaunchProof(root: string) {
+  const dir = path.join(root, "scheduler", "cli-launches")
+  try {
+    const files = await fs.readdir(dir)
+    return files.reduce(
+      (acc, file) => ({
+        modelLaunches: acc.modelLaunches + (file.includes("-model-") && !file.includes("-model-reuse-") ? 1 : 0),
+        commandLaunches: acc.commandLaunches + (file.includes("-command-") ? 1 : 0),
+      }),
+      { modelLaunches: 0, commandLaunches: 0 },
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { modelLaunches: 0, commandLaunches: 0 }
+    throw error
+  }
+}
+
 function formatMarkdown(result: LiteralRunReadinessResult) {
   return [
     `# Literal 20-Hour Run Readiness: ${result.operationID}`,
@@ -335,6 +352,15 @@ export async function auditLiteralRunReadiness(
   const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
+  const cliProof = await cliLaunchProof(root)
+  const combinedWorkProof = workProof
+    ? {
+        ...workProof,
+        modelLaunches: workProof.modelLaunches + cliProof.modelLaunches,
+        commandLaunches: workProof.commandLaunches + cliProof.commandLaunches,
+        total: workProof.total + cliProof.modelLaunches + cliProof.commandLaunches,
+      }
+    : undefined
   checks.push(
     check({
       id: "literal-runtime-proof",
@@ -349,10 +375,10 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "literal-work-proof",
-      status: workProof && workProof.total > 0 ? "ok" : "fail",
+      status: combinedWorkProof && combinedWorkProof.total > 0 ? "ok" : "fail",
       required: true,
-      detail: workProof
-        ? `model_launches=${workProof.modelLaunches}; command_launches=${workProof.commandLaunches}; completed_lanes=${workProof.completedLanes}; synced_jobs=${workProof.syncedJobs}; recoveries=${workProof.recoveries}`
+      detail: combinedWorkProof
+        ? `model_launches=${combinedWorkProof.modelLaunches}; command_launches=${combinedWorkProof.commandLaunches}; completed_lanes=${combinedWorkProof.completedLanes}; synced_jobs=${combinedWorkProof.syncedJobs}; recoveries=${combinedWorkProof.recoveries}`
         : "daemon heartbeat is missing; no lane launch, command launch, recovery, or completion proof exists",
       path: daemonHeartbeatPath,
     }),

@@ -168,6 +168,42 @@ describe("ULM literal run readiness audit", () => {
     expect(result.checks.find((item) => item.id === "literal-work-proof")?.status).toBe("fail")
   })
 
+  test("counts CLI launch records as daemon work proof across heartbeat rewrites", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "CLI Launch Proof"
+    const root = operationPath(dir.path, operationID)
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeRuntimeSupervisor({
+      operationID,
+      worktree: dir.path,
+      bunPath: "bun",
+      scriptPath: path.join(__dirname, "..", "..", "script", "ulm-runtime-daemon.ts"),
+      durationSeconds: 20 * 60 * 60,
+      intervalSeconds: 60,
+      schedulerCyclesPerTick: 1,
+      supervisor: "all",
+    })
+
+    const schedulerDir = path.join(root, "scheduler")
+    await fs.mkdir(path.join(schedulerDir, "cli-launches"), { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify({ operationID: "cli-launch-proof", elapsedSeconds: 20 * 60 * 60, reason: "runtime window elapsed", cycles: [] }, null, 2) +
+        "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await fs.writeFile(
+      path.join(schedulerDir, "cli-launches", "2026-05-05T00-00-00-model-report_repair.json"),
+      JSON.stringify({ kind: "model", id: "report_repair", jobID: "cli-model-lane-report_repair" }, null, 2) + "\n",
+    )
+    await writeFinalHandoffProof(dir.path, operationID)
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("passed")
+    expect(result.checks.find((item) => item.id === "literal-work-proof")?.status).toBe("ok")
+    expect(result.checks.find((item) => item.id === "literal-work-proof")?.detail).toContain("model_launches=1")
+  })
+
   test("accepts tool-owned daemon proof without requiring service-manager setup", async () => {
     await using dir = await tmpdir({ git: true })
     const operationID = "Tool Owned Daemon"
