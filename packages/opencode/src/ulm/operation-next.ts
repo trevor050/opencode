@@ -95,6 +95,8 @@ function promptForLane(lane: OperationLane) {
   const specific =
     lane.id === "finding_validation"
       ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+      : lane.id === "report_writing"
+        ? "Draft the substantive authored report to reports/report.md with the write tool before linting or rendering; do not block merely because no report exists yet."
       : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,

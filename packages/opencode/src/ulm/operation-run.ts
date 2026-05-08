@@ -342,6 +342,8 @@ function commandProfilesForLane(lane: OperationLane) {
 function laneSpecificInstruction(lane: OperationLane) {
   if (lane.id === "finding_validation")
     return "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+  if (lane.id === "report_writing")
+    return "Draft the substantive authored report to reports/report.md with the write tool before linting or rendering; do not block merely because no report exists yet."
   return undefined
 }
 
