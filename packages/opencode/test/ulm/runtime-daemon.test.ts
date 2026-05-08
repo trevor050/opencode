@@ -192,6 +192,31 @@ describe("ULM runtime daemon", () => {
     expect(result.reason).toBe("max scheduler cycles reached")
   })
 
+  test("does not treat complete lanes as a completed literal wall-clock run before the target window elapses", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toBe("target runtime window is still open; scheduler is idle")
+  })
+
   test("recovers stale operation jobs before scheduler ticks", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

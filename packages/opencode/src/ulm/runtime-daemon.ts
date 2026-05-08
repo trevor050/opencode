@@ -112,6 +112,14 @@ async function releaseLock(lockPath: string) {
   if (!lock || lock.pid === process.pid) await fs.rm(lockPath, { force: true })
 }
 
+function schedulerStopKeepsRuntimeWindowOpen(input: { stopped: boolean; reason: string; elapsedSeconds: number; maxRuntimeSeconds: number }) {
+  return (
+    input.stopped &&
+    input.reason === "all operation lanes are complete" &&
+    input.elapsedSeconds < input.maxRuntimeSeconds
+  )
+}
+
 export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInput): Promise<RuntimeDaemonResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
@@ -232,6 +240,10 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       if (latestSupervisor?.generatedAt) lastSupervisorReviewAt = latestSupervisor.generatedAt
       stopped = scheduler.stopped
       reason = scheduler.reason
+      if (schedulerStopKeepsRuntimeWindowOpen({ stopped, reason, elapsedSeconds, maxRuntimeSeconds })) {
+        stopped = false
+        reason = "target runtime window is still open; scheduler is idle"
+      }
       const heartbeat = {
         operationID,
         pid: process.pid,
