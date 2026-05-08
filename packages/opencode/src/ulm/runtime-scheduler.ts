@@ -15,6 +15,8 @@ import {
   type OperationRunResult,
   type OperationRuntimeSyncResult,
 } from "./operation-run"
+import { writeRuntimeGovernorRouteAudit } from "./runtime-governor"
+import { acquireManifestTools } from "./tool-acquisition"
 import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNextResult } from "./work-queue"
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
@@ -32,6 +34,8 @@ export type RuntimeSchedulerInput = {
   supervisorIntervalMinutes?: number
   lastSupervisorReviewAt?: Date | string
   supervisorReviewKind?: OperationSupervisorReviewKind
+  ensureReadinessProof?: boolean
+  toolManifestPath?: string
   now?: Date
 }
 
@@ -111,6 +115,73 @@ async function defaultSupervisorEnabled(worktree: string, operationID: string, c
   return (goal?.targetDurationHours ?? 0) >= 1
 }
 
+async function readJson<T>(file: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8")) as T
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+}
+
+async function exists(file: string) {
+  try {
+    await fs.access(file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function shouldEnsureReadinessProof(worktree: string, operationID: string, configured: boolean | undefined) {
+  if (configured !== undefined) return configured
+  const goal = (await readOperationGoal(worktree, operationID)).goal
+  if ((goal?.targetDurationHours ?? 0) >= 20) return true
+  const plan = await readJson<{ timeBudget?: { targetHours?: number } }>(
+    path.join(operationPath(worktree, operationID), "plans", "operation-plan.json"),
+  )
+  return (plan?.timeBudget?.targetHours ?? 0) >= 20
+}
+
+async function ensureReadinessProofArtifacts(
+  worktree: string,
+  input: { operationID: string; toolManifestPath?: string; enabled?: boolean },
+) {
+  if (!(await shouldEnsureReadinessProof(worktree, input.operationID, input.enabled))) return
+  const root = operationPath(worktree, input.operationID)
+  if (!(await exists(path.join(root, "tools", "tool-preflight.json")))) {
+    await acquireManifestTools({
+      worktree,
+      operationID: input.operationID,
+      manifestPath: input.toolManifestPath,
+    }).catch((error) =>
+      writeJson(path.join(root, "tools", "tool-preflight.json"), {
+        operationID: input.operationID,
+        total: 1,
+        available: 0,
+        blocked: 1,
+        installed: 0,
+        installAttempted: false,
+        tools: [
+          {
+            operationID: input.operationID,
+            toolID: "tool-manifest",
+            available: false,
+            installed: false,
+            blocker: error instanceof Error ? error.message : String(error),
+            validationCommand: "read tool manifest",
+            fallbacks: [],
+          },
+        ],
+        checkedAt: new Date().toISOString(),
+      }),
+    )
+  }
+  if (!(await exists(path.join(root, "deliverables", "model-route-audit.json")))) {
+    await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  }
+}
+
 async function maybeRunSupervisor(
   worktree: string,
   input: RuntimeSchedulerInput & { operationID: string; now: Date; lastSupervisorReviewAt?: Date },
@@ -163,6 +234,12 @@ export async function runRuntimeScheduler(
   let lastSupervisorReviewAt = parseDate(input.lastSupervisorReviewAt)
   let stopped = false
   let reason = "max scheduler cycles reached"
+
+  await ensureReadinessProofArtifacts(worktree, {
+    operationID,
+    toolManifestPath: input.toolManifestPath,
+    enabled: input.ensureReadinessProof,
+  })
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     const now = input.now ?? new Date()

@@ -27,6 +27,8 @@ export type RuntimeDaemonInput = {
   supervisorIntervalMinutes?: Parameters<typeof runRuntimeScheduler>[1]["supervisorIntervalMinutes"]
   lastSupervisorReviewAt?: Parameters<typeof runRuntimeScheduler>[1]["lastSupervisorReviewAt"]
   supervisorReviewKind?: Parameters<typeof runRuntimeScheduler>[1]["supervisorReviewKind"]
+  ensureReadinessProof?: Parameters<typeof runRuntimeScheduler>[1]["ensureReadinessProof"]
+  toolManifestPath?: Parameters<typeof runRuntimeScheduler>[1]["toolManifestPath"]
   recoverBackgroundJob?: (job: BackgroundJob.Info) => Promise<{ jobID?: string | undefined } | undefined>
   maxRecoveriesPerTick?: number
   now?: () => Date
@@ -182,6 +184,8 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         supervisorIntervalMinutes: input.supervisorIntervalMinutes,
         lastSupervisorReviewAt,
         supervisorReviewKind: input.supervisorReviewKind,
+        ensureReadinessProof: input.ensureReadinessProof ?? maxRuntimeSeconds >= 20 * 60 * 60,
+        toolManifestPath: input.toolManifestPath,
         now: tickTime,
       }).catch(async (error) => {
         consecutiveErrors += 1
