@@ -1372,6 +1372,7 @@ describe("ULM artifact ledger", () => {
     expect(audit.blockers).toContain(
       "final_handoff: reports/report-outline.md target_pages is too small: 4, expected at least 50",
     )
+    expect(audit.checks.finalHandoff.gates?.minOutlineTargetPages).toBe(50)
     expect(audit.recommendedTools).toContain("report_outline")
   })
 

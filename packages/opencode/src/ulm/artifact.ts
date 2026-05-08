@@ -431,6 +431,9 @@ export type OperationAuditResult = {
       status: "ready" | "attention_required"
       gaps: string[]
       counts: ReportLintResult["counts"]
+      gates?: {
+        minOutlineTargetPages?: number
+      }
     }
     coverage: CoverageReadiness
   }
@@ -1513,6 +1516,10 @@ export async function buildOperationAudit(
   operationID: string,
   options: OperationAuditOptions = {},
 ): Promise<OperationAuditResult> {
+  const root = operationPath(worktree, operationID)
+  const finalHandoffRequired = options.finalHandoff ?? true
+  const plan = await readJson<OperationPlanRecord>(path.join(root, "plans", "operation-plan.json"))
+  const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, { ...options, finalHandoff: finalHandoffRequired })
   const resume = await buildOperationResumeBrief(worktree, operationID, {
     eventLimit: options.eventLimit,
     staleAfterMinutes: options.staleAfterMinutes,
@@ -1529,12 +1536,11 @@ export async function buildOperationAudit(
     minOutlineSectionWordsPerPage: options.minOutlineSectionWordsPerPage,
     requireFindingSections: options.requireFindingSections,
     minFindingWords: options.minFindingWords,
-    finalHandoff: options.finalHandoff ?? true,
+    finalHandoff: finalHandoffRequired,
     requireOperationPlan: options.requireOperationPlan,
     requireRenderedDeliverables: options.requireRenderedDeliverables,
     requireRuntimeSummary: options.requireRuntimeSummary,
   })
-  const root = operationPath(worktree, operationID)
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const generatedAt = new Date().toISOString()
   const files = {
@@ -1557,6 +1563,9 @@ export async function buildOperationAudit(
         status: finalHandoff.ok ? "ready" : "attention_required",
         gaps: finalHandoff.gaps,
         counts: finalHandoff.counts,
+        gates: {
+          minOutlineTargetPages,
+        },
       },
       coverage,
     },

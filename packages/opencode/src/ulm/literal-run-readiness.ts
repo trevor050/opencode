@@ -181,6 +181,7 @@ export async function auditLiteralRunReadiness(
   const targetElapsedSeconds = Math.max(1, Math.floor(input.targetElapsedSeconds ?? 20 * 60 * 60))
   const root = operationPath(worktree, operationID)
   const graphPath = path.join(root, "plans", "operation-graph.json")
+  const operationPlanPath = path.join(root, "plans", "operation-plan.json")
   const supervisorManifestPath = path.join(root, "scheduler", "supervisor", "supervisor-manifest.json")
   const daemonHeartbeatPath = path.join(root, "scheduler", "daemon-heartbeat.json")
   const daemonLogPath = path.join(root, "scheduler", "daemon.jsonl")
@@ -194,6 +195,8 @@ export async function auditLiteralRunReadiness(
   const checks: LiteralRunCheck[] = []
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
+  const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
+  const requiredAuditMinOutlineTargetPages = (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
   checks.push(
     check({
       id: "operation-graph",
@@ -316,16 +319,25 @@ export async function auditLiteralRunReadiness(
       path: finalManifestPath,
     }),
   )
-  const finalAudit = await readJson<{ ok?: boolean; blockers?: unknown[]; generatedAt?: string }>(finalAuditPath)
+  const finalAudit = await readJson<{
+    ok?: boolean
+    blockers?: unknown[]
+    generatedAt?: string
+    checks?: { finalHandoff?: { gates?: { minOutlineTargetPages?: number } } }
+  }>(finalAuditPath)
   const finalAuditTime = timestamp(finalAudit?.generatedAt)
   const finalAuditFresh = heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)
+  const finalAuditMinOutlineTargetPages = finalAudit?.checks?.finalHandoff?.gates?.minOutlineTargetPages
+  const finalAuditGatesOk =
+    requiredAuditMinOutlineTargetPages === undefined ||
+    (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages
   checks.push(
     check({
       id: "final-operation-audit",
-      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 && finalAuditFresh ? "ok" : "fail",
+      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 && finalAuditFresh && finalAuditGatesOk ? "ok" : "fail",
       required: true,
       detail: finalAudit
-        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}`
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}`
         : "final operation audit is missing",
       path: finalAuditPath,
     }),
