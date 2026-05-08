@@ -23,6 +23,7 @@ describe("ULM lane tool guard", () => {
 
     expect(laneToolAllowed("runtime_summary")).toBe(true)
     expect(laneToolAllowed("bash")).toBe(false)
+    expect(laneToolAllowed("write")).toBe(false)
     expect(() => assertLaneToolAllowed("bash")).toThrow(
       "Tool bash is not allowed for ULM lane operator_summary",
     )

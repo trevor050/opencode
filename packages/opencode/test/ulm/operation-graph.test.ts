@@ -96,6 +96,7 @@ describe("ULM operation graph", () => {
     expect(validateOperationGraph(graph)).toEqual([])
     expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.allowedTools).toContain("command_supervise")
     expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.allowedTools).toContain("operation_run")
+    expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.allowedTools).toContain("write")
     expect(graph.lanes.find((lane) => lane.id === "network_discovery")?.expectedArtifacts).toContain(
       "commands/service-inventory/",
     )
