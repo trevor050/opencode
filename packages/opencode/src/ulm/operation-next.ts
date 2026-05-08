@@ -96,7 +96,7 @@ function promptForLane(lane: OperationLane) {
     lane.id === "finding_validation"
       ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
       : lane.id === "report_writing"
-        ? "Draft the substantive authored report to reports/report.md with the write tool before linting or rendering; do not block merely because no report exists yet."
+        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
       : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,
