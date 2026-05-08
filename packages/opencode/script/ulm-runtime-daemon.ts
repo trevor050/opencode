@@ -3,7 +3,7 @@ import { formatRuntimeDaemon, runRuntimeDaemon } from "../src/ulm/runtime-daemon
 import { writeRuntimeSupervisor, type RuntimeSupervisorKind } from "../src/ulm/runtime-supervisor"
 import { operationPath, slug } from "../src/ulm/artifact"
 import { spawn } from "child_process"
-import { closeSync, mkdirSync, openSync, writeFileSync } from "fs"
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 import type { OperationRunResult } from "../src/ulm/operation-run"
@@ -275,8 +275,47 @@ function writeLaunchRecord(kind: string, id: string, value: Record<string, unkno
   return file
 }
 
+function processIsAlive(pid: unknown) {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function activeCliModelLaunch(laneID: string) {
+  const dir = path.join(operationPath(worktree, operationID), "scheduler", "cli-launches")
+  try {
+    return readdirSync(dir)
+      .filter((file) => file.endsWith(`-model-pid-${laneID}.json`))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(path.join(dir, file), "utf8")) as {
+            jobID?: string
+            pid?: number
+            createdAt?: string
+          }
+        } catch {
+          return undefined
+        }
+      })
+      .filter((record): record is { jobID?: string; pid?: number; createdAt?: string } => !!record)
+      .toSorted((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+      .find((record) => processIsAlive(record.pid))
+  } catch {
+    return undefined
+  }
+}
+
 function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) {
   const jobID = `cli-model-lane-${params.laneID}`
+  const active = activeCliModelLaunch(params.laneID)
+  if (active?.jobID) {
+    writeLaunchRecord("model-reuse", params.laneID, { jobID: active.jobID, pid: active.pid })
+    return Promise.resolve({ jobID: active.jobID })
+  }
   const record = {
     laneID: params.laneID,
     agent: params.subagent_type,

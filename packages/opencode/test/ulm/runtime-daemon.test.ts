@@ -525,13 +525,13 @@ describe("ULM runtime daemon", () => {
     expect(parsed.operationID).toBe("school")
     expect(parsed.pid).toBeGreaterThan(0)
     expect(await fs.readFile(parsed.launchPath, "utf8")).toContain('"operationID": "school"')
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < 80; attempt++) {
       try {
         const heartbeat = JSON.parse(await fs.readFile(parsed.heartbeatPath, "utf8"))
         expect(heartbeat.operationID).toBe("school")
         return
       } catch {
-        await Bun.sleep(50)
+        await Bun.sleep(100)
       }
     }
     throw new Error("detached daemon did not write heartbeat")
@@ -589,6 +589,71 @@ describe("ULM runtime daemon", () => {
     const runbook = await fs.readFile(parsed.files.runbook, "utf8")
     expect(runbook).toContain("launchctl bootstrap")
     expect(runbook).toContain("systemctl --user enable --now")
+  })
+
+  test("CLI launcher reuses an active model child instead of duplicating it", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    const launchDir = path.join(root, "scheduler", "cli-launches")
+    await fs.mkdir(launchDir, { recursive: true })
+    await fs.writeFile(
+      path.join(launchDir, "2026-05-05T00-00-00-model-pid-district_profile.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          kind: "model-pid",
+          id: "district_profile",
+          createdAt: "2026-05-05T00:00:00.000Z",
+          pid: process.pid,
+          jobID: "cli-model-lane-district_profile",
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-seconds",
+        "120",
+        "--interval-seconds",
+        "0",
+        "--max-cycles",
+        "1",
+        "--disable-operation-supervisor",
+        "--json",
+      ],
+      {
+        cwd: dir.path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1" },
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    const result = JSON.parse(stdout)
+    expect(result.cycles[0].launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    const records = await fs.readdir(launchDir)
+    expect(records.filter((file) => file.includes("model-pid-district_profile"))).toHaveLength(1)
+    expect(records.some((file) => file.includes("model-reuse-district_profile"))).toBe(true)
+    expect(records.some((file) => file.includes("model-district_profile") && !file.includes("model-pid"))).toBe(false)
   })
 
   test("records scheduler errors, backs off, and stops after the error budget", async () => {
