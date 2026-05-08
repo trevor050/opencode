@@ -15,6 +15,9 @@ export const Parameters = Schema.Struct({
   requireOutlineBudget: Schema.optional(Schema.Boolean).annotate({
     description: "Require the report to satisfy the report-outline target page budget.",
   }),
+  minOutlineTargetPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum target_pages value required in reports/report-outline.md for long-run handoff reports.",
+  }),
   minOutlineWordsPerPage: Schema.optional(Schema.Number).annotate({
     description: "Minimum words per target outline page when enforcing outline budget. Defaults to 300.",
   }),
@@ -68,6 +71,7 @@ export const ReportLintTool = Tool.define<typeof Parameters, Metadata, never>(
             requireReport: params.requireReport,
             minWords: params.minWords,
             requireOutlineBudget: params.requireOutlineBudget,
+            minOutlineTargetPages: params.minOutlineTargetPages,
             minOutlineWordsPerPage: params.minOutlineWordsPerPage,
             requireOutlineSections: params.requireOutlineSections,
             minOutlineSectionWords: params.minOutlineSectionWords,

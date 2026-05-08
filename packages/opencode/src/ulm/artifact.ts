@@ -234,6 +234,7 @@ export type ReportLintOptions = {
   requireReport?: boolean
   minWords?: number
   requireOutlineBudget?: boolean
+  minOutlineTargetPages?: number
   minOutlineWordsPerPage?: number
   requireOutlineSections?: boolean
   minOutlineSectionWords?: number
@@ -446,6 +447,7 @@ export type OperationStageGateOptions = Pick<
   | "requireReport"
   | "minWords"
   | "requireOutlineBudget"
+  | "minOutlineTargetPages"
   | "minOutlineWordsPerPage"
   | "requireOutlineSections"
   | "minOutlineSectionWords"
@@ -1520,6 +1522,7 @@ export async function buildOperationAudit(
     requireReport: options.requireReport,
     minWords: options.minWords,
     requireOutlineBudget: options.requireOutlineBudget,
+    minOutlineTargetPages: options.minOutlineTargetPages,
     minOutlineWordsPerPage: options.minOutlineWordsPerPage,
     requireOutlineSections: options.requireOutlineSections,
     minOutlineSectionWords: options.minOutlineSectionWords,
@@ -1654,6 +1657,7 @@ async function stageGateGaps(
       requireReport: options.requireReport,
       minWords: options.minWords,
       requireOutlineBudget: options.requireOutlineBudget,
+      minOutlineTargetPages: options.minOutlineTargetPages,
       minOutlineWordsPerPage: options.minOutlineWordsPerPage,
       requireOutlineSections: options.requireOutlineSections,
       minOutlineSectionWords: options.minOutlineSectionWords,
@@ -3592,7 +3596,7 @@ export async function lintReport(
     if (words < options.minWords)
       gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
   }
-  const requireOutlineBudget = options.requireOutlineBudget || options.minOutlineWordsPerPage
+  const requireOutlineBudget = options.requireOutlineBudget || options.minOutlineTargetPages || options.minOutlineWordsPerPage
   const requireOutlineSections =
     options.requireOutlineSections || options.minOutlineSectionWords || options.minOutlineSectionWordsPerPage
   if (requireOutlineBudget || requireOutlineSections) {
@@ -3601,6 +3605,11 @@ export async function lintReport(
       const targetPages = outlineTargetPages(outline)
       const sections = outlineSectionBudgets(outline)
       if (!targetPages) gaps.push("reports/report-outline.md with target_pages is required for outline budget lint")
+      if (targetPages && options.minOutlineTargetPages && targetPages < options.minOutlineTargetPages) {
+        gaps.push(
+          `reports/report-outline.md target_pages is too small: ${targetPages}, expected at least ${options.minOutlineTargetPages}`,
+        )
+      }
       if (targetPages && sections.length) {
         const sectionPages = sections.reduce((sum, section) => sum + section.pages, 0)
         if (sectionPages > targetPages * 1.25) {

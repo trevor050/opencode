@@ -392,6 +392,49 @@ describe("ULM artifact ledger", () => {
     expect(result.gaps).toContain("report misses outline budget: 152 words, expected at least 400 for 4 target pages")
   })
 
+  test("lints long-run reports with undersized outline target pages", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "reporting",
+      status: "running",
+      summary: "Reporting started.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const result = await lintReport(worktree, "school", {
+      requireReport: true,
+      requireOutlineBudget: true,
+      minOutlineTargetPages: 50,
+      minOutlineWordsPerPage: 10,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.gaps).toContain("reports/report-outline.md target_pages is too small: 4, expected at least 50")
+  })
+
   test("lints missing outline report sections even when total report is long", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {
@@ -1236,6 +1279,53 @@ describe("ULM artifact ledger", () => {
 
     expect(audit.ok).toBe(false)
     expect(audit.blockers).toContain("final_handoff: Executive Summary: outline section is missing")
+    expect(audit.recommendedTools).toContain("report_outline")
+  })
+
+  test("operation audit forwards minimum outline target pages", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff review.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const audit = await buildOperationAudit(worktree, "school", {
+      finalHandoff: true,
+      requireOutlineBudget: true,
+      minOutlineTargetPages: 50,
+      minOutlineWordsPerPage: 10,
+    })
+
+    expect(audit.ok).toBe(false)
+    expect(audit.blockers).toContain(
+      "final_handoff: reports/report-outline.md target_pages is too small: 4, expected at least 50",
+    )
     expect(audit.recommendedTools).toContain("report_outline")
   })
 
