@@ -329,6 +329,10 @@ export async function runRuntimeScheduler(
       reason = supervisor.reason ?? `supervisor requested ${supervisor.action}`
       break
     }
+    if (supervisor?.action === "continue_reporting") {
+      reason = supervisor.reason ?? "supervisor requested reporting continuation"
+      break
+    }
     if (!run) {
       stopped = true
       reason = "scheduler did not produce an operation run"

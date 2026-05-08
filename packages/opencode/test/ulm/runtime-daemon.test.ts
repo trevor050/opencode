@@ -109,6 +109,7 @@ describe("ULM runtime daemon", () => {
       maxRuntimeSeconds: 120,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
+      supervisorEnabled: false,
       now: fakeClock("2026-05-05T00:00:00.000Z", 10),
       sleep: async () => {},
       launchModelLane: async (params) => {
@@ -209,12 +210,68 @@ describe("ULM runtime daemon", () => {
       maxRuntimeSeconds: 20 * 60 * 60,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
+      supervisorEnabled: false,
       now: fakeClock("2026-05-05T00:00:00.000Z", 10),
       sleep: async () => {},
     })
 
     expect(result.stopped).toBe(false)
     expect(result.reason).toBe("target runtime window is still open; scheduler is idle")
+  })
+
+  test("enables supervisor review from the daemon target window even when the stored goal is short", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, {
+      operationID: "School",
+      objective: "Accelerated proof that is being rerun as a literal daemon.",
+      targetDurationHours: 0.02,
+    })
+    await writeOperationPlan(dir.path, {
+      operationID: "School",
+      phases: [
+        {
+          stage: "reporting",
+          objective: "Fix final report blockers.",
+          actions: ["Expand report"],
+          successCriteria: ["Final audit passes"],
+          subagents: ["report-writer"],
+          noSubagents: ["final audit decision"],
+        },
+      ],
+      reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary", "Run operation_audit"],
+    })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    await fs.mkdir(path.join(root, "deliverables"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify({ operationID: "school", ok: false, blockers: ["final_handoff: report is too short"] }, null, 2) + "\n",
+    )
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      supervisorIntervalMinutes: 0,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.cycles[0]?.supervisor?.enabled).toBe(true)
+    expect(result.cycles[0]?.supervisor?.ran).toBe(true)
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_reporting")
+    expect(result.cycles[0]?.supervisor?.reason).toBe("final operation audit has unresolved blockers")
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toBe("final operation audit has unresolved blockers")
   })
 
   test("recovers stale operation jobs before scheduler ticks", async () => {

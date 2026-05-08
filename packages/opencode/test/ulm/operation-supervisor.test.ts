@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
+import path from "path"
 import { writeCoverageContract, writeOperationDiscoveryCharter, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
+import { operationPath } from "@/ulm/artifact"
 import { superviseOperation } from "@/ulm/operation-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
@@ -150,5 +152,49 @@ describe("ULM operation supervisor", () => {
 
     const coverageDecision = review.decisions.find((item) => item.action === "continue_coverage")
     expect(coverageDecision?.requiredNextTool).toBe("operation_run")
+  })
+
+  test("continues reporting when a final audit exists but has blockers", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized overnight assessment", targetDurationHours: 20 })
+    await writeMinimalPlan(dir.path)
+    const graph = await writeOperationGraph(dir.path, { operationID: "school" })
+    const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    parsed.lanes = parsed.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(graph.json, JSON.stringify(parsed, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "school",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "school")
+    await fs.mkdir(path.join(root, "reports"), { recursive: true })
+    await fs.writeFile(path.join(root, "reports", "report-outline.md"), "# Outline\n\n- target_pages: 4\n")
+    await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
+    await fs.writeFile(path.join(root, "deliverables", "final", "manifest.json"), JSON.stringify({ operationID: "school" }) + "\n")
+    await fs.mkdir(path.join(root, "deliverables", "stage-gates"), { recursive: true })
+    await fs.writeFile(path.join(root, "deliverables", "stage-gates", "handoff.json"), JSON.stringify({ ok: true }) + "\n")
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          ok: false,
+          blockers: [
+            "final_handoff: reports/report-outline.md target_pages is too small: 4, expected at least 50",
+            "final_handoff: deliverables/final/report.pdf has 11 pages, expected at least 50",
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
+
+    const reportingDecision = review.decisions.find((item) => item.reason === "final operation audit has unresolved blockers")
+    expect(reportingDecision?.action).toBe("continue_reporting")
+    expect(reportingDecision?.requiredNextTool).toBe("report_lint")
+    expect(reportingDecision?.requiredArtifacts).toContain("deliverables/operation-audit.json")
   })
 })

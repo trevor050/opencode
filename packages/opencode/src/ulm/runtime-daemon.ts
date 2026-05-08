@@ -188,7 +188,7 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         launchModelLane: input.launchModelLane,
         launchCommandWorkUnit: input.launchCommandWorkUnit,
         commandWorkUnitLimit: input.commandWorkUnitLimit,
-        supervisorEnabled: input.supervisorEnabled,
+        supervisorEnabled: input.supervisorEnabled ?? maxRuntimeSeconds >= 60 * 60,
         supervisorIntervalMinutes: input.supervisorIntervalMinutes,
         lastSupervisorReviewAt,
         supervisorReviewKind: input.supervisorReviewKind,
