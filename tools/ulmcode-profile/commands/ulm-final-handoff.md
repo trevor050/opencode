@@ -11,8 +11,9 @@ Process:
 4. call `report_render` if final deliverables are missing or stale
 5. call `runtime_summary`
 6. call `report_lint` with the same final/outline/finding gates again
-7. call `operation_audit` with `finalHandoff: true` and the same outline/finding gates used for final lint, including `minOutlineTargetPages` for long reports
-8. summarize final paths in `deliverables/final/`, audit paths in `deliverables/`, and any residual risk
+7. if the plan uses provided/authenticated credentials, confirm the credential vault review was submitted and only redacted credential IDs appear in artifacts
+8. call `operation_audit` with `finalHandoff: true` and the same outline/finding gates used for final lint, including `minOutlineTargetPages` for long reports
+9. summarize final paths in `deliverables/final/`, audit paths in `deliverables/`, and any residual risk
 
 Do not claim final handoff is ready unless the second `report_lint` and `operation_audit` both return ok.
 
