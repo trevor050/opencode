@@ -94,6 +94,11 @@ function countItems(input: unknown) {
   return Array.isArray(input) ? input.length : 0
 }
 
+function timestamp(value: string | undefined) {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 function workProofFromHeartbeat(heartbeat: {
   cycles?: Array<{
     launchedJobs?: unknown[]
@@ -259,6 +264,8 @@ export async function auditLiteralRunReadiness(
 
   const heartbeat = await readJson<{
     elapsedSeconds?: number
+    endedAt?: string
+    updatedAt?: string
     reason?: string
     cycles?: Array<{
       launchedJobs?: unknown[]
@@ -274,6 +281,7 @@ export async function auditLiteralRunReadiness(
     recoveredJobs?: unknown[]
   }>(daemonHeartbeatPath)
   const literalElapsedSeconds = heartbeat?.elapsedSeconds
+  const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
   checks.push(
@@ -308,14 +316,16 @@ export async function auditLiteralRunReadiness(
       path: finalManifestPath,
     }),
   )
-  const finalAudit = await readJson<{ ok?: boolean; blockers?: unknown[] }>(finalAuditPath)
+  const finalAudit = await readJson<{ ok?: boolean; blockers?: unknown[]; generatedAt?: string }>(finalAuditPath)
+  const finalAuditTime = timestamp(finalAudit?.generatedAt)
+  const finalAuditFresh = heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)
   checks.push(
     check({
       id: "final-operation-audit",
-      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 ? "ok" : "fail",
+      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 && finalAuditFresh ? "ok" : "fail",
       required: true,
       detail: finalAudit
-        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}`
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}`
         : "final operation audit is missing",
       path: finalAuditPath,
     }),

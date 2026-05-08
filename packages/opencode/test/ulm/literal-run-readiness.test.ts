@@ -8,7 +8,7 @@ import { writeOperationGraph } from "@/ulm/operation-graph"
 import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
-async function writeFinalHandoffProof(worktree: string, operationID: string) {
+async function writeFinalHandoffProof(worktree: string, operationID: string, generatedAt?: string) {
   const root = operationPath(worktree, operationID)
   await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
   await fs.writeFile(
@@ -17,7 +17,7 @@ async function writeFinalHandoffProof(worktree: string, operationID: string) {
   )
   await fs.writeFile(
     path.join(root, "deliverables", "operation-audit.json"),
-    JSON.stringify({ operationID, ok: true, blockers: [] }, null, 2) + "\n",
+    JSON.stringify({ operationID, ok: true, blockers: [], generatedAt }, null, 2) + "\n",
   )
 }
 
@@ -175,6 +175,36 @@ describe("ULM literal run readiness audit", () => {
     expect(result.checks.find((item) => item.id === "service-supervisor")?.status).toBe("fail")
     expect(result.checks.find((item) => item.id === "service-supervisor")?.required).toBe(false)
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("ok")
+  })
+
+  test("rejects final audits generated before the daemon heartbeat", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Stale Audit"
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+
+    const schedulerDir = path.join(operationPath(dir.path, operationID), "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "stale-audit",
+          elapsedSeconds: 20 * 60 * 60,
+          endedAt: "2026-05-08T20:00:00.000Z",
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T19:00:00.000Z")
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.status).toBe("fail")
+    expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain("fresh=false")
   })
 
   test("runs through the operator script and supports strict mode", async () => {
