@@ -153,4 +153,33 @@ describe("ULM literal run readiness audit", () => {
     expect(parsed.status).toBe("blocked")
     expect(parsed.auditPath).toContain("literal-run-readiness.json")
   })
+
+  test("operator script resolves the repo worktree when launched from packages/opencode", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Nested Package Launch"
+    const script = path.join(__dirname, "..", "..", "script", "ulm-literal-run-readiness.ts")
+    const nestedPackageDir = path.join(dir.path, "packages", "opencode")
+    await fs.mkdir(nestedPackageDir, { recursive: true })
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+
+    const proc = Bun.spawn(["bun", "run", script, operationID, "--json", "--strict"], {
+      cwd: nestedPackageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(1)
+    expect(stderr).toBe("")
+    const parsed = JSON.parse(stdout)
+    expect(parsed.status).toBe("incomplete")
+    expect(parsed.checks.find((item: { id?: string; status?: string }) => item.id === "operation-graph")?.status).toBe(
+      "ok",
+    )
+    expect(parsed.auditPath).toStartWith(dir.path)
+  })
 })

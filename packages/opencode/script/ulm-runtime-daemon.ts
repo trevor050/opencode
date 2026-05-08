@@ -9,6 +9,7 @@ import { fileURLToPath } from "url"
 import type { OperationRunResult } from "../src/ulm/operation-run"
 import type { RuntimeDaemonInput } from "../src/ulm/runtime-daemon"
 import { buildCommandPlan, writeCommandPlan } from "../src/ulm/tool-manifest"
+import { resolveScriptWorktree } from "./ulm-script-worktree"
 
 type Args = {
   operationID: string
@@ -162,11 +163,12 @@ function parseArgs(argv: string[]): Args {
 const args = parseArgs(process.argv.slice(2))
 const operationID = slug(args.operationID, "operation")
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..")
+const worktree = resolveScriptWorktree()
 
 if (args.supervisor) {
   const result = await writeRuntimeSupervisor({
     operationID,
-    worktree: process.cwd(),
+    worktree,
     bunPath: process.execPath,
     scriptPath: fileURLToPath(import.meta.url),
     durationSeconds: args.durationSeconds,
@@ -212,14 +214,14 @@ function childArgv(argv: string[]) {
 }
 
 if (args.detach) {
-  const daemonDir = path.join(operationPath(process.cwd(), operationID), "scheduler")
+  const daemonDir = path.join(operationPath(worktree, operationID), "scheduler")
   const logPath = path.resolve(args.detachLog ?? path.join(daemonDir, "daemon-process.log"))
   const launchPath = path.join(daemonDir, "daemon-launch.json")
   mkdirSync(path.dirname(logPath), { recursive: true })
   mkdirSync(daemonDir, { recursive: true })
   const logFD = openSync(logPath, "a")
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...childArgv(process.argv.slice(2))], {
-    cwd: process.cwd(),
+    cwd: worktree,
     detached: true,
     stdio: ["ignore", logFD, logFD],
     env: process.env,
@@ -261,7 +263,7 @@ function formatDetachedLaunch(launch: {
 }
 
 function launchRecordPath(kind: string, id: string) {
-  const dir = path.join(operationPath(process.cwd(), operationID), "scheduler", "cli-launches")
+  const dir = path.join(operationPath(worktree, operationID), "scheduler", "cli-launches")
   mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")
   return path.join(dir, `${stamp}-${kind}-${id}.json`)
@@ -296,7 +298,7 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
       path.join(packageRoot, "src", "index.ts"),
       "run",
       "--dir",
-      process.cwd(),
+      worktree,
       "--agent",
       params.subagent_type,
       "--title",
@@ -319,7 +321,7 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
 async function launchCommandWorkUnit(params: Parameters<NonNullable<RuntimeDaemonInput["launchCommandWorkUnit"]>>[0]) {
   const jobID = `cli-command-${params.workUnitID ?? params.profileID}`
   const plan = await buildCommandPlan({
-    worktree: process.cwd(),
+    worktree,
     operationID,
     profileID: params.profileID,
     variables: params.variables,
@@ -366,7 +368,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 try {
-  const result = await runRuntimeDaemon(process.cwd(), {
+  const result = await runRuntimeDaemon(worktree, {
     operationID: args.operationID,
     maxRuntimeSeconds: args.durationSeconds,
     cycleIntervalSeconds: args.intervalSeconds,
