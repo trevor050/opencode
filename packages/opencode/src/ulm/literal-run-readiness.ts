@@ -71,7 +71,7 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
 }
 
 const runtimeProofChecks = new Set(["literal-runtime-proof", "literal-work-proof"])
-const handoffProofChecks = new Set(["final-package", "final-operation-audit"])
+const handoffProofChecks = new Set(["final-package", "final-operation-audit", "credential-handoff-proof"])
 
 function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | undefined, targetElapsedSeconds: number) {
   const requiredSetupFailed = checks.some(
@@ -190,6 +190,7 @@ export async function auditLiteralRunReadiness(
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
   const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
+  const credentialReviewPath = path.join(root, "credentials", "review-submission.json")
   const auditPath = path.join(root, "scheduler", "literal-run-readiness.json")
   const markdownPath = path.join(root, "scheduler", "literal-run-readiness.md")
   const checks: LiteralRunCheck[] = []
@@ -198,6 +199,9 @@ export async function auditLiteralRunReadiness(
   const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
   const requiredAuditMinOutlineTargetPages = (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
   const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
+  const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
+  const credentialReviewCount = countItems(credentialReview?.credentials)
+  const credentialReviewTime = timestamp(credentialReview?.submittedAt)
   checks.push(
     check({
       id: "operation-graph",
@@ -265,6 +269,17 @@ export async function auditLiteralRunReadiness(
       path: modelRouteAuditPath,
     }),
   )
+  checks.push(
+    check({
+      id: "credential-handoff-proof",
+      status: !requiresCredentialHandoff || (credentialReview?.submittedAt && credentialReviewCount > 0) ? "ok" : "fail",
+      required: requiresCredentialHandoff,
+      detail: requiresCredentialHandoff
+        ? `submitted_at=${credentialReview?.submittedAt ?? "missing"}; credential_count=${credentialReviewCount}`
+        : "credentialed plan proof is not required",
+      path: credentialReviewPath,
+    }),
+  )
 
   const heartbeat = await readJson<{
     elapsedSeconds?: number
@@ -330,7 +345,9 @@ export async function auditLiteralRunReadiness(
     }
   }>(finalAuditPath)
   const finalAuditTime = timestamp(finalAudit?.generatedAt)
-  const finalAuditFresh = heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)
+  const finalAuditFresh =
+    (heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)) &&
+    (!requiresCredentialHandoff || credentialReviewTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= credentialReviewTime))
   const finalAuditMinOutlineTargetPages = finalAudit?.checks?.finalHandoff?.gates?.minOutlineTargetPages
   const finalAuditGatesOk =
     requiredAuditMinOutlineTargetPages === undefined ||
