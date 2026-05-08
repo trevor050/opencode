@@ -91,6 +91,22 @@ async function writeFinalHandoffProof(
   )
 }
 
+async function writeDaemonContinuityLog(
+  schedulerDir: string,
+  start = "2026-05-05T00:00:00.000Z",
+  middle = "2026-05-05T10:00:00.000Z",
+  end = "2026-05-05T20:00:00.000Z",
+) {
+  await fs.writeFile(
+    path.join(schedulerDir, "daemon.jsonl"),
+    [
+      { tick: 1, startedAt: start, updatedAt: start, elapsedSeconds: 0 },
+      { tick: 40, startedAt: start, updatedAt: middle, elapsedSeconds: 10 * 60 * 60 },
+      { tick: 80, startedAt: start, updatedAt: end, endedAt: end, elapsedSeconds: 20 * 60 * 60 },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+  )
+}
+
 describe("ULM literal run readiness audit", () => {
   test("separates accelerated burn-in from literal wall-clock proof", async () => {
     await using dir = await tmpdir({ git: true })
@@ -142,7 +158,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-05T20:05:00.000Z")
 
     const passed = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -181,13 +197,55 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-05T21:05:00.000Z")
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
     expect(result.status).toBe("incomplete")
     expect(result.checks.find((item) => item.id === "literal-runtime-proof")?.status).toBe("ok")
     expect(result.checks.find((item) => item.id === "literal-work-proof")?.status).toBe("fail")
+  })
+
+  test("rejects one-line daemon logs even when final elapsed time claims 20h", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "One Line Daemon"
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 20 })
+    await writeRuntimeSupervisor({
+      operationID,
+      worktree: dir.path,
+      bunPath: "bun",
+      scriptPath: path.join(__dirname, "..", "..", "script", "ulm-runtime-daemon.ts"),
+      durationSeconds: 20 * 60 * 60,
+      intervalSeconds: 60,
+      schedulerCyclesPerTick: 1,
+      supervisor: "all",
+    })
+
+    const schedulerDir = path.join(operationPath(dir.path, operationID), "scheduler")
+    await fs.mkdir(schedulerDir, { recursive: true })
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon-heartbeat.json"),
+      JSON.stringify(
+        {
+          operationID: "one-line-daemon",
+          elapsedSeconds: 20 * 60 * 60,
+          reason: "runtime window elapsed",
+          cycles: [{ launchedJobs: ["job-recon"], run: { syncedJobs: ["job-recon"] } }],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.writeFile(
+      path.join(schedulerDir, "daemon.jsonl"),
+      JSON.stringify({ tick: 80, updatedAt: "2026-05-05T20:00:00.000Z", elapsedSeconds: 20 * 60 * 60 }) + "\n",
+    )
+    await writeFinalHandoffProof(dir.path, operationID, "2026-05-05T21:05:00.000Z")
+
+    const result = await auditLiteralRunReadiness(dir.path, { operationID })
+    expect(result.status).toBe("incomplete")
+    expect(result.checks.find((item) => item.id === "literal-runtime-proof")?.status).toBe("ok")
+    expect(result.checks.find((item) => item.id === "daemon-heartbeat-continuity")?.status).toBe("fail")
   })
 
   test("counts CLI launch records inside the daemon window as work proof across heartbeat rewrites", async () => {
@@ -223,7 +281,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await fs.writeFile(
       path.join(schedulerDir, "cli-launches", "2026-05-05T00-00-00-model-report_repair.json"),
       JSON.stringify(
@@ -278,7 +336,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await fs.writeFile(
       path.join(schedulerDir, "cli-launches", "2026-05-05T00-30-00-model-report_repair.json"),
       JSON.stringify(
@@ -322,7 +380,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
     expect(result.status).toBe("incomplete")
@@ -350,7 +408,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID)
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -381,7 +439,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
 
     const finalDir = path.join(root, "deliverables", "final")
     await fs.mkdir(finalDir, { recursive: true })
@@ -430,7 +488,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T19:00:00.000Z")
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -466,7 +524,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", {})
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -504,7 +562,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", { minOutlineTargetPages: 50 })
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -540,7 +598,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", {})
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
@@ -578,7 +636,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z")
     await fs.writeFile(
       path.join(root, "reports", "report-outline.md"),
@@ -626,7 +684,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
     await fs.writeFile(
       path.join(root, "deliverables", "final", "manifest.json"),
@@ -691,7 +749,7 @@ describe("ULM literal run readiness audit", () => {
         2,
       ) + "\n",
     )
-    await fs.writeFile(path.join(schedulerDir, "daemon.jsonl"), JSON.stringify({ tick: 1 }) + "\n")
+    await writeDaemonContinuityLog(schedulerDir)
     await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
     await fs.writeFile(
       path.join(root, "deliverables", "final", "manifest.json"),

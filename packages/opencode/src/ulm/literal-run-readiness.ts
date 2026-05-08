@@ -70,7 +70,7 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
   return input
 }
 
-const runtimeProofChecks = new Set(["literal-runtime-proof", "literal-work-proof"])
+const runtimeProofChecks = new Set(["literal-runtime-proof", "daemon-heartbeat-continuity", "literal-work-proof"])
 const handoffProofChecks = new Set([
   "final-package",
   "final-operation-audit",
@@ -157,6 +157,37 @@ function workProofFromHeartbeat(heartbeat: {
       cycleCounts.failedWorkUnits +
       countItems(heartbeat.recoveredJobs),
   }
+}
+
+function parseDaemonLogEntries(log: string | undefined) {
+  if (!log?.trim()) return []
+  return log
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line) as { startedAt?: string; updatedAt?: string; endedAt?: string; elapsedSeconds?: number }
+        return [parsed]
+      } catch {
+        return []
+      }
+    })
+}
+
+function daemonLogContinuity(log: string | undefined, targetElapsedSeconds: number) {
+  const entries = parseDaemonLogEntries(log)
+  const times = entries.flatMap((entry) => [timestamp(entry.startedAt), timestamp(entry.updatedAt), timestamp(entry.endedAt)]).filter((time): time is number => time !== undefined)
+  const elapsedValues = entries.map((entry) => entry.elapsedSeconds).filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  const firstTime = times.length ? Math.min(...times) : undefined
+  const lastTime = times.length ? Math.max(...times) : undefined
+  const spanSeconds = firstTime !== undefined && lastTime !== undefined ? (lastTime - firstTime) / 1000 : undefined
+  const maxElapsed = elapsedValues.length ? Math.max(...elapsedValues) : undefined
+  const continuous =
+    entries.length >= 3 &&
+    ((spanSeconds !== undefined && spanSeconds >= targetElapsedSeconds) ||
+      (maxElapsed !== undefined && maxElapsed >= targetElapsedSeconds))
+  return { entries: entries.length, spanSeconds, maxElapsed, continuous }
 }
 
 async function cliLaunchProof(root: string, input: { startedAt?: number; endedAt?: number }) {
@@ -387,6 +418,7 @@ export async function auditLiteralRunReadiness(
   const heartbeatStartedAt = timestamp(heartbeat?.startedAt)
   const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
+  const continuity = daemonLogContinuity(log, targetElapsedSeconds)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
   const cliProof = await cliLaunchProof(root, { startedAt: heartbeatStartedAt, endedAt: heartbeatTime })
   const combinedWorkProof = workProof
@@ -406,6 +438,15 @@ export async function auditLiteralRunReadiness(
         ? `elapsed_seconds=${literalElapsedSeconds ?? "missing"}; reason=${heartbeat.reason ?? "missing"}; log=${log?.trim() ? "present" : "missing"}`
         : "daemon heartbeat is missing; no wall-clock run proof exists",
       path: daemonHeartbeatPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "daemon-heartbeat-continuity",
+      status: continuity.continuous ? "ok" : "fail",
+      required: true,
+      detail: `entries=${continuity.entries}; span_seconds=${continuity.spanSeconds ?? "missing"}; max_elapsed_seconds=${continuity.maxElapsed ?? "missing"}`,
+      path: daemonLogPath,
     }),
   )
   checks.push(
