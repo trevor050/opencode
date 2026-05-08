@@ -9,6 +9,7 @@ import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
 async function writeOperationalPreflight(root: string, operationID: string) {
+  await writeDurationProof(root, operationID)
   await fs.mkdir(path.join(root, "tools"), { recursive: true })
   await fs.writeFile(
     path.join(root, "tools", "tool-preflight.json"),
@@ -19,6 +20,27 @@ async function writeOperationalPreflight(root: string, operationID: string) {
     path.join(root, "deliverables", "model-route-audit.json"),
     JSON.stringify({ operationID, ok: true }, null, 2) + "\n",
   )
+}
+
+async function writeDurationProof(root: string, operationID: string) {
+  await fs.mkdir(path.join(root, "goals"), { recursive: true })
+  try {
+    await fs.access(path.join(root, "goals", "operation-goal.json"))
+  } catch {
+    await fs.writeFile(
+      path.join(root, "goals", "operation-goal.json"),
+      JSON.stringify({ operationID, targetDurationHours: 20 }, null, 2) + "\n",
+    )
+  }
+  await fs.mkdir(path.join(root, "plans"), { recursive: true })
+  try {
+    await fs.access(path.join(root, "plans", "operation-plan.json"))
+  } catch {
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify({ operationID, timeBudget: { targetHours: 20 }, phases: [] }, null, 2) + "\n",
+    )
+  }
 }
 
 async function writeFinalHandoffProof(
@@ -522,7 +544,8 @@ describe("ULM literal run readiness audit", () => {
     await writeFinalHandoffProof(dir.path, operationID, "2026-05-08T20:05:00.000Z", {})
 
     const result = await auditLiteralRunReadiness(dir.path, { operationID })
-    expect(result.status).toBe("incomplete")
+    expect(result.status).toBe("blocked")
+    expect(result.checks.find((item) => item.id === "duration-plan-proof")?.status).toBe("fail")
     expect(result.checks.find((item) => item.id === "final-operation-audit")?.detail).toContain(
       "required_min_outline_target_pages=50",
     )

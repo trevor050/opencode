@@ -225,6 +225,7 @@ export async function auditLiteralRunReadiness(
   const targetElapsedSeconds = Math.max(1, Math.floor(input.targetElapsedSeconds ?? 20 * 60 * 60))
   const root = operationPath(worktree, operationID)
   const graphPath = path.join(root, "plans", "operation-graph.json")
+  const operationGoalPath = path.join(root, "goals", "operation-goal.json")
   const operationPlanPath = path.join(root, "plans", "operation-plan.json")
   const supervisorManifestPath = path.join(root, "scheduler", "supervisor", "supervisor-manifest.json")
   const daemonHeartbeatPath = path.join(root, "scheduler", "daemon-heartbeat.json")
@@ -241,8 +242,10 @@ export async function auditLiteralRunReadiness(
   const checks: LiteralRunCheck[] = []
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
+  const operationGoal = await readJson<{ targetDurationHours?: number }>(operationGoalPath)
   const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
   const requiresLongRunProof = targetElapsedSeconds >= 20 * 60 * 60
+  const targetHours = targetElapsedSeconds / (60 * 60)
   const requiredAuditMinOutlineTargetPages =
     requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
   const requiredAuditMinPdfPages = requiredAuditMinOutlineTargetPages
@@ -259,6 +262,21 @@ export async function auditLiteralRunReadiness(
       required: true,
       detail: graph ? `safety=${graph.safetyMode}; lanes=${graph.lanes?.length ?? 0}` : "operation graph is missing",
       path: graphPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "duration-plan-proof",
+      status:
+        !requiresLongRunProof ||
+        ((operationGoal?.targetDurationHours ?? 0) >= targetHours && (operationPlan?.timeBudget?.targetHours ?? 0) >= targetHours)
+          ? "ok"
+          : "fail",
+      required: requiresLongRunProof,
+      detail: requiresLongRunProof
+        ? `goal_target_hours=${operationGoal?.targetDurationHours ?? "missing"}; plan_target_hours=${operationPlan?.timeBudget?.targetHours ?? "missing"}; required_hours=${targetHours}`
+        : "duration-sized plan proof is not required",
+      path: operationPlanPath,
     }),
   )
 
