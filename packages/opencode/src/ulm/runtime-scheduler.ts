@@ -21,6 +21,7 @@ import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNe
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
 type SchedulerCommandParams = WorkQueueNextResult["units"][number]["commandSupervise"]
+const REPORT_REPAIR_LANE_ID = "report_repair"
 
 export type RuntimeSchedulerInput = {
   operationID: string
@@ -45,6 +46,8 @@ export type RuntimeSchedulerSupervisorSummary = {
   action?: OperationSupervisorAction
   reason?: string
   requiredNextTool?: string
+  operatorMessage?: string
+  modelPrompt?: string
   nextTools: string[]
   blocking: boolean
   generatedAt?: string
@@ -107,6 +110,41 @@ function supervisorBlocks(action: OperationSupervisorAction | undefined) {
     action !== "handoff_ready" &&
     action !== "release_handoff"
   )
+}
+
+function hasActiveReportRepairJob(input: { operationID: string; backgroundJobs?: BackgroundJob.Info[] }) {
+  return (input.backgroundJobs ?? []).some(
+    (job) =>
+      job.status === "running" &&
+      job.metadata?.operationID === input.operationID &&
+      job.metadata?.laneID === REPORT_REPAIR_LANE_ID,
+  )
+}
+
+function reportRepairTaskParams(
+  operationID: string,
+  supervisor: RuntimeSchedulerSupervisorSummary,
+): SchedulerLaunchParams {
+  const nextTool = supervisor.requiredNextTool ?? "report_lint"
+  const prompt = [
+    `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
+    supervisor.modelPrompt,
+    `Required next tool: ${nextTool}.`,
+    "Read deliverables/operation-audit.json first, then fix every listed blocker.",
+    "Use the report pipeline tools as needed: report_outline for page/section budget issues, report_lint for content gaps, report_render for final HTML/PDF packaging, runtime_summary for accounting, and operation_audit to prove the final gates.",
+    "Do not mark the operation ready until operation_audit passes with the same strict handoff gates.",
+  ]
+    .filter((line): line is string => !!line)
+    .join("\n\n")
+  return {
+    description: "Repair final report audit",
+    prompt,
+    subagent_type: "report-writer",
+    operationID,
+    laneID: REPORT_REPAIR_LANE_ID,
+    modelRoute: "openai/gpt-5.5-fast",
+    background: true,
+  }
 }
 
 async function defaultSupervisorEnabled(worktree: string, operationID: string, configured: boolean | undefined) {
@@ -213,6 +251,8 @@ async function maybeRunSupervisor(
     action,
     reason: primary?.reason,
     requiredNextTool: primary?.requiredNextTool,
+    operatorMessage: primary?.operatorMessage,
+    modelPrompt: primary?.modelPrompt,
     nextTools,
     blocking: supervisorBlocks(action),
     generatedAt: review.generatedAt,
@@ -263,7 +303,12 @@ export async function runRuntimeScheduler(
     let run: OperationRunResult | undefined
     let launchedJobs: string[] = []
     let launchedCommandJobs: string[] = []
-    if (!supervisor?.blocking) {
+    if (supervisor?.action === "continue_reporting" && input.launchModelLane) {
+      const launched = hasActiveReportRepairJob({ operationID, backgroundJobs: input.backgroundJobs })
+        ? undefined
+        : await input.launchModelLane(reportRepairTaskParams(operationID, supervisor))
+      launchedJobs = launched?.jobID ? [launched.jobID] : []
+    } else if (!supervisor?.blocking) {
       run = await runOperationStep(worktree, {
         operationID,
         backgroundJobs: input.backgroundJobs,
@@ -272,7 +317,7 @@ export async function runRuntimeScheduler(
       launchedJobs = launched?.jobID ? [launched.jobID] : []
     }
     const commandUnits =
-      !supervisor?.blocking && input.launchCommandWorkUnit
+      !supervisor?.blocking && supervisor?.action !== "continue_reporting" && input.launchCommandWorkUnit
         ? await nextWorkUnits(worktree, {
             operationID,
             limit: input.commandWorkUnitLimit ?? 2,
