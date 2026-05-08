@@ -135,14 +135,17 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   const targetDurationHours = Math.round((input.targetElapsedSeconds / 60 / 60) * 100) / 100
   const root = operationPath(worktree, operationID)
   const scenarioPath = path.join(root, "burnin", "burnin-supervisor-scenario.json")
-  const goal = await createOperationGoal(worktree, {
+  const scenarioWorktree = path.join(root, "burnin", "scenario-worktree")
+  await fs.rm(scenarioWorktree, { recursive: true, force: true })
+  const goal = await createOperationGoal(scenarioWorktree, {
     operationID,
     objective: "Accelerated proof for authorized overnight ULM supervisor operation.",
     targetDurationHours,
   })
-  await fs.mkdir(path.join(root, "plans"), { recursive: true })
+  const scenarioRoot = operationPath(scenarioWorktree, operationID)
+  await fs.mkdir(path.join(scenarioRoot, "plans"), { recursive: true })
   await fs.writeFile(
-    path.join(root, "plans", "discovery-charter.md"),
+    path.join(scenarioRoot, "plans", "discovery-charter.md"),
     [
       "# Discovery Charter",
       "",
@@ -153,7 +156,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       "",
     ].join("\n"),
   )
-  await writeOperationPlan(worktree, {
+  await writeOperationPlan(scenarioWorktree, {
     operationID,
     phases: [
       {
@@ -180,8 +183,8 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       "operation_audit finalHandoff=true",
     ],
   })
-  await writeOperationGraph(worktree, { operationID, budgetUSD: 10 })
-  const graphPath = path.join(root, "plans", "operation-graph.json")
+  await writeOperationGraph(scenarioWorktree, { operationID, budgetUSD: 10 })
+  const graphPath = path.join(scenarioRoot, "plans", "operation-graph.json")
   const graph = JSON.parse(await fs.readFile(graphPath, "utf8"))
   if (!graph.lanes.some((lane: { id?: string }) => lane.id === "supervisor")) {
     graph.lanes.push({
@@ -200,13 +203,13 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
     })
     await fs.writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n")
   }
-  await writeJson(path.join(root, "supervisor", "supervisor-review-startup.json"), {
+  await writeJson(path.join(scenarioRoot, "supervisor", "supervisor-review-startup.json"), {
     operationID,
     reviewKind: "startup",
     generatedAt: virtualTime(goal.goal.createdAt, 0),
     decisions: [{ action: "recover", reason: "stale command lane requires recovery before new launch", requiredNextTool: "operation_resume" }],
   })
-  await writeJson(path.join(root, "work-queue.json"), {
+  await writeJson(path.join(scenarioRoot, "work-queue.json"), {
     operationID,
     generatedAt: virtualTime(goal.goal.createdAt, 0),
     units: [
@@ -221,7 +224,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       },
     ],
   })
-  await writeJson(path.join(root, "tool-inventory", "tool-inventory.json"), {
+  await writeJson(path.join(scenarioRoot, "tool-inventory", "tool-inventory.json"), {
     operationID,
     generatedAt: virtualTime(goal.goal.createdAt, input.targetElapsedSeconds),
     counts: { total: 4, installed: 3, missing: 1, highValueMissing: 1 },
@@ -233,7 +236,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
     ],
     nextActions: ["Use tool_acquire only after operator authorization."],
   })
-  await writeRuntimeSummary(worktree, {
+  await writeRuntimeSummary(scenarioWorktree, {
     operationID,
     modelCalls: { total: input.completed ? 80 : 3 },
     usage: { totalTokens: input.completed ? 120_000 : 4_500, costUSD: input.completed ? 6 : 0.5, budgetUSD: 10 },
@@ -246,19 +249,19 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       },
     ],
   })
-  await writeJson(path.join(root, "deliverables", "final", "manifest.json"), { operationID, generatedBy: "burnin-harness" })
-  await writeJson(path.join(root, "deliverables", "stage-gates", "handoff.json"), { operationID, stage: "handoff", ok: true })
-  const beforeAudit = await completeOperationGoal(worktree, { operationID })
+  await writeJson(path.join(scenarioRoot, "deliverables", "final", "manifest.json"), { operationID, generatedBy: "burnin-harness" })
+  await writeJson(path.join(scenarioRoot, "deliverables", "stage-gates", "handoff.json"), { operationID, stage: "handoff", ok: true })
+  const beforeAudit = await completeOperationGoal(scenarioWorktree, { operationID })
   if (input.completed) {
-    await writeJson(path.join(root, "deliverables", "operation-audit.json"), { operationID, ok: true, generatedBy: "burnin-harness" })
-    await writeJson(path.join(root, "supervisor", "supervisor-review-handoff.json"), {
+    await writeJson(path.join(scenarioRoot, "deliverables", "operation-audit.json"), { operationID, ok: true, generatedBy: "burnin-harness" })
+    await writeJson(path.join(scenarioRoot, "supervisor", "supervisor-review-handoff.json"), {
       operationID,
       reviewKind: "pre_handoff",
       generatedAt: virtualTime(goal.goal.createdAt, input.targetElapsedSeconds),
       decisions: [{ action: "handoff_ready", reason: "final runtime and audit artifacts are present" }],
     })
   }
-  const afterAudit = input.completed ? await completeOperationGoal(worktree, { operationID }) : undefined
+  const afterAudit = input.completed ? await completeOperationGoal(scenarioWorktree, { operationID }) : undefined
   const proof: BurnInSupervisorScenarioProof = {
     operationGoalCreated: goal.created || !!goal.goal,
     targetDurationHours,

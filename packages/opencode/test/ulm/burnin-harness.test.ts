@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { runBurnInHarness } from "@/ulm/burnin-harness"
+import { operationPath } from "@/ulm/artifact"
+import { writeOperationGraph } from "@/ulm/operation-graph"
 import { tmpdir } from "../fixture/fixture"
 
 describe("ULM accelerated burn-in harness", () => {
@@ -105,5 +107,27 @@ describe("ULM accelerated burn-in harness", () => {
     expect(parsed.proof.supervisorScenario.completionBlockedBeforeAudit).toBe(true)
     expect(parsed.proof.supervisorScenario.goalCompletedAfterAudit).toBe(true)
     expect(await fs.readFile(parsed.proofPath, "utf8")).toContain('"elapsedTargetSeconds": 120')
+  })
+
+  test("does not mutate the target operation graph while writing supervisor proof", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Existing Operation"
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 10 })
+    const graphPath = path.join(operationPath(dir.path, operationID), "plans", "operation-graph.json")
+    const before = await fs.readFile(graphPath, "utf8")
+
+    const result = await runBurnInHarness(dir.path, {
+      operationID,
+      targetElapsedSeconds: 60,
+      tickSeconds: 60,
+      reset: true,
+    })
+
+    expect(result.audit.status).toBe("passed")
+    expect(await fs.readFile(graphPath, "utf8")).toBe(before)
+    expect(result.proof.supervisorScenario.proofPath).toBe(
+      path.join(operationPath(dir.path, operationID), "burnin", "burnin-supervisor-scenario.json"),
+    )
+    await fs.access(path.join(operationPath(dir.path, operationID), "burnin", "scenario-worktree"))
   })
 })
