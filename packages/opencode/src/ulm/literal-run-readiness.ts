@@ -159,17 +159,33 @@ function workProofFromHeartbeat(heartbeat: {
   }
 }
 
-async function cliLaunchProof(root: string) {
+async function cliLaunchProof(root: string, input: { startedAt?: number; endedAt?: number }) {
   const dir = path.join(root, "scheduler", "cli-launches")
   try {
     const files = await fs.readdir(dir)
-    return files.reduce(
-      (acc, file) => ({
-        modelLaunches: acc.modelLaunches + (file.includes("-model-") && !file.includes("-model-reuse-") ? 1 : 0),
-        commandLaunches: acc.commandLaunches + (file.includes("-command-") ? 1 : 0),
-      }),
-      { modelLaunches: 0, commandLaunches: 0 },
+    return (
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const record = JSON.parse(await fs.readFile(path.join(dir, file), "utf8")) as { createdAt?: string }
+            const createdAt = timestamp(record.createdAt)
+            if (input.startedAt !== undefined && (createdAt === undefined || createdAt < input.startedAt)) return undefined
+            if (input.endedAt !== undefined && (createdAt === undefined || createdAt > input.endedAt)) return undefined
+            return file
+          } catch {
+            return undefined
+          }
+        }),
+      )
     )
+      .filter((file): file is string => !!file)
+      .reduce(
+        (acc, file) => ({
+          modelLaunches: acc.modelLaunches + (file.includes("-model-") && !file.includes("-model-reuse-") ? 1 : 0),
+          commandLaunches: acc.commandLaunches + (file.includes("-command-") ? 1 : 0),
+        }),
+      { modelLaunches: 0, commandLaunches: 0 },
+      )
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { modelLaunches: 0, commandLaunches: 0 }
     throw error
@@ -332,6 +348,7 @@ export async function auditLiteralRunReadiness(
 
   const heartbeat = await readJson<{
     elapsedSeconds?: number
+    startedAt?: string
     endedAt?: string
     updatedAt?: string
     reason?: string
@@ -349,10 +366,11 @@ export async function auditLiteralRunReadiness(
     recoveredJobs?: unknown[]
   }>(daemonHeartbeatPath)
   const literalElapsedSeconds = heartbeat?.elapsedSeconds
+  const heartbeatStartedAt = timestamp(heartbeat?.startedAt)
   const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
-  const cliProof = await cliLaunchProof(root)
+  const cliProof = await cliLaunchProof(root, { startedAt: heartbeatStartedAt, endedAt: heartbeatTime })
   const combinedWorkProof = workProof
     ? {
         ...workProof,
