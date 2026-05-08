@@ -194,7 +194,7 @@ describe("ULM operation supervisor", () => {
 
     const reportingDecision = review.decisions.find((item) => item.reason === "final operation audit has unresolved blockers")
     expect(reportingDecision?.action).toBe("continue_reporting")
-    expect(reportingDecision?.requiredNextTool).toBe("report_lint")
+    expect(reportingDecision?.requiredNextTool).toBe("report_outline")
     expect(reportingDecision?.requiredArtifacts).toContain("deliverables/operation-audit.json")
   })
 })

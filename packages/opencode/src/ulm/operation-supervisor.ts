@@ -110,6 +110,12 @@ function hasStaleOrFailedLane(graph: OperationGraphLike | undefined) {
   )
 }
 
+function nextReportToolForAuditBlockers(blockers: string[]) {
+  if (blockers.some((blocker) => blocker.includes("reports/report-outline.md"))) return "report_outline"
+  if (blockers.some((blocker) => blocker.includes("deliverables/final/report.pdf"))) return "report_render"
+  return "report_lint"
+}
+
 function graphIncomplete(status: OperationStatusSummary) {
   return (
     (status.graph?.lanes.incomplete.length ?? 0) > 0 ||
@@ -213,11 +219,12 @@ function decisionsFor(input: {
     )
   }
   if (input.status.plans.operation && input.finalArtifacts.operationAudit && input.finalArtifacts.operationAuditOk === false) {
+    const nextReportTool = nextReportToolForAuditBlockers(input.finalArtifacts.operationAuditBlockers)
     decisions.push(
       decision({
         action: "continue_reporting",
         reason: "final operation audit has unresolved blockers",
-        requiredNextTool: "report_lint",
+        requiredNextTool: nextReportTool,
         requiredArtifacts: [
           "reports/report-outline.md",
           "reports/report.md or reports/report.html",
