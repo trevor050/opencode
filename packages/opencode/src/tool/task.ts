@@ -16,6 +16,7 @@ import { Instance } from "@/project/instance"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { readULMConfig, type ULMRuntimeConfig } from "@/ulm/config"
+import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -154,6 +155,7 @@ export const TaskTool = Tool.define(
       params: Schema.Schema.Type<typeof Parameters>,
       ctx: Tool.Context,
     ) {
+      assertLaneToolAllowed("task")
       const cfg = yield* config.get()
 
       if (!ctx.extra?.bypassAgentCheck) {

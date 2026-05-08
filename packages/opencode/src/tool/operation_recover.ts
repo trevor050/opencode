@@ -6,6 +6,7 @@ import { commandRestartArgs, taskRestartArgs } from "./task_restart_args"
 import { TaskTool } from "./task"
 import { CommandSuperviseTool } from "./command_supervise"
 import { readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
+import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import { markRecoveredLanesRunning } from "@/ulm/operation-recovery"
 import { Effect, Schema } from "effect"
 
@@ -55,6 +56,7 @@ export const OperationRecoverTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          assertLaneToolAllowed("operation_recover")
           const dryRun = params.dryRun === true
           const maxTasks = params.maxTasks === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(params.maxTasks))
           const candidates = (yield* jobs.list())

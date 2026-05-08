@@ -316,11 +316,13 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
     writeLaunchRecord("model-reuse", params.laneID, { jobID: active.jobID, pid: active.pid })
     return Promise.resolve({ jobID: active.jobID })
   }
+  const allowedTools = params.prompt.match(/^Allowed tools:\s*(.+)$/m)?.[1]?.trim() ?? ""
   const record = {
     laneID: params.laneID,
     agent: params.subagent_type,
     modelRoute: params.modelRoute,
     prompt: params.prompt,
+    allowedTools,
   }
   if (process.env.ULMCODE_DAEMON_DRY_RUN_LAUNCHES === "1") {
     writeLaunchRecord("model", params.laneID, { ...record, dryRun: true, jobID })
@@ -351,7 +353,12 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
       cwd: packageRoot,
       detached: true,
       stdio: ["ignore", outputFD, outputFD],
-      env: { ...process.env, ULMCODE_DAEMON_CHILD: "1" },
+      env: {
+        ...process.env,
+        ULMCODE_DAEMON_CHILD: "1",
+        ULMCODE_LANE_ID: params.laneID,
+        ULMCODE_LANE_ALLOWED_TOOLS: allowedTools,
+      },
     },
   )
   child.unref()

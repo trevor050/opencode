@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
 import { buildCommandPlan, writeCommandPlan } from "@/ulm/tool-manifest"
+import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import { errorMessage } from "@/util/error"
 import * as Tool from "./tool"
 import DESCRIPTION from "./command_supervise.txt"
@@ -170,6 +171,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>) =>
         Effect.gen(function* () {
+          assertLaneToolAllowed("command_supervise")
           const plan = yield* toolPromise(() =>
             buildCommandPlan({
               worktree: params.worktree ?? Instance.worktree,
