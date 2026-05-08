@@ -50,7 +50,7 @@ export const OperationRunTool = Tool.define(
             throw new Error("operationID is required unless this session is bound to an active ULM operation")
           }
           const result = yield* Effect.tryPromise(() =>
-            runOperationStep(Instance.worktree, { ...params, operationID, backgroundJobs }),
+            runOperationStep(Instance.worktree, { ...params, operationID, backgroundJobs, controller: "tool" }),
           ).pipe(Effect.orDie)
           const launched =
             params.launchModelLane === true && result.taskParams

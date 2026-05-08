@@ -11,6 +11,7 @@ export type OperationRunMode = "advance" | "complete_lane" | "skip_lane" | "bloc
 export type OperationRunInput = {
   operationID: string
   mode?: OperationRunMode
+  controller?: "scheduler" | "tool"
   laneID?: string
   jobID?: string
   summary?: string
@@ -350,6 +351,7 @@ function taskParamsForLane(lane: OperationLane) {
       "",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
       "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
+      "Do not call operation_run with mode=advance and do not launch downstream lanes; runtime_scheduler owns the next-lane handoff.",
     ].join("\n"),
     subagent_type: lane.agent,
     operationID: lane.operationID,
@@ -429,6 +431,71 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   if (completedLanes.length || skippedLanes.length || blockedLanes.length || failedLanes.length) {
     graph.updatedAt = new Date().toISOString()
     await writeJson(synced.graphPath, graph)
+  }
+
+  if (mode === "complete_lane" || mode === "skip_lane" || mode === "block_lane" || mode === "fail_lane") {
+    const laneID = input.laneID
+    const reason = blockers.length
+      ? `${mode} did not update lane ${laneID}: ${blockers.join("; ")}`
+      : `recorded ${mode} for lane ${laneID}; scheduler will choose the next lane`
+    const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
+      time: new Date().toISOString(),
+      mode,
+      laneID,
+      jobID: input.jobID,
+      summary: input.summary,
+      action: "wait",
+      reason,
+    })
+
+    return {
+      operationID,
+      mode,
+      action: "wait",
+      reason,
+      laneID,
+      graphPath: persistedGraphPath,
+      runLogPath: persistedRunLogPath,
+      completedLanes,
+      skippedLanes,
+      blockedLanes,
+      failedLanes,
+      syncedJobs,
+      syncedWorkUnits,
+      completedWorkUnits,
+      failedWorkUnits,
+      blockers,
+    }
+  }
+
+  if (mode === "advance" && input.controller === "tool") {
+    const reason = "operation_run advance is scheduler-owned; use runtime_scheduler or runtime_daemon to launch lanes"
+    const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
+      time: new Date().toISOString(),
+      mode,
+      jobID: input.jobID,
+      summary: input.summary,
+      action: "wait",
+      reason,
+    })
+
+    return {
+      operationID,
+      mode,
+      action: "wait",
+      reason,
+      graphPath: persistedGraphPath,
+      runLogPath: persistedRunLogPath,
+      completedLanes,
+      skippedLanes,
+      blockedLanes,
+      failedLanes,
+      syncedJobs,
+      syncedWorkUnits,
+      completedWorkUnits,
+      failedWorkUnits,
+      blockers,
+    }
   }
 
   const next = await decideOperationNext(worktree, { operationID })

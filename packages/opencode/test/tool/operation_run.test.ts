@@ -43,7 +43,7 @@ const context = {
 }
 
 describe("tool.operation_run", () => {
-  test("uses the session-bound operation when operationID is omitted", async () => {
+  test("uses the session-bound operation when operationID is omitted without advancing lanes", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
@@ -66,8 +66,9 @@ describe("tool.operation_run", () => {
             const result = yield* def.execute({}, context)
 
             expect(result.metadata.operationID).toBe("school")
-            expect(result.metadata.action).toBe("launch_lane")
+            expect(result.metadata.action).toBe("wait")
             expect(result.output).toContain("# Operation Run Step: school")
+            expect(result.output).toContain("operation_run advance is scheduler-owned")
           }).pipe(Effect.scoped, Effect.provide(layer)),
         ),
     })

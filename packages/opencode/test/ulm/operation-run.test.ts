@@ -57,6 +57,10 @@ describe("ULM operation run controller", () => {
     const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("complete")
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "web_inventory")?.status).toBe("ready")
+    expect(result.action).toBe("wait")
+    expect(result.reason).toBe("recorded complete_lane for lane recon; scheduler will choose the next lane")
+    expect(result.laneID).toBe("recon")
+    expect(result.taskParams).toBeUndefined()
     expect(result.completedLanes).toContain("recon")
   })
 
