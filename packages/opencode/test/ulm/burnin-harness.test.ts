@@ -113,8 +113,20 @@ describe("ULM accelerated burn-in harness", () => {
     await using dir = await tmpdir({ git: true })
     const operationID = "Existing Operation"
     await writeOperationGraph(dir.path, { operationID, budgetUSD: 10 })
-    const graphPath = path.join(operationPath(dir.path, operationID), "plans", "operation-graph.json")
-    const before = await fs.readFile(graphPath, "utf8")
+    const root = operationPath(dir.path, operationID)
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
+    const runtimeSummaryPath = path.join(root, "deliverables", "runtime-summary.md")
+    const auditPath = path.join(root, "deliverables", "operation-audit.json")
+    await fs.mkdir(path.dirname(finalManifestPath), { recursive: true })
+    await fs.writeFile(finalManifestPath, JSON.stringify({ operationID, artifacts: { html: "report.html" } }, null, 2) + "\n")
+    await fs.writeFile(runtimeSummaryPath, "# Runtime Summary\n\nOriginal runtime summary.\n")
+    await fs.writeFile(auditPath, JSON.stringify({ operationID, ok: true, source: "real-audit" }, null, 2) + "\n")
+    const before = await Promise.all(
+      [graphPath, finalManifestPath, runtimeSummaryPath, auditPath].map(
+        async (file) => [file, await fs.readFile(file, "utf8")] as const,
+      ),
+    )
 
     const result = await runBurnInHarness(dir.path, {
       operationID,
@@ -124,7 +136,9 @@ describe("ULM accelerated burn-in harness", () => {
     })
 
     expect(result.audit.status).toBe("passed")
-    expect(await fs.readFile(graphPath, "utf8")).toBe(before)
+    for (const [file, content] of before) {
+      expect(await fs.readFile(file, "utf8")).toBe(content)
+    }
     expect(result.proof.supervisorScenario.proofPath).toBe(
       path.join(operationPath(dir.path, operationID), "burnin", "burnin-supervisor-scenario.json"),
     )
