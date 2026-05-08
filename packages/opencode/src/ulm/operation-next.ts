@@ -108,7 +108,7 @@ function promptForLane(lane: OperationLane) {
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
     ...(specific ? [specific] : []),
     "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
-    "Do not call operation_run with mode=advance and do not launch downstream lanes; runtime_scheduler owns the next-lane handoff.",
+    "Do not call operation_run with mode=advance, runtime_scheduler, runtime_daemon, task, or command_supervise to launch downstream lanes; the parent scheduler owns the next-lane handoff.",
   ].join("\n")
 }
 
