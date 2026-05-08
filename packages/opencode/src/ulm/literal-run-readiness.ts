@@ -71,12 +71,14 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
 }
 
 const runtimeProofChecks = new Set(["literal-runtime-proof", "literal-work-proof"])
+const handoffProofChecks = new Set(["final-package", "final-operation-audit"])
 
 function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | undefined, targetElapsedSeconds: number) {
   const requiredSetupFailed = checks.some(
-    (item) => item.required && item.status === "fail" && !runtimeProofChecks.has(item.id),
+    (item) => item.required && item.status === "fail" && !runtimeProofChecks.has(item.id) && !handoffProofChecks.has(item.id),
   )
   if (requiredSetupFailed) return "blocked"
+  if (checks.some((item) => runtimeProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
   if (
     literalElapsedSeconds !== undefined &&
     literalElapsedSeconds >= targetElapsedSeconds &&
@@ -84,7 +86,7 @@ function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | un
   ) {
     return "passed"
   }
-  if (checks.some((item) => runtimeProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
+  if (checks.some((item) => handoffProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
   return "ready"
 }
 
@@ -181,6 +183,7 @@ export async function auditLiteralRunReadiness(
   const toolPreflightPath = path.join(root, "tools", "tool-preflight.json")
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
+  const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
   const auditPath = path.join(root, "scheduler", "literal-run-readiness.json")
   const markdownPath = path.join(root, "scheduler", "literal-run-readiness.md")
   const checks: LiteralRunCheck[] = []
@@ -299,10 +302,22 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "final-package",
-      status: (await exists(finalManifestPath)) ? "ok" : "warn",
-      required: false,
+      status: (await exists(finalManifestPath)) ? "ok" : "fail",
+      required: true,
       detail: (await exists(finalManifestPath)) ? "final handoff manifest exists" : "final package manifest is missing",
       path: finalManifestPath,
+    }),
+  )
+  const finalAudit = await readJson<{ ok?: boolean; blockers?: unknown[] }>(finalAuditPath)
+  checks.push(
+    check({
+      id: "final-operation-audit",
+      status: finalAudit?.ok === true && countItems(finalAudit.blockers) === 0 ? "ok" : "fail",
+      required: true,
+      detail: finalAudit
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}`
+        : "final operation audit is missing",
+      path: finalAuditPath,
     }),
   )
 
