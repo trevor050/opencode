@@ -324,7 +324,11 @@ async function syncBackgroundJobs(
       lane.terminalState = "complete"
       completed.push(lane.id)
     }
-    if ((job.status === "error" || job.status === "cancelled" || job.status === "stale") && lane.status !== "failed") {
+    if (
+      job.type !== "command_supervise" &&
+      (job.status === "error" || job.status === "cancelled" || job.status === "stale") &&
+      lane.status !== "failed"
+    ) {
       lane.status = "failed"
       lane.terminalState = "failed"
       failed.push(lane.id)

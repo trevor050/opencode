@@ -275,6 +275,42 @@ describe("ULM operation run controller", () => {
     expect(queue.units[0]?.status).toBe("complete")
   })
 
+  test("does not fail a running lane just because one supervised command errors", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      backgroundJobs: [
+        {
+          id: "cmd_udp_scan",
+          type: "command_supervise",
+          title: "udp-top-ports-sweep",
+          status: "error",
+          startedAt: Date.now() - 1000,
+          completedAt: Date.now(),
+          metadata: { operationID: "school", laneID: "recon", profileID: "udp-top-ports-sweep" },
+        },
+      ],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const recon = updated.lanes.find((lane: { id: string }) => lane.id === "recon")
+    expect(result.syncedJobs).toContain("cmd_udp_scan")
+    expect(result.failedLanes).not.toContain("recon")
+    expect(recon?.status).toBe("running")
+    expect(recon?.activeJobs[0]?.status).toBe("error")
+  })
+
   test("syncs a recovered running job back from failed to running", async () => {
     await using dir = await tmpdir({ git: true })
     const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
