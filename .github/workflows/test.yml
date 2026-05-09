@@ -73,6 +73,10 @@ jobs:
       - name: Skip unit tests on forks
         if: github.repository != 'anomalyco/opencode'
         run: echo "Skipping heavy unit matrix on fork repository"
+      - name: Run HttpApi exerciser gates
+        if: github.repository == 'anomalyco/opencode' && runner.os == 'Linux'
+        working-directory: packages/opencode
+        run: bun run test:httpapi
 
       - name: Publish unit reports
         if: always() && github.repository == 'anomalyco/opencode'
