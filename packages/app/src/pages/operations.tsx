@@ -1,11 +1,16 @@
 import { Button } from "@opencode-ai/ui/button"
-import { showToast } from "@opencode-ai/ui/toast"
 import type { UlmOperationStatusSummary } from "@opencode-ai/sdk/v2"
 import { useNavigate, useParams } from "@solidjs/router"
-import { createEffect, createMemo, For, Show } from "solid-js"
-import { usePlatform } from "@/context/platform"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { usePlatform, type UlmArtifactFile } from "@/context/platform"
 import { useUlm } from "@/context/ulm"
-import { currentOperationFilesPath, operationCounts, operationTitle, reportPackageState } from "@/utils/ulm-operation-ui"
+import {
+  artifactGroups,
+  currentOperationFilesPath,
+  operationCounts,
+  operationTitle,
+  reportPackageState,
+} from "@/utils/ulm-operation-ui"
 
 type Tone = "neutral" | "good" | "warn" | "danger" | "info"
 
@@ -85,24 +90,11 @@ function SummaryBar(props: { operations: UlmOperationStatusSummary[] }) {
 function OperationCard(props: { item: UlmOperationStatusSummary; base: string }) {
   const ulm = useUlm()
   const navigate = useNavigate()
-  const platform = usePlatform()
   const confidence = createMemo(() => ulm.confidence(props.item))
   const filesPath = createMemo(() => operationFilesPath(props.item))
   const packageLabel = createMemo(() => reportPackageState(props.item))
 
-  const openFiles = async () => {
-    const path = filesPath()
-    if (!path || !platform.openPath) return
-    try {
-      await platform.openPath(path)
-    } catch (error) {
-      showToast({
-        variant: "error",
-        title: "Could not open operation files",
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
+  const openFiles = () => navigate(`${props.base}/operations/${props.item.operationID}`)
 
   return (
     <article class="rounded-[8px] border border-border-weaker-base bg-surface-base p-4">
@@ -144,7 +136,7 @@ function OperationCard(props: { item: UlmOperationStatusSummary; base: string })
             variant="ghost"
             size="small"
             onClick={openFiles}
-            disabled={!platform.openPath || !filesPath()}
+            disabled={!filesPath()}
           >
             Files
           </Button>
@@ -154,10 +146,126 @@ function OperationCard(props: { item: UlmOperationStatusSummary; base: string })
   )
 }
 
+function OperationFiles(props: { item: UlmOperationStatusSummary }) {
+  const platform = usePlatform()
+  const [artifacts, setArtifacts] = createSignal<UlmArtifactFile[]>([])
+  const [preview, setPreview] = createSignal<{ file: string; content: string }>()
+  const [loading, setLoading] = createSignal(false)
+  const [error, setError] = createSignal<string>()
+  const root = createMemo(() => operationFilesPath(props.item))
+  const groups = createMemo(() => artifactGroups(artifacts()))
+  const previewable = (item: UlmArtifactFile) =>
+    item.kind === "markdown" || item.kind === "json" || item.kind === "text" || item.kind === "html"
+
+  const openFile = async (item: UlmArtifactFile) => {
+    if (previewable(item) && platform.readTextFile) {
+      const content = await platform.readTextFile(item.path)
+      setPreview({ file: item.file, content })
+      return
+    }
+    if (platform.openPath) await platform.openPath(item.path)
+  }
+
+  createEffect(() => {
+    const directory = root()
+    if (!directory || !platform.listUlmArtifacts) {
+      setArtifacts([])
+      return
+    }
+    setLoading(true)
+    setError()
+    void platform
+      .listUlmArtifacts(directory)
+      .then((items) => setArtifacts(items))
+      .catch((err: unknown) => {
+        setArtifacts([])
+        setError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => setLoading(false))
+  })
+
+  return (
+    <section class="rounded-[8px] border border-border-weaker-base bg-surface-base p-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-13-medium text-text-strong">Operation files</div>
+          <div class="mt-1 truncate text-12-regular text-text-weak">{root() ?? "No operation workspace found."}</div>
+        </div>
+        <Show when={platform.openPath && root()}>
+          <Button icon="open-file" variant="secondary" size="small" onClick={() => void platform.openPath?.(root()!)}>
+            Finder
+          </Button>
+        </Show>
+      </div>
+
+      <Show when={error()}>
+        {(message) => <div class="mt-3 rounded-[6px] bg-background-base p-3 text-12-regular text-text-danger-base">{message()}</div>}
+      </Show>
+
+      <Show
+        when={!loading()}
+        fallback={<div class="mt-3 rounded-[6px] bg-background-base p-3 text-12-regular text-text-weak">Loading files...</div>}
+      >
+        <Show
+          when={groups().length > 0}
+          fallback={<div class="mt-3 rounded-[6px] bg-background-base p-3 text-12-regular text-text-weak">No operation files found.</div>}
+        >
+          <div class="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div class="flex max-h-[520px] flex-col gap-2 overflow-auto pr-1">
+              <For each={groups()}>
+                {(group) => (
+                  <div class="rounded-[8px] border border-border-weaker-base bg-background-base p-2">
+                    <div class="px-1 pb-1 text-11-medium uppercase text-text-weak">{group.label}</div>
+                    <div class="flex flex-col gap-1">
+                      <For each={group.items as UlmArtifactFile[]}>
+                        {(artifact) => (
+                          <button
+                            type="button"
+                            class="rounded-[6px] px-2 py-1.5 text-left text-12-regular text-text-base hover:bg-surface-base-hover"
+                            onClick={() => void openFile(artifact)}
+                          >
+                            <div class="truncate">{artifact.file}</div>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+
+            <Show
+              when={preview()}
+              fallback={
+                <div class="flex min-h-64 items-center justify-center rounded-[8px] border border-dashed border-border-weaker-base bg-background-base p-4 text-center text-12-regular text-text-weak">
+                  Select a markdown, json, text, or html artifact to preview it here.
+                </div>
+              }
+            >
+              {(item) => (
+                <div class="min-w-0 rounded-[8px] border border-border-weaker-base bg-background-base">
+                  <div class="flex items-center justify-between gap-2 border-b border-border-weaker-base px-3 py-2">
+                    <div class="truncate text-12-medium text-text-strong">{item().file}</div>
+                    <button type="button" class="text-12-medium text-text-weak hover:text-text-base" onClick={() => setPreview()}>
+                      Close
+                    </button>
+                  </div>
+                  <pre class="max-h-[470px] overflow-auto whitespace-pre-wrap px-3 py-3 text-11-regular leading-4 text-text-base">
+                    {item().content}
+                  </pre>
+                </div>
+              )}
+            </Show>
+          </div>
+        </Show>
+      </Show>
+    </section>
+  )
+}
+
 function OperationDetail(props: { item: UlmOperationStatusSummary; base: string }) {
   const ulm = useUlm()
   const navigate = useNavigate()
-  const platform = usePlatform()
   const confidence = createMemo(() => ulm.confidence(props.item))
   const reports = createMemo(() => [
     { label: "HTML", ready: props.item.reports.html },
@@ -165,12 +273,6 @@ function OperationDetail(props: { item: UlmOperationStatusSummary; base: string 
     { label: "manifest", ready: props.item.reports.manifest },
     { label: "runtime", ready: props.item.runtimeSummary },
   ])
-
-  const openFiles = async () => {
-    const path = operationFilesPath(props.item)
-    if (!path || !platform.openPath) return
-    await platform.openPath(path)
-  }
 
   return (
     <div class="flex flex-col gap-4">
@@ -196,9 +298,6 @@ function OperationDetail(props: { item: UlmOperationStatusSummary; base: string 
           <div class="flex flex-wrap gap-2">
             <Button icon="speech-bubble" variant="secondary" size="normal" onClick={() => navigate(`${props.base}/session`)}>
               Open chat
-            </Button>
-            <Button icon="folder" variant="primary" size="normal" onClick={openFiles} disabled={!operationFilesPath(props.item)}>
-              Open files
             </Button>
           </div>
         </div>
@@ -233,6 +332,8 @@ function OperationDetail(props: { item: UlmOperationStatusSummary; base: string 
           </div>
         </section>
       </div>
+
+      <OperationFiles item={props.item} />
     </div>
   )
 }
