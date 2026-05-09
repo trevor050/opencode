@@ -482,7 +482,6 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   let input: TextareaRenderable
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
-  const keymapConfig = tuiConfig.keymap
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
@@ -490,7 +489,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
     enabled: dialog.stack.length === 0,
     commands: [
       {
-        name: "permission.reject.cancel",
+        name: "app.exit",
         title: "Cancel permission rejection",
         category: "Permission",
         run() {
@@ -509,7 +508,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
           props.onCancel()
         },
       },
-      ...keymapConfig.pick("permission", ["permission.reject.cancel"]),
+      ...tuiConfig.keybinds.get("app.exit"),
       {
         key: "return",
         desc: "Confirm permission rejection",
@@ -587,7 +586,6 @@ function Prompt<const T extends Record<string, string>>(props: {
 }) {
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
-  const keymapConfig = tuiConfig.keymap
   const dimensions = useTerminalDimensions()
   const keys = Object.keys(props.options) as (keyof T)[]
   const [store, setStore] = createStore({
@@ -602,7 +600,7 @@ function Prompt<const T extends Record<string, string>>(props: {
     enabled: dialog.stack.length === 0,
     commands: [
       {
-        name: "permission.prompt.escape",
+        name: "app.exit",
         title: "Reject permission",
         category: "Permission",
         run() {
@@ -689,8 +687,8 @@ function Prompt<const T extends Record<string, string>>(props: {
             },
           ]
         : []),
-      ...(props.escapeKey ? keymapConfig.pick("permission", ["permission.prompt.escape"]) : []),
-      ...(props.fullscreen ? keymapConfig.pick("permission", ["permission.prompt.fullscreen"]) : []),
+      ...(props.escapeKey ? tuiConfig.keybinds.get("app.exit") : []),
+      ...(props.fullscreen ? tuiConfig.keybinds.get("permission.prompt.fullscreen") : []),
     ],
   }))
 

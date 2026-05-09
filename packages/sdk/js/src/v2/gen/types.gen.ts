@@ -910,6 +910,26 @@ export type ServerConfig = {
   cors?: Array<string>
 }
 
+export type ReferenceConfigEntry =
+  | string
+  | {
+      /**
+       * Git repository URL, host/path reference, or GitHub owner/repo shorthand
+       */
+      repository: string
+      branch?: string
+    }
+  | {
+      /**
+       * Absolute path, ~/ path, or workspace-relative path to a local reference directory
+       */
+      path: string
+    }
+
+export type ReferenceConfig = {
+  [key: string]: ReferenceConfigEntry
+}
+
 export type PermissionActionConfig = "ask" | "allow" | "deny"
 
 export type PermissionObjectConfig = {
@@ -933,6 +953,9 @@ export type PermissionConfig =
       question?: PermissionActionConfig
       webfetch?: PermissionActionConfig
       websearch?: PermissionActionConfig
+      codesearch?: PermissionActionConfig
+      repo_clone?: PermissionRuleConfig
+      repo_overview?: PermissionRuleConfig
       lsp?: PermissionRuleConfig
       doom_loop?: PermissionActionConfig
       skill?: PermissionRuleConfig
@@ -1136,6 +1159,7 @@ export type Config = {
     paths?: Array<string>
     urls?: Array<string>
   }
+  reference?: ReferenceConfig
   watcher?: {
     ignore?: Array<string>
   }
@@ -1172,6 +1196,7 @@ export type Config = {
     build?: AgentConfig
     general?: AgentConfig
     explore?: AgentConfig
+    scout?: AgentConfig
     title?: AgentConfig
     summary?: AgentConfig
     compaction?: AgentConfig
@@ -1345,6 +1370,10 @@ export type ConsoleState = {
   consoleManagedProviders: Array<string>
   activeOrgName?: string
   switchableOrgCount: number
+}
+
+export type EffectHttpApiErrorInternalServerError = {
+  _tag: "InternalServerError"
 }
 
 export type ToolListItem = {
@@ -4056,6 +4085,15 @@ export type ExperimentalConsoleGetData = {
   url: "/experimental/console"
 }
 
+export type ExperimentalConsoleGetErrors = {
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
+}
+
+export type ExperimentalConsoleGetError = ExperimentalConsoleGetErrors[keyof ExperimentalConsoleGetErrors]
+
 export type ExperimentalConsoleGetResponses = {
   /**
    * Active Console provider metadata
@@ -4074,6 +4112,16 @@ export type ExperimentalConsoleListOrgsData = {
   }
   url: "/experimental/console/orgs"
 }
+
+export type ExperimentalConsoleListOrgsErrors = {
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
+}
+
+export type ExperimentalConsoleListOrgsError =
+  ExperimentalConsoleListOrgsErrors[keyof ExperimentalConsoleListOrgsErrors]
 
 export type ExperimentalConsoleListOrgsResponses = {
   /**
@@ -6213,13 +6261,13 @@ export type SessionUnshareData = {
 
 export type SessionUnshareErrors = {
   /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
    * NotFoundError
    */
   404: NotFoundError
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
 }
 
 export type SessionUnshareError = SessionUnshareErrors[keyof SessionUnshareErrors]
@@ -6247,13 +6295,13 @@ export type SessionShareData = {
 
 export type SessionShareErrors = {
   /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
    * NotFoundError
    */
   404: NotFoundError
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
 }
 
 export type SessionShareError = SessionShareErrors[keyof SessionShareErrors]

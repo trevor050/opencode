@@ -274,7 +274,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.post("share", SessionPaths.share, {
           params: { sessionID: SessionID },
           success: described(Session.Info, "Successfully shared session"),
-          error: [HttpApiError.BadRequest, ApiNotFoundError],
+          error: [HttpApiError.InternalServerError, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "session.share",
@@ -285,7 +285,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.delete("unshare", SessionPaths.share, {
           params: { sessionID: SessionID },
           success: described(Session.Info, "Successfully unshared session"),
-          error: [HttpApiError.BadRequest, ApiNotFoundError],
+          error: [HttpApiError.InternalServerError, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "session.unshare",
