@@ -25,6 +25,7 @@ import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@openc
 import { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { canUseAgentForRun, isUlmDaemonLaneChild } from "./run/agent-policy"
 
 const runtimeTask = import("./run/runtime")
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
@@ -511,7 +512,7 @@ export const RunCommand = effectCmd({
           )
           return undefined
         }
-        if (entry.mode === "subagent") {
+        if (!canUseAgentForRun({ mode: entry.mode, ulmDaemonLaneChild: isUlmDaemonLaneChild() })) {
           UI.println(
             UI.Style.TEXT_WARNING_BOLD + "!",
             UI.Style.TEXT_NORMAL,
@@ -550,7 +551,7 @@ export const RunCommand = effectCmd({
           return undefined
         }
 
-        if (agent.mode === "subagent") {
+        if (!canUseAgentForRun({ mode: agent.mode, ulmDaemonLaneChild: isUlmDaemonLaneChild() })) {
           UI.println(
             UI.Style.TEXT_WARNING_BOLD + "!",
             UI.Style.TEXT_NORMAL,
