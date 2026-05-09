@@ -69,7 +69,7 @@ async function publishOperationUpdated(
 
 export type OperationCheckpointInput = {
   operationID?: string
-  objective: string
+  objective?: string
   stage: Stage
   status: OperationStatus
   summary: string
@@ -775,7 +775,7 @@ export function operationPath(worktree: string, operationID: string) {
 }
 
 export function makeOperationID(input: Pick<OperationCheckpointInput, "operationID" | "objective">) {
-  return slug(input.operationID ?? input.objective, `operation-${Date.now()}`)
+  return slug(input.operationID ?? input.objective ?? "", `operation-${Date.now()}`)
 }
 
 export function makeFindingID(input: Pick<FindingInput, "findingID" | "title">) {
@@ -2809,9 +2809,11 @@ export async function writeOperationCheckpoint(worktree: string, input: Operatio
   const operationID = makeOperationID(input)
   const root = operationPath(worktree, operationID)
   const current = await readJson<OperationRecord>(path.join(root, "operation.json"))
+  const objective = input.objective ?? current?.objective
+  if (!objective) throw new Error("objective is required for a new operation checkpoint")
   const record: OperationRecord = {
     operationID,
-    objective: input.objective,
+    objective,
     stage: input.stage,
     status: input.status,
     summary: input.summary,

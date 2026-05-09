@@ -147,6 +147,27 @@ describe("ULM artifact ledger", () => {
     expect(await fs.readFile(path.join(result.root, "events.jsonl"), "utf8")).toContain('"type":"checkpoint"')
   })
 
+  test("preserves checkpoint objective on operation updates", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "School Assessment",
+      objective: "Authorized school assessment",
+      stage: "intake",
+      status: "running",
+      summary: "Initial checkpoint.",
+    })
+
+    const result = await writeOperationCheckpoint(worktree, {
+      operationID: "School Assessment",
+      stage: "recon",
+      status: "running",
+      summary: "Recon update without restating objective.",
+    })
+
+    expect(result.record.objective).toBe("Authorized school assessment")
+    expect(result.record.stage).toBe("recon")
+  })
+
   test("publishes operation update events after durable writes", async () => {
     const worktree = await tmpdir()
     const received: Array<{ operationID: string; artifact: string; path?: string }> = []

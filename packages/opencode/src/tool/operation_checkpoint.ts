@@ -16,7 +16,9 @@ export const Parameters = Schema.Struct({
   operationID: Schema.optional(Schema.String).annotate({
     description: "Stable operation identifier. Defaults to a slug of the objective.",
   }),
-  objective: Schema.String.annotate({ description: "Authorized objective for this operation" }),
+  objective: Schema.optional(Schema.String).annotate({
+    description: "Authorized objective for this operation. Optional on updates when operationID already exists.",
+  }),
   stage: Schema.Literals(["intake", "recon", "mapping", "validation", "reporting", "handoff"]),
   status: Schema.Literals(["planned", "running", "blocked", "paused", "complete"]),
   summary: Schema.String.annotate({ description: "Factual checkpoint summary" }),
