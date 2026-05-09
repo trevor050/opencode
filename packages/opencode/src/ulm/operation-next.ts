@@ -77,6 +77,7 @@ function blockedDependencies(graph: OperationGraphRecord, lane: OperationLane) {
 
 function selectReadyLane(graph: OperationGraphRecord) {
   return graph.lanes.find((lane) => {
+    if (lane.id === "supervisor") return false
     if (lane.status !== "ready" && lane.status !== "pending") return false
     return dependenciesComplete(graph, lane)
   })
@@ -91,6 +92,12 @@ function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date)
 }
 
 function promptForLane(lane: OperationLane) {
+  const specific =
+    lane.id === "finding_validation"
+      ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+      : lane.id === "report_writing"
+        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
+      : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,
     "",
@@ -100,7 +107,12 @@ function promptForLane(lane: OperationLane) {
     `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
     `Restart policy: max ${lane.restartPolicy.maxAttempts} attempts, stale after ${lane.restartPolicy.staleAfterMinutes} minutes.`,
     "",
+    "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
+    "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
+    ...(specific ? [specific] : []),
+    "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
+    "Do not call operation_run with mode=advance, runtime_scheduler, runtime_daemon, task, or command_supervise to launch downstream lanes; the parent scheduler owns the next-lane handoff.",
   ].join("\n")
 }
 

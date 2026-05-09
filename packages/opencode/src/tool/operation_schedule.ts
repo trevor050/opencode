@@ -8,6 +8,18 @@ const ModelRoutes = Schema.Record(Schema.String, Schema.String)
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
+  template: Schema.optional(
+    Schema.Literals([
+      "single-url-web",
+      "external-k12-district",
+      "authenticated-webapp",
+      "internal-network",
+      "cloud-posture",
+      "code-audit",
+      "report-only",
+      "benchmark-suite",
+    ]),
+  ),
   safetyMode: Schema.optional(Schema.Literals(["non_destructive", "interactive_destructive"])),
   trustLevel: Schema.optional(Schema.Literals(["guided", "moderate", "unattended", "lab_full"])),
   scanProfile: Schema.optional(Schema.Literals(["paranoid", "stealth", "balanced", "aggressive", "lab-insane"])),
@@ -21,6 +33,7 @@ type Metadata = {
   json: string
   markdown: string
   lanes: number
+  archivedStaleLaneProofs: number
 }
 
 export const OperationScheduleTool = Tool.define<typeof Parameters, Metadata, never>(
@@ -38,6 +51,7 @@ export const OperationScheduleTool = Tool.define<typeof Parameters, Metadata, ne
             `json: ${result.json}`,
             `markdown: ${result.markdown}`,
             `lanes: ${result.lanes}`,
+            `archived_stale_lane_proofs: ${result.archivedStaleLaneProofs}`,
           ].join("\n"),
           metadata: result,
         }

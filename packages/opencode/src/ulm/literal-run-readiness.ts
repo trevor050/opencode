@@ -1,6 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, slug } from "./artifact"
+import { operationPath, operationPlanRequiresCredentialHandoff, slug } from "./artifact"
 
 export type LiteralRunReadinessStatus = "passed" | "ready" | "incomplete" | "blocked"
 export type LiteralRunCheckStatus = "ok" | "warn" | "fail"
@@ -70,13 +70,20 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
   return input
 }
 
-const runtimeProofChecks = new Set(["literal-runtime-proof", "literal-work-proof"])
+const runtimeProofChecks = new Set(["literal-runtime-proof", "daemon-heartbeat-continuity", "literal-work-proof"])
+const handoffProofChecks = new Set([
+  "final-package",
+  "final-operation-audit",
+  "credential-handoff-proof",
+  "report-outline-proof",
+])
 
 function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | undefined, targetElapsedSeconds: number) {
   const requiredSetupFailed = checks.some(
-    (item) => item.required && item.status === "fail" && !runtimeProofChecks.has(item.id),
+    (item) => item.required && item.status === "fail" && !runtimeProofChecks.has(item.id) && !handoffProofChecks.has(item.id),
   )
   if (requiredSetupFailed) return "blocked"
+  if (checks.some((item) => runtimeProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
   if (
     literalElapsedSeconds !== undefined &&
     literalElapsedSeconds >= targetElapsedSeconds &&
@@ -84,12 +91,23 @@ function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | un
   ) {
     return "passed"
   }
-  if (checks.some((item) => runtimeProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
+  if (checks.some((item) => handoffProofChecks.has(item.id) && item.status === "fail")) return "incomplete"
   return "ready"
 }
 
 function countItems(input: unknown) {
   return Array.isArray(input) ? input.length : 0
+}
+
+function timestamp(value: string | undefined) {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function reportOutlineTargetPages(outline: string | undefined) {
+  const match = outline?.match(/^\s*-\s*target_pages:\s*(\d+)\s*$/im)
+  const pages = Number.parseInt(match?.[1] ?? "", 10)
+  return Number.isFinite(pages) ? pages : undefined
 }
 
 function workProofFromHeartbeat(heartbeat: {
@@ -141,6 +159,70 @@ function workProofFromHeartbeat(heartbeat: {
   }
 }
 
+function parseDaemonLogEntries(log: string | undefined) {
+  if (!log?.trim()) return []
+  return log
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line) as { startedAt?: string; updatedAt?: string; endedAt?: string; elapsedSeconds?: number }
+        return [parsed]
+      } catch {
+        return []
+      }
+    })
+}
+
+function daemonLogContinuity(log: string | undefined, targetElapsedSeconds: number) {
+  const entries = parseDaemonLogEntries(log)
+  const times = entries.flatMap((entry) => [timestamp(entry.startedAt), timestamp(entry.updatedAt), timestamp(entry.endedAt)]).filter((time): time is number => time !== undefined)
+  const elapsedValues = entries.map((entry) => entry.elapsedSeconds).filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  const firstTime = times.length ? Math.min(...times) : undefined
+  const lastTime = times.length ? Math.max(...times) : undefined
+  const spanSeconds = firstTime !== undefined && lastTime !== undefined ? (lastTime - firstTime) / 1000 : undefined
+  const maxElapsed = elapsedValues.length ? Math.max(...elapsedValues) : undefined
+  const continuous =
+    entries.length >= 3 &&
+    ((spanSeconds !== undefined && spanSeconds >= targetElapsedSeconds) ||
+      (maxElapsed !== undefined && maxElapsed >= targetElapsedSeconds))
+  return { entries: entries.length, spanSeconds, maxElapsed, continuous }
+}
+
+async function cliLaunchProof(root: string, input: { startedAt?: number; endedAt?: number }) {
+  const dir = path.join(root, "scheduler", "cli-launches")
+  try {
+    const files = await fs.readdir(dir)
+    return (
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const record = JSON.parse(await fs.readFile(path.join(dir, file), "utf8")) as { createdAt?: string }
+            const createdAt = timestamp(record.createdAt)
+            if (input.startedAt !== undefined && (createdAt === undefined || createdAt < input.startedAt)) return undefined
+            if (input.endedAt !== undefined && (createdAt === undefined || createdAt > input.endedAt)) return undefined
+            return file
+          } catch {
+            return undefined
+          }
+        }),
+      )
+    )
+      .filter((file): file is string => !!file)
+      .reduce(
+        (acc, file) => ({
+          modelLaunches: acc.modelLaunches + (file.includes("-model-") && !file.includes("-model-reuse-") ? 1 : 0),
+          commandLaunches: acc.commandLaunches + (file.includes("-command-") ? 1 : 0),
+        }),
+      { modelLaunches: 0, commandLaunches: 0 },
+      )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { modelLaunches: 0, commandLaunches: 0 }
+    throw error
+  }
+}
+
 function formatMarkdown(result: LiteralRunReadinessResult) {
   return [
     `# Literal 20-Hour Run Readiness: ${result.operationID}`,
@@ -174,18 +256,36 @@ export async function auditLiteralRunReadiness(
   const targetElapsedSeconds = Math.max(1, Math.floor(input.targetElapsedSeconds ?? 20 * 60 * 60))
   const root = operationPath(worktree, operationID)
   const graphPath = path.join(root, "plans", "operation-graph.json")
+  const operationGoalPath = path.join(root, "goals", "operation-goal.json")
+  const operationPlanPath = path.join(root, "plans", "operation-plan.json")
   const supervisorManifestPath = path.join(root, "scheduler", "supervisor", "supervisor-manifest.json")
   const daemonHeartbeatPath = path.join(root, "scheduler", "daemon-heartbeat.json")
   const daemonLogPath = path.join(root, "scheduler", "daemon.jsonl")
   const burnInProofPath = path.join(root, "burnin", "burnin-proof.json")
   const toolPreflightPath = path.join(root, "tools", "tool-preflight.json")
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
+  const reportOutlinePath = path.join(root, "reports", "report-outline.md")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
+  const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
+  const credentialReviewPath = path.join(root, "credentials", "review-submission.json")
   const auditPath = path.join(root, "scheduler", "literal-run-readiness.json")
   const markdownPath = path.join(root, "scheduler", "literal-run-readiness.md")
   const checks: LiteralRunCheck[] = []
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
+  const operationGoal = await readJson<{ targetDurationHours?: number }>(operationGoalPath)
+  const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
+  const requiresLongRunProof = targetElapsedSeconds >= 20 * 60 * 60
+  const targetHours = targetElapsedSeconds / (60 * 60)
+  const requiredAuditMinOutlineTargetPages =
+    requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+  const requiredAuditMinPdfPages = requiredAuditMinOutlineTargetPages
+  const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
+  const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
+  const credentialReviewCount = countItems(credentialReview?.credentials)
+  const credentialReviewTime = timestamp(credentialReview?.submittedAt)
+  const reportOutline = await readText(reportOutlinePath)
+  const outlineTargetPages = reportOutlineTargetPages(reportOutline)
   checks.push(
     check({
       id: "operation-graph",
@@ -193,6 +293,21 @@ export async function auditLiteralRunReadiness(
       required: true,
       detail: graph ? `safety=${graph.safetyMode}; lanes=${graph.lanes?.length ?? 0}` : "operation graph is missing",
       path: graphPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "duration-plan-proof",
+      status:
+        !requiresLongRunProof ||
+        ((operationGoal?.targetDurationHours ?? 0) >= targetHours && (operationPlan?.timeBudget?.targetHours ?? 0) >= targetHours)
+          ? "ok"
+          : "fail",
+      required: requiresLongRunProof,
+      detail: requiresLongRunProof
+        ? `goal_target_hours=${operationGoal?.targetDurationHours ?? "missing"}; plan_target_hours=${operationPlan?.timeBudget?.targetHours ?? "missing"}; required_hours=${targetHours}`
+        : "duration-sized plan proof is not required",
+      path: operationPlanPath,
     }),
   )
 
@@ -235,8 +350,8 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "tool-preflight",
-      status: toolPreflight ? (toolPreflight.blocked === 0 ? "ok" : "warn") : "warn",
-      required: false,
+      status: toolPreflight ? (toolPreflight.blocked === 0 ? "ok" : requiresLongRunProof ? "fail" : "warn") : requiresLongRunProof ? "fail" : "warn",
+      required: requiresLongRunProof,
       detail: toolPreflight
         ? `available=${toolPreflight.available ?? 0}/${toolPreflight.total ?? 0}; blocked=${toolPreflight.blocked ?? 0}`
         : "tool-preflight.json is missing",
@@ -247,15 +362,44 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "model-route-audit",
-      status: (await exists(modelRouteAuditPath)) ? "ok" : "warn",
-      required: false,
+      status: (await exists(modelRouteAuditPath)) ? "ok" : requiresLongRunProof ? "fail" : "warn",
+      required: requiresLongRunProof,
       detail: (await exists(modelRouteAuditPath)) ? "model route audit exists" : "model-route-audit.json is missing",
       path: modelRouteAuditPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "credential-handoff-proof",
+      status: !requiresCredentialHandoff || (credentialReview?.submittedAt && credentialReviewCount > 0) ? "ok" : "fail",
+      required: requiresCredentialHandoff,
+      detail: requiresCredentialHandoff
+        ? `submitted_at=${credentialReview?.submittedAt ?? "missing"}; credential_count=${credentialReviewCount}`
+        : "credentialed plan proof is not required",
+      path: credentialReviewPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "report-outline-proof",
+      status:
+        requiredAuditMinOutlineTargetPages === undefined || (outlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages
+          ? "ok"
+          : "fail",
+      required: requiredAuditMinOutlineTargetPages !== undefined,
+      detail:
+        requiredAuditMinOutlineTargetPages === undefined
+          ? "long-report outline proof is not required"
+          : `target_pages=${outlineTargetPages ?? "missing"}; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}`,
+      path: reportOutlinePath,
     }),
   )
 
   const heartbeat = await readJson<{
     elapsedSeconds?: number
+    startedAt?: string
+    endedAt?: string
+    updatedAt?: string
     reason?: string
     cycles?: Array<{
       launchedJobs?: unknown[]
@@ -271,8 +415,20 @@ export async function auditLiteralRunReadiness(
     recoveredJobs?: unknown[]
   }>(daemonHeartbeatPath)
   const literalElapsedSeconds = heartbeat?.elapsedSeconds
+  const heartbeatStartedAt = timestamp(heartbeat?.startedAt)
+  const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
+  const continuity = daemonLogContinuity(log, targetElapsedSeconds)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
+  const cliProof = await cliLaunchProof(root, { startedAt: heartbeatStartedAt, endedAt: heartbeatTime })
+  const combinedWorkProof = workProof
+    ? {
+        ...workProof,
+        modelLaunches: workProof.modelLaunches + cliProof.modelLaunches,
+        commandLaunches: workProof.commandLaunches + cliProof.commandLaunches,
+        total: workProof.total + cliProof.modelLaunches + cliProof.commandLaunches,
+      }
+    : undefined
   checks.push(
     check({
       id: "literal-runtime-proof",
@@ -286,11 +442,20 @@ export async function auditLiteralRunReadiness(
   )
   checks.push(
     check({
-      id: "literal-work-proof",
-      status: workProof && workProof.total > 0 ? "ok" : "fail",
+      id: "daemon-heartbeat-continuity",
+      status: continuity.continuous ? "ok" : "fail",
       required: true,
-      detail: workProof
-        ? `model_launches=${workProof.modelLaunches}; command_launches=${workProof.commandLaunches}; completed_lanes=${workProof.completedLanes}; synced_jobs=${workProof.syncedJobs}; recoveries=${workProof.recoveries}`
+      detail: `entries=${continuity.entries}; span_seconds=${continuity.spanSeconds ?? "missing"}; max_elapsed_seconds=${continuity.maxElapsed ?? "missing"}`,
+      path: daemonLogPath,
+    }),
+  )
+  checks.push(
+    check({
+      id: "literal-work-proof",
+      status: combinedWorkProof && combinedWorkProof.total > 0 ? "ok" : "fail",
+      required: true,
+      detail: combinedWorkProof
+        ? `model_launches=${combinedWorkProof.modelLaunches}; command_launches=${combinedWorkProof.commandLaunches}; completed_lanes=${combinedWorkProof.completedLanes}; synced_jobs=${combinedWorkProof.syncedJobs}; recoveries=${combinedWorkProof.recoveries}`
         : "daemon heartbeat is missing; no lane launch, command launch, recovery, or completion proof exists",
       path: daemonHeartbeatPath,
     }),
@@ -299,10 +464,59 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "final-package",
-      status: (await exists(finalManifestPath)) ? "ok" : "warn",
-      required: false,
+      status: (await exists(finalManifestPath)) ? "ok" : "fail",
+      required: true,
       detail: (await exists(finalManifestPath)) ? "final handoff manifest exists" : "final package manifest is missing",
       path: finalManifestPath,
+    }),
+  )
+  const finalAudit = await readJson<{
+    ok?: boolean
+    blockers?: unknown[]
+    generatedAt?: string
+    checks?: {
+      finalHandoff?: { gates?: { minOutlineTargetPages?: number; minPdfPages?: number } }
+      credentialHandoff?: { ok?: boolean; required?: boolean; credentialCount?: number }
+    }
+  }>(finalAuditPath)
+  const finalAuditTime = timestamp(finalAudit?.generatedAt)
+  const finalAuditFresh =
+    (heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)) &&
+    (!requiresCredentialHandoff || credentialReviewTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= credentialReviewTime))
+  const finalAuditMinOutlineTargetPages = finalAudit?.checks?.finalHandoff?.gates?.minOutlineTargetPages
+  const finalAuditMinPdfPages = finalAudit?.checks?.finalHandoff?.gates?.minPdfPages
+  const finalAuditGatesOk =
+    (requiredAuditMinOutlineTargetPages === undefined ||
+      (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages) &&
+    (requiredAuditMinPdfPages === undefined || (finalAuditMinPdfPages ?? 0) >= requiredAuditMinPdfPages)
+  const finalAuditCredentialHandoff = finalAudit?.checks?.credentialHandoff
+  const finalAuditCredentialHandoffOk =
+    !requiresCredentialHandoff ||
+    (finalAuditCredentialHandoff?.ok === true &&
+      finalAuditCredentialHandoff.required === true &&
+      (finalAuditCredentialHandoff.credentialCount ?? 0) > 0)
+  checks.push(
+    check({
+      id: "final-operation-audit",
+      status:
+        finalAudit?.ok === true &&
+        countItems(finalAudit.blockers) === 0 &&
+        finalAuditFresh &&
+        finalAuditGatesOk &&
+        finalAuditCredentialHandoffOk
+          ? "ok"
+          : "fail",
+      required: true,
+      detail: finalAudit
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; min_pdf_pages=${finalAuditMinPdfPages ?? "missing"}${requiredAuditMinPdfPages ? `; required_min_pdf_pages=${requiredAuditMinPdfPages}` : ""}; credential_handoff=${
+            requiresCredentialHandoff
+              ? finalAuditCredentialHandoffOk
+                ? "proved"
+                : "missing"
+              : "not_required"
+          }`
+        : "final operation audit is missing",
+      path: finalAuditPath,
     }),
   )
 

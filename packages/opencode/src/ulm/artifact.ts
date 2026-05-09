@@ -71,7 +71,7 @@ async function publishOperationUpdated(
 
 export type OperationCheckpointInput = {
   operationID?: string
-  objective: string
+  objective?: string
   stage: Stage
   status: OperationStatus
   summary: string
@@ -236,12 +236,14 @@ export type ReportLintOptions = {
   requireReport?: boolean
   minWords?: number
   requireOutlineBudget?: boolean
+  minOutlineTargetPages?: number
   minOutlineWordsPerPage?: number
   requireOutlineSections?: boolean
   minOutlineSectionWords?: number
   minOutlineSectionWordsPerPage?: number
   requireFindingSections?: boolean
   minFindingWords?: number
+  minPdfPages?: number
   finalHandoff?: boolean
   requireOperationPlan?: boolean
   requireRenderedDeliverables?: boolean
@@ -281,6 +283,8 @@ export type OperationStatusSummary = {
   }
   plans: {
     operation: boolean
+    discoveryCharter: boolean
+    discoveryCharterApproval?: PlanningApproval["status"]
   }
   findings: {
     total: number
@@ -377,6 +381,10 @@ type ToolInventoryStatusRecord = {
   }>
 }
 
+type OperationPlanStatusRecord = {
+  planningApproval?: PlanningApproval
+}
+
 export type OperationResumeBrief = {
   operationID: string
   root: string
@@ -426,8 +434,21 @@ export type OperationAuditResult = {
       status: "ready" | "attention_required"
       gaps: string[]
       counts: ReportLintResult["counts"]
+      gates?: {
+        minOutlineTargetPages?: number
+        minPdfPages?: number
+      }
     }
     coverage: CoverageReadiness
+    credentialHandoff: {
+      ok: boolean
+      required: boolean
+      status: "ready" | "attention_required" | "not_required"
+      gaps: string[]
+      credentialCount: number
+      submittedAt?: string
+      reviewFile: string
+    }
   }
   blockers: string[]
   recommendedTools: string[]
@@ -442,6 +463,7 @@ export type OperationStageGateOptions = Pick<
   | "requireReport"
   | "minWords"
   | "requireOutlineBudget"
+  | "minOutlineTargetPages"
   | "minOutlineWordsPerPage"
   | "requireOutlineSections"
   | "minOutlineSectionWords"
@@ -732,7 +754,7 @@ export type OperationPlanResult = {
 
 export type OperationDiscoveryCharterInput = Omit<
   OperationPlanInput,
-  "planningApproval" | "timeBudget" | "coverageContract" | "phases" | "reportingCloseout"
+  "timeBudget" | "coverageContract" | "phases" | "reportingCloseout"
 > & {
   discoveryCharter: DiscoveryCharterInvestmentStrategy
 }
@@ -763,7 +785,7 @@ export function operationPath(worktree: string, operationID: string) {
 }
 
 export function makeOperationID(input: Pick<OperationCheckpointInput, "operationID" | "objective">) {
-  return slug(input.operationID ?? input.objective, `operation-${Date.now()}`)
+  return slug(input.operationID ?? input.objective ?? "", `operation-${Date.now()}`)
 }
 
 export function makeFindingID(input: Pick<FindingInput, "findingID" | "title">) {
@@ -794,6 +816,52 @@ async function readText(file: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
     throw error
   }
+}
+
+type CredentialReviewSubmission = {
+  operationID?: string
+  submittedAt?: string
+  credentials?: unknown[]
+  file?: string
+}
+
+export function operationPlanRequiresCredentialHandoff(plan: unknown) {
+  if (!plan) return false
+  const text = JSON.stringify(plan).toLowerCase()
+  if (!/\bcredential|\bauthenticated\b/.test(text)) return false
+  if (/\b(?:no|without)\s+(?:[a-z0-9_-]+\s+){0,4}credentials?\b/.test(text) || /\bunauthenticated\b/.test(text)) {
+    return false
+  }
+  return (
+    /\b(?:provided|available|submitted|vault|test|use|using|required|credentialed)\b.{0,120}\bcredentials?\b/.test(text) ||
+    /\bcredentials?\b.{0,120}\b(?:provided|available|submitted|vault|test|use|using|required)\b/.test(text) ||
+    /\bauthenticated\b.{0,120}\b(?:checks?|validation|review|router|portal|ad|ldap|login|service)\b/.test(text)
+  )
+}
+
+async function evaluateCredentialHandoff(root: string, plan: unknown) {
+  const required = operationPlanRequiresCredentialHandoff(plan)
+  const reviewFile = path.join(root, "credentials", "review-submission.json")
+  const review = await readJson<CredentialReviewSubmission>(reviewFile)
+  const credentialCount = Array.isArray(review?.credentials) ? review.credentials.length : 0
+  const submitted = Boolean(review?.submittedAt && credentialCount > 0)
+  const gaps =
+    required && !submitted
+      ? [
+          review?.submittedAt
+            ? "credentialed plan requires at least one submitted credential vault record"
+            : "credentialed plan requires submitted credential vault review",
+        ]
+      : []
+  return {
+    ok: !required || submitted,
+    required,
+    status: required ? (submitted ? "ready" : "attention_required") : "not_required",
+    gaps,
+    credentialCount,
+    submittedAt: review?.submittedAt,
+    reviewFile,
+  } as const
 }
 
 async function writeJson(file: string, data: unknown) {
@@ -1498,6 +1566,9 @@ export function formatOperationAudit(audit: OperationAuditResult) {
     `final_handoff: ${audit.checks.finalHandoff.status}`,
     ...listLines(audit.checks.finalHandoff.gaps, "none"),
     "",
+    `credential_handoff: ${audit.checks.credentialHandoff.status}`,
+    ...listLines(audit.checks.credentialHandoff.gaps, "none"),
+    "",
     `coverage: ${audit.checks.coverage.ok ? "ready" : "attention_required"} (${audit.checks.coverage.status})`,
     ...listLines(audit.checks.coverage.gaps, "none"),
     "",
@@ -1515,6 +1586,11 @@ export async function buildOperationAudit(
   operationID: string,
   options: OperationAuditOptions = {},
 ): Promise<OperationAuditResult> {
+  const root = operationPath(worktree, operationID)
+  const finalHandoffRequired = options.finalHandoff ?? true
+  const plan = await readJson<OperationPlanRecord>(path.join(root, "plans", "operation-plan.json"))
+  const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, { ...options, finalHandoff: finalHandoffRequired })
+  const minPdfPages = options.minPdfPages ?? (finalHandoffRequired ? minOutlineTargetPages : undefined)
   const resume = await buildOperationResumeBrief(worktree, operationID, {
     eventLimit: options.eventLimit,
     staleAfterMinutes: options.staleAfterMinutes,
@@ -1524,19 +1600,21 @@ export async function buildOperationAudit(
     requireReport: options.requireReport,
     minWords: options.minWords,
     requireOutlineBudget: options.requireOutlineBudget,
+    minOutlineTargetPages: options.minOutlineTargetPages,
     minOutlineWordsPerPage: options.minOutlineWordsPerPage,
     requireOutlineSections: options.requireOutlineSections,
     minOutlineSectionWords: options.minOutlineSectionWords,
     minOutlineSectionWordsPerPage: options.minOutlineSectionWordsPerPage,
     requireFindingSections: options.requireFindingSections,
     minFindingWords: options.minFindingWords,
-    finalHandoff: options.finalHandoff ?? true,
+    minPdfPages,
+    finalHandoff: finalHandoffRequired,
     requireOperationPlan: options.requireOperationPlan,
     requireRenderedDeliverables: options.requireRenderedDeliverables,
     requireRuntimeSummary: options.requireRuntimeSummary,
   })
-  const root = operationPath(worktree, operationID)
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
+  const credentialHandoff = await evaluateCredentialHandoff(root, plan)
   const generatedAt = new Date().toISOString()
   const files = {
     json: path.join(root, "deliverables", "operation-audit.json"),
@@ -1546,7 +1624,7 @@ export async function buildOperationAudit(
     operationID: slug(operationID, "operation"),
     root,
     generatedAt,
-    ok: resume.health.ready && finalHandoff.ok && coverage.ok,
+    ok: resume.health.ready && finalHandoff.ok && coverage.ok && credentialHandoff.ok,
     checks: {
       resume: {
         ok: resume.health.ready,
@@ -1558,17 +1636,24 @@ export async function buildOperationAudit(
         status: finalHandoff.ok ? "ready" : "attention_required",
         gaps: finalHandoff.gaps,
         counts: finalHandoff.counts,
+        gates: {
+          minOutlineTargetPages,
+          minPdfPages,
+        },
       },
       coverage,
+      credentialHandoff,
     },
     blockers: [
       ...resume.health.gaps.map((gap) => `resume: ${gap}`),
       ...coverage.gaps.map((gap) => `coverage: ${gap}`),
+      ...credentialHandoff.gaps.map((gap) => `credential_handoff: ${gap}`),
       ...finalHandoff.gaps.map((gap) => `final_handoff: ${gap}`),
     ],
     recommendedTools: unique([
       ...resume.recommendedTools,
       ...(coverage.ok ? [] : ["operation_run", "operation_supervise"]),
+      ...(credentialHandoff.ok ? [] : ["operation_credentials"]),
       ...lintToolRecommendations(finalHandoff.gaps),
     ]),
     files,
@@ -1658,6 +1743,7 @@ async function stageGateGaps(
       requireReport: options.requireReport,
       minWords: options.minWords,
       requireOutlineBudget: options.requireOutlineBudget,
+      minOutlineTargetPages: options.minOutlineTargetPages,
       minOutlineWordsPerPage: options.minOutlineWordsPerPage,
       requireOutlineSections: options.requireOutlineSections,
       minOutlineSectionWords: options.minOutlineSectionWords,
@@ -1916,6 +2002,13 @@ function operationPlanMarkdown(record: OperationPlanRecord) {
 }
 
 function operationDiscoveryCharterMarkdown(record: OperationPlanRecord) {
+  const approval = record.planningApproval?.status ?? "pending"
+  const nextStep =
+    approval === "approved"
+      ? "- Discovery Charter approved. Run bounded discovery, then write the full duration-aware operation_plan once duration-fit is defensible."
+      : approval === "rejected"
+        ? "- Discovery Charter rejected. Revise scope, safety, or investment strategy before any broad discovery."
+        : "- Wait for explicit Discovery Charter approval before writing the full duration-aware operation_plan."
   return [
     `# Discovery Charter: ${record.operationID}`,
     "",
@@ -1952,7 +2045,7 @@ function operationDiscoveryCharterMarkdown(record: OperationPlanRecord) {
     ...(record.discoveryCharter?.decisionCriteriaForFullPlan ?? []).map((item) => `- ${item}`),
     "",
     "## Next Step",
-    "- Wait for explicit Discovery Charter approval before writing the full duration-aware operation_plan.",
+    nextStep,
     "",
   ].join("\n")
 }
@@ -2076,15 +2169,12 @@ export function validateOperationPlan(input: OperationPlanInput) {
     if (!discoveryCharter) {
       gaps.push("2h+ operation plan requires discoveryCharter investment strategy")
     } else {
-      if (!discoveryCharter.purpose.toLowerCase().includes("research") && !discoveryCharter.purpose.toLowerCase().includes("recon")) {
-        gaps.push("2h+ operation plan requires discoveryCharter.purpose to describe research/recon/question strategy")
-      }
-      if (discoveryCharter.researchQuestions.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.researchQuestions")
-      if (discoveryCharter.reconInvestments.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.reconInvestments")
-      if (discoveryCharter.operatorQuestions.length < 2) gaps.push("2h+ operation plan requires discoveryCharter.operatorQuestions")
-      if (discoveryCharter.candidateDeepWorkLanes.length < 3) gaps.push("2h+ operation plan requires discoveryCharter.candidateDeepWorkLanes")
-      if (discoveryCharter.decisionCriteriaForFullPlan.length < 3)
-        gaps.push("2h+ operation plan requires discoveryCharter.decisionCriteriaForFullPlan")
+      if (!discoveryCharter.purpose.trim()) gaps.push("2h+ operation plan requires discoveryCharter.purpose")
+      if (!discoveryCharter.researchQuestions.length) gaps.push("2h+ operation plan requires discoveryCharter.researchQuestions")
+      if (!discoveryCharter.reconInvestments.length) gaps.push("2h+ operation plan requires discoveryCharter.reconInvestments")
+      if (!discoveryCharter.operatorQuestions.length) gaps.push("2h+ operation plan requires discoveryCharter.operatorQuestions")
+      if (!discoveryCharter.candidateDeepWorkLanes.length) gaps.push("2h+ operation plan requires discoveryCharter.candidateDeepWorkLanes")
+      if (!discoveryCharter.decisionCriteriaForFullPlan.length) gaps.push("2h+ operation plan requires discoveryCharter.decisionCriteriaForFullPlan")
     }
     if (!input.timeBudget?.allocations.length) gaps.push("2h+ operation plan requires timeBudget.allocations")
     if (!input.timeBudget?.finalizationWindowHours) gaps.push("2h+ operation plan requires timeBudget.finalizationWindowHours")
@@ -2729,9 +2819,11 @@ export async function writeOperationCheckpoint(worktree: string, input: Operatio
   const operationID = makeOperationID(input)
   const root = operationPath(worktree, operationID)
   const current = await readJson<OperationRecord>(path.join(root, "operation.json"))
+  const objective = input.objective ?? current?.objective
+  if (!objective) throw new Error("objective is required for a new operation checkpoint")
   const record: OperationRecord = {
     operationID,
-    objective: input.objective,
+    objective,
     stage: input.stage,
     status: input.status,
     summary: input.summary,
@@ -2977,6 +3069,12 @@ function outlineTargetPages(outline: string | undefined) {
   return Number.isFinite(pages) && pages > 0 ? pages : undefined
 }
 
+function defaultMinOutlineTargetPages(plan: OperationPlanRecord | undefined, options: ReportLintOptions) {
+  if (options.minOutlineTargetPages !== undefined) return options.minOutlineTargetPages
+  if (options.finalHandoff && (plan?.timeBudget?.targetHours ?? 0) >= 20) return 50
+  return undefined
+}
+
 type OutlineSectionBudget = {
   title: string
   pages: number
@@ -3144,6 +3242,10 @@ export async function readOperationStatus(
     },
     plans: {
       operation: await exists(path.join(root, "plans", "operation-plan.json")),
+      discoveryCharter: await exists(path.join(root, "plans", "discovery-charter.json")),
+      discoveryCharterApproval: await readJson<OperationPlanStatusRecord>(
+        path.join(root, "plans", "discovery-charter.json"),
+      ).then((plan) => plan?.planningApproval?.status),
     },
     findings: {
       total: findings.length,
@@ -3381,7 +3483,7 @@ export async function writeOperationDiscoveryCharter(
   const record: OperationPlanRecord = {
     ...input,
     operationID,
-    planningApproval: { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
+    planningApproval: input.planningApproval ?? { status: "pending", discoveryCharterPath: "plans/discovery-charter.md" },
     phases: [],
     reportingCloseout: [],
     writtenAt: new Date().toISOString(),
@@ -3395,6 +3497,44 @@ export async function writeOperationDiscoveryCharter(
     type: "discovery_charter",
     operationID,
     writtenAt: record.writtenAt,
+  })
+  await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
+  return { operationID, json, markdown, phases: 0 }
+}
+
+export async function approveOperationDiscoveryCharter(
+  worktree: string,
+  input: { operationID: string; approver?: string; notes?: string[]; approvedAt?: string },
+): Promise<OperationPlanResult | undefined> {
+  const operationID = slug(input.operationID, "operation")
+  const root = operationPath(worktree, operationID)
+  const json = path.join(root, "plans", "discovery-charter.json")
+  const markdown = path.join(root, "plans", "discovery-charter.md")
+  const record = await readJson<OperationPlanRecord>(json)
+  if (!record) return undefined
+  const existing = record.planningApproval
+  const notes = [
+    ...(existing?.notes ?? []),
+    ...(input.notes ?? ["Approved through operator question response."]),
+  ].filter(Boolean)
+  const updated: OperationPlanRecord = {
+    ...record,
+    planningApproval: {
+      ...existing,
+      status: "approved",
+      discoveryCharterPath: existing?.discoveryCharterPath ?? "plans/discovery-charter.md",
+      approvedAt: input.approvedAt ?? existing?.approvedAt ?? new Date().toISOString(),
+      approver: input.approver ?? existing?.approver ?? "operator",
+      notes,
+    },
+  }
+  await writeJson(json, updated)
+  await fs.writeFile(markdown, operationDiscoveryCharterMarkdown(updated))
+  await appendJsonl(path.join(root, "events.jsonl"), {
+    type: "discovery_charter_approval",
+    operationID,
+    approvedAt: updated.planningApproval?.approvedAt,
+    approver: updated.planningApproval?.approver,
   })
   await publishOperationUpdated(worktree, { operationID, artifact: "operation_plan", path: json })
   return { operationID, json, markdown, phases: 0 }
@@ -3551,6 +3691,7 @@ export async function lintReport(
     if (operation.stage !== "handoff") gaps.push("operation stage must be handoff for final handoff")
     if (operation.status !== "complete") gaps.push("operation status must be complete for final handoff")
   }
+  const plan = await readJson<OperationPlanRecord>(path.join(root, "plans", "operation-plan.json"))
 
   const findings = await readFindings(root)
   const evidenceRecords = await readEvidenceRecords(root)
@@ -3587,7 +3728,9 @@ export async function lintReport(
     if (words < options.minWords)
       gaps.push(`report is too sparse: ${words} words, expected at least ${options.minWords}`)
   }
-  const requireOutlineBudget = options.requireOutlineBudget || options.minOutlineWordsPerPage
+  const minOutlineTargetPages = defaultMinOutlineTargetPages(plan, options)
+  const minPdfPages = options.minPdfPages ?? (options.finalHandoff ? minOutlineTargetPages : undefined)
+  const requireOutlineBudget = options.requireOutlineBudget || minOutlineTargetPages || options.minOutlineWordsPerPage
   const requireOutlineSections =
     options.requireOutlineSections || options.minOutlineSectionWords || options.minOutlineSectionWordsPerPage
   if (requireOutlineBudget || requireOutlineSections) {
@@ -3596,6 +3739,11 @@ export async function lintReport(
       const targetPages = outlineTargetPages(outline)
       const sections = outlineSectionBudgets(outline)
       if (!targetPages) gaps.push("reports/report-outline.md with target_pages is required for outline budget lint")
+      if (targetPages && minOutlineTargetPages && targetPages < minOutlineTargetPages) {
+        gaps.push(
+          `reports/report-outline.md target_pages is too small: ${targetPages}, expected at least ${minOutlineTargetPages}`,
+        )
+      }
       if (targetPages && sections.length) {
         const sectionPages = sections.reduce((sum, section) => sum + section.pages, 0)
         if (sectionPages > targetPages * 1.25) {
@@ -3666,7 +3814,7 @@ export async function lintReport(
         gaps.push(`deliverables/final/${file} is required`)
       }
     }
-    gaps.push(...(await finalPackageIntegrityGaps(root, { requireRuntimeSummary })))
+    gaps.push(...(await finalPackageIntegrityGaps(root, { requireRuntimeSummary, minPdfPages })))
   }
   if (requireRuntimeSummary && !(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
     gaps.push("deliverables/runtime-summary.json is required")
@@ -3774,7 +3922,13 @@ async function parseRequiredJson(file: string, gapLabel: string, gaps: string[])
   }
 }
 
-async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSummary: boolean }) {
+function pdfPageCount(pdf: string | undefined) {
+  const match = pdf?.match(/\/Type\s*\/Pages\b[\s\S]{0,500}?\/Count\s+(\d+)/)
+  const pages = Number.parseInt(match?.[1] ?? "", 10)
+  return Number.isFinite(pages) && pages > 0 ? pages : undefined
+}
+
+async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSummary: boolean; minPdfPages?: number }) {
   const gaps: string[] = []
   const finalDir = path.join(root, "deliverables", "final")
   const manifestPath = path.join(finalDir, "manifest.json")
@@ -3836,6 +3990,13 @@ async function finalPackageIntegrityGaps(root: string, input: { requireRuntimeSu
   }
   if (pdf !== undefined && pdf.includes("/BaseFont /Helvetica") && !pdf.includes("/ULMCodeRenderer (styled-html)")) {
     gaps.push("deliverables/final/report.pdf was rendered by the legacy text-only renderer")
+  }
+  if (pdf !== undefined && input.minPdfPages) {
+    const pages = pdfPageCount(pdf)
+    if (!pages) gaps.push("deliverables/final/report.pdf page count could not be read")
+    else if (pages < input.minPdfPages) {
+      gaps.push(`deliverables/final/report.pdf has ${pages} pages, expected at least ${input.minPdfPages}`)
+    }
   }
   const html = await readText(path.join(finalDir, "report.html"))
   if (html !== undefined) {

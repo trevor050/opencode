@@ -1,13 +1,17 @@
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
+import type { InternalTuiPlugin } from "../../plugin/internal"
 import { useSyncV2 } from "@tui/context/sync-v2"
 import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
 import { useTheme } from "@tui/context/theme"
 import { useLocal } from "@tui/context/local"
-import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { Link } from "@tui/ui/link"
+import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { TextAttributes, type BoxRenderable, type SyntaxStyle } from "@opentui/core"
+import { useBindings } from "../../keymap"
 import { Locale } from "@/util/locale"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
+import { webSearchProviderLabel } from "@/tool/websearch"
 import path from "path"
 import stripAnsi from "strip-ansi"
 import type {
@@ -53,12 +57,18 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
     void sync.session.message.sync(props.sessionID)
   })
 
-  useKeyboard((event) => {
-    if (event.name !== "escape") return
-    event.preventDefault()
-    event.stopPropagation()
-    props.api.route.navigate("session", { sessionID: props.sessionID })
-  })
+  useBindings(() => ({
+    bindings: [
+      {
+        key: "escape",
+        desc: "Back to session",
+        group: "Session",
+        cmd() {
+          props.api.route.navigate("session", { sessionID: props.sessionID })
+        },
+      },
+    ],
+  }))
 
   return (
     <box width={dimensions().width} height={dimensions().height} backgroundColor={theme.background}>
@@ -84,6 +94,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
                   <Match when={message.type === "assistant"}>
                     <AssistantMessage
                       message={message as SessionMessageAssistant}
+                      sessionID={props.sessionID}
                       last={lastAssistant()?.id === message.id}
                       syntax={syntax()}
                       subtleSyntax={subtleSyntax()}
@@ -281,6 +292,7 @@ function UnknownMessage(props: { message: SessionMessage }) {
 
 function AssistantMessage(props: {
   message: SessionMessageAssistant
+  sessionID: string
   last: boolean
   syntax: SyntaxStyle
   subtleSyntax: SyntaxStyle
@@ -309,7 +321,7 @@ function AssistantMessage(props: {
               <AssistantReasoning part={part as SessionMessageAssistantReasoning} subtleSyntax={props.subtleSyntax} />
             </Match>
             <Match when={part.type === "tool"}>
-              <AssistantTool part={part as SessionMessageAssistantTool} />
+              <AssistantTool part={part as SessionMessageAssistantTool} sessionID={props.sessionID} />
             </Match>
           </Switch>
         )}
@@ -395,18 +407,20 @@ function AssistantReasoning(props: { part: SessionMessageAssistantReasoning; sub
   )
 }
 
-function AssistantTool(props: { part: SessionMessageAssistantTool }) {
+function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: string }) {
   const input = createMemo(() => toolInputRecord(props.part.state.input))
   const toolprops = {
     get input() {
       return input()
     },
     get metadata() {
-      return props.part.provider?.metadata ?? {}
+      const state = props.part.state as { structured?: unknown }
+      return isRecord(state.structured) ? state.structured : (props.part.provider?.metadata ?? {})
     },
     get output() {
       return props.part.state.status === "pending" ? undefined : toolOutput(props.part.state.content)
     },
+    sessionID: props.sessionID,
     part: props.part,
   }
   return (
@@ -447,6 +461,9 @@ function AssistantTool(props: { part: SessionMessageAssistantTool }) {
       <Match when={props.part.name === "question"}>
         <Question {...toolprops} />
       </Match>
+      <Match when={props.part.name === "operation_credentials"}>
+        <OperationCredentials {...toolprops} />
+      </Match>
       <Match when={props.part.name === "skill"}>
         <Skill {...toolprops} />
       </Match>
@@ -464,6 +481,7 @@ type ToolProps = {
   input: Record<string, unknown>
   metadata: Record<string, unknown>
   output?: string
+  sessionID: string
   part: SessionMessageAssistantTool
 }
 
@@ -770,9 +788,10 @@ function CodeSearch(props: ToolProps) {
 }
 
 function WebSearch(props: ToolProps) {
+  const label = createMemo(() => webSearchProviderLabel(props.metadata.provider))
   return (
     <InlineTool icon="◈" pending="Searching web..." complete={toolComplete(props.part)} part={props.part}>
-      Exa Web Search "{stringValue(props.input.query) ?? pendingInput(props.part)}"{" "}
+      {label()} "{stringValue(props.input.query) ?? pendingInput(props.part)}"{" "}
       <Show when={numberValue(props.metadata.numResults)}>{(results) => <>({results()} results)</>}</Show>
     </InlineTool>
   )
@@ -972,6 +991,40 @@ function Question(props: ToolProps) {
   )
 }
 
+function OperationCredentials(props: ToolProps) {
+  const { theme } = useTheme()
+  const action = createMemo(() => stringValue(props.input.action))
+  const operationID = createMemo(() => stringValue(props.metadata.operationID) ?? stringValue(props.input.operationID) ?? "")
+  const vaultUrl = createMemo(() => stringValue(props.metadata.fullVaultUrl) ?? stringValue(props.metadata.vaultUrl) ?? "")
+  const opened = createMemo(() => props.metadata.opened === true)
+  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
+
+  return (
+    <Switch>
+      <Match when={isVault()}>
+        <BlockTool title="# Credential Vault" part={props.part}>
+          <box gap={1}>
+            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
+            <text fg={opened() ? theme.success : theme.warning}>
+              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
+            </text>
+            <Show when={vaultUrl()}>
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.textMuted}>Fallback:</text>
+                <Link href={vaultUrl()} fg={theme.primary} />
+              </box>
+            </Show>
+            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <GenericTool {...props} />
+      </Match>
+    </Switch>
+  )
+}
+
 function Skill(props: ToolProps) {
   return (
     <InlineTool icon="→" pending="Loading skill..." complete={toolComplete(props.part)} part={props.part}>
@@ -1113,24 +1166,27 @@ const tui: TuiPlugin = async (api) => {
     },
   ])
 
-  api.command.register(() => [
-    {
-      title: "View v2 session messages",
-      value: route,
-      category: "Debug",
-      suggested: api.route.current.name === "session",
-      enabled: api.route.current.name === "session",
-      onSelect() {
-        const sessionID = currentSessionID(api)
-        if (!sessionID) return
-        api.route.navigate(route, { sessionID })
-        api.ui.dialog.clear()
+  api.keymap.registerLayer({
+    commands: [
+      {
+        name: route,
+        title: "View v2 session messages",
+        category: "Debug",
+        namespace: "palette",
+        suggested: () => api.route.current.name === "session",
+        enabled: () => api.route.current.name === "session",
+        run() {
+          const sessionID = currentSessionID(api)
+          if (!sessionID) return
+          api.route.navigate(route, { sessionID })
+          api.ui.dialog.clear()
+        },
       },
-    },
-  ])
+    ],
+  })
 }
 
-const plugin: TuiPluginModule & { id: string } = {
+const plugin: InternalTuiPlugin = {
   id,
   tui,
 }

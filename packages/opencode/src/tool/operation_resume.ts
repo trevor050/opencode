@@ -9,6 +9,10 @@ import { TaskTool } from "./task"
 import { CommandSuperviseTool } from "./command_supervise"
 import { buildOperationResumeBrief, formatOperationResumeBrief, readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
 import { markRecoveredLanesRunning } from "@/ulm/operation-recovery"
+import { bindOperationSession } from "@/ulm/operation-context"
+
+const RECOVERED_LANE_NEXT_ACTION =
+  "Poll recovered background lanes once with task_status wait=true timeout_ms<=30000; if they are still running and no fresh lane-owned artifacts appeared, block the lane instead of waiting in prose"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -64,9 +68,24 @@ export const OperationResumeTool = Tool.define(
               .filter((job) => operationID(job) === params.operationID)
               .filter((job) => recoverableStatus(job.status))
               .map((job) => ({ job, taskArgs: taskRestartArgs(job), commandArgs: commandRestartArgs(job) }))
+            const candidateWorktree = candidates.map((item) => metadataWorktree(item.job)).find(Boolean) ?? (yield* currentWorktree)
+            const currentStatus = yield* Effect.tryPromise(() => readOperationStatus(candidateWorktree, params.operationID)).pipe(
+              Effect.catch(() => Effect.succeed(undefined)),
+            )
+            if (currentStatus?.operation?.status === "complete") {
+              return {
+                requested: true,
+                restarted: 0,
+                skipped: candidates.length,
+                checkpointUpdated: false,
+                worktree: candidateWorktree,
+                output: "operation_status: complete\nrecovery_skipped_reason: operation is already complete",
+              }
+            }
             const restartable = candidates.filter((item) => item.taskArgs !== undefined || item.commandArgs !== undefined).slice(0, maxRecoveries)
             const skipped = candidates.length - restartable.length
             const restarted: string[] = []
+            const recoveredJobIDs = new Set(restartable.map((item) => item.job.id))
 
             for (const item of restartable) {
               const result = item.taskArgs
@@ -100,10 +119,15 @@ export const OperationResumeTool = Tool.define(
                   stage: operation.stage,
                   status: "running",
                   summary: `Recovered ${restartable.length} background lane${restartable.length === 1 ? "" : "s"} during operation resume.`,
-                  nextActions: [...new Set([...operation.nextActions, "Poll recovered background lanes with task_status"])],
+                  nextActions: [...new Set([...operation.nextActions, RECOVERED_LANE_NEXT_ACTION])],
                   blockers: operation.blockers,
                   riskLevel: operation.riskLevel,
-                  activeTasks: [...new Set([...operation.activeTasks, ...restartable.map((item) => item.job.id)])],
+                  activeTasks: [
+                    ...new Set([
+                      ...operation.activeTasks.filter((item) => !item.startsWith("ses_") || recoveredJobIDs.has(item)),
+                      ...restartable.map((item) => item.job.id),
+                    ]),
+                  ],
                   evidence: operation.evidence,
                   notes: operation.notes,
                 }),
@@ -116,17 +140,25 @@ export const OperationResumeTool = Tool.define(
               restarted: restartable.length,
               skipped,
               checkpointUpdated,
+              worktree: restartable.map((item) => metadataWorktree(item.job)).find(Boolean),
               output: restarted.join("\n\n"),
             }
           })
 
-          const worktree = yield* currentWorktree
+          const worktree = recovery?.worktree ?? (yield* currentWorktree)
           const result = yield* Effect.tryPromise(() =>
             buildOperationResumeBrief(worktree, params.operationID, {
               eventLimit: params.eventLimit,
               staleAfterMinutes: params.staleAfterMinutes,
             }),
           ).pipe(Effect.orDie)
+          yield* Effect.promise(() =>
+            bindOperationSession(worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: "operation_resume",
+            }),
+          )
           const recoveryLines = recovery
             ? [
                 "recovery:",

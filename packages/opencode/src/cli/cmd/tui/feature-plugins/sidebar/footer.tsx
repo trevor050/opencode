@@ -1,12 +1,14 @@
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
+import type { InternalTuiPlugin } from "../../plugin/internal"
 import nodePath from "path"
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
-import { activeOperationGoal } from "@/ulm/operation-context"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { operationForSession } from "@/ulm/operation-context"
 import { operationPath } from "@/ulm/artifact"
+import type { SessionID } from "@/session/schema"
 
 const id = "internal:sidebar-footer"
 
-function View(props: { api: TuiPluginApi }) {
+function View(props: { api: TuiPluginApi; session_id?: string }) {
   const theme = () => props.api.theme.current
   const has = createMemo(() =>
     props.api.state.provider.some(
@@ -18,14 +20,22 @@ function View(props: { api: TuiPluginApi }) {
   const [operationFile, setOperationFile] = createSignal<string | undefined>()
 
   async function refreshOperationFile() {
+    if (!props.session_id) {
+      setOperationFile(undefined)
+      return
+    }
     const root = props.api.state.path.worktree || props.api.state.path.directory || process.cwd()
-    const operation = await activeOperationGoal(root)
+    const operation = await operationForSession(root, props.session_id as SessionID)
     setOperationFile(
       operation
         ? nodePath.join(operationPath(operation.worktree, operation.operationID), "goals", "operation-goal.json")
         : undefined,
     )
   }
+
+  createEffect(() => {
+    void refreshOperationFile()
+  })
 
   onMount(() => {
     void refreshOperationFile()
@@ -98,14 +108,14 @@ const tui: TuiPlugin = async (api) => {
   api.slots.register({
     order: 100,
     slots: {
-      sidebar_footer() {
-        return <View api={api} />
+      sidebar_footer(_ctx, props) {
+        return <View api={api} session_id={props.session_id} />
       },
     },
   })
 }
 
-const plugin: TuiPluginModule & { id: string } = {
+const plugin: InternalTuiPlugin = {
   id,
   tui,
 }

@@ -28,7 +28,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
-import { SessionPrompt } from "../../src/session/prompt"
+import { allowsULMTurnEndSupervisor, SessionPrompt, shouldSkipULMTurnEndSupervisorForOperationStatus } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -252,6 +252,20 @@ test("static prompts preserve compact ULM operation context rules", async () => 
   expect(planPrompt).toContain("avoid dumping the full tool catalog")
 })
 
+test("ULM turn-end supervisor auto-continuation is pentest-only", () => {
+  expect(allowsULMTurnEndSupervisor("pentest")).toBe(true)
+  expect(allowsULMTurnEndSupervisor("action")).toBe(false)
+  expect(allowsULMTurnEndSupervisor("build")).toBe(false)
+  expect(allowsULMTurnEndSupervisor(undefined)).toBe(false)
+})
+
+test("ULM turn-end supervisor skips terminal operation statuses", () => {
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("complete")).toBe(true)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("cancelled")).toBe(true)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("running")).toBe(false)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus(undefined)).toBe(false)
+})
+
 function providerCfg(url: string) {
   return {
     ...cfg,
@@ -403,6 +417,45 @@ it.live("loop calls LLM and returns assistant message", () =>
     }),
     { git: true, config: providerCfg },
   ),
+)
+
+it.live(
+  "system prompt keeps repo instructions before volatile environment context",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ dir, llm }) {
+        yield* Effect.promise(() =>
+          fs.writeFile(path.join(dir, "AGENTS.md"), "CACHE_ORDER_SENTINEL stable instructions\n"),
+        )
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "Pinned",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+        yield* llm.text("world")
+
+        yield* prompt.loop({ sessionID: chat.id })
+
+        const input = (yield* llm.inputs)[0]
+        const messages = input.messages as Array<{ role?: string; content?: unknown }>
+        const system = messages.find((message) => message.role === "system")?.content
+        expect(typeof system).toBe("string")
+        const text = String(system)
+
+        expect(text.indexOf("CACHE_ORDER_SENTINEL")).toBeGreaterThan(-1)
+        expect(text.indexOf("<env>")).toBeGreaterThan(-1)
+        expect(text.indexOf("CACHE_ORDER_SENTINEL")).toBeLessThan(text.indexOf("<env>"))
+      }),
+      { git: true, config: providerCfg },
+    ),
+  15_000,
 )
 
 it.live("prompt emits v2 prompted and synthetic events", () =>
@@ -763,7 +816,7 @@ it.live(
           const end = Date.now() + 5_000
           while (Date.now() < end) {
             const msgs = await Effect.runPromise(MessageV2.filterCompactedEffect(chat.id))
-            const assistant = msgs.findLast((item) => item.info.role === "assistant" && item.info.agent === "build")
+            const assistant = msgs.findLast((item) => item.info.role === "assistant")
             const tool = assistant?.parts.find(
               (part): part is MessageV2.ToolPart => part.type === "tool" && part.tool === "task",
             )
@@ -2081,7 +2134,7 @@ it.live(
             const err = Cause.squash(exit.cause)
             expect(NamedError.Unknown.isInstance(err)).toBe(true)
             if (NamedError.Unknown.isInstance(err)) {
-              expect(err.data.message).toContain("build")
+              expect(err.data.message).toContain("action")
             }
           }
         }),

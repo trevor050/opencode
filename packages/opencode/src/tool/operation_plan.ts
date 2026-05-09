@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_plan.txt"
 import { Instance } from "@/project/instance"
 import { writeOperationDiscoveryCharter, writeOperationPlan } from "@/ulm/artifact"
+import { errorMessage } from "@/util/error"
 
 const Phase = Schema.Struct({
   stage: Schema.Literals(["intake", "recon", "mapping", "validation", "reporting", "handoff"]),
@@ -87,6 +88,16 @@ type Metadata = {
   json: string
   markdown: string
   phases: number
+  planningMode: "discovery-charter" | "full-duration" | "compact"
+  planningApprovalStatus?: "not_required" | "pending" | "approved" | "rejected"
+  operatorView: string
+}
+
+function toolPromise<T>(try_: () => Promise<T>) {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (error) => new Error(errorMessage(error)),
+  })
 }
 
 export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>(
@@ -96,9 +107,10 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
+        const discoveryMode = params.planningMode === "discovery-charter" || (params.phases === undefined && params.discoveryCharter)
         const result =
-          params.planningMode === "discovery-charter" || (params.phases === undefined && params.discoveryCharter)
-            ? yield* Effect.tryPromise(() =>
+          discoveryMode
+            ? yield* toolPromise(() =>
                 writeOperationDiscoveryCharter(Instance.worktree, {
                   operationID: params.operationID,
                   templateName: params.templateName,
@@ -108,6 +120,7 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
                   operationMemory: params.operationMemory,
                   reportDesignProfile: params.reportDesignProfile,
                   assumptions: params.assumptions,
+                  planningApproval: params.planningApproval,
                   discoveryCharter: params.discoveryCharter ?? {
                     purpose: "Research, recon, and operator-question strategy before writing the full operation plan.",
                     researchQuestions: [],
@@ -118,22 +131,46 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
                   },
                 }),
               ).pipe(Effect.orDie)
-            : yield* Effect.tryPromise(() =>
+            : yield* toolPromise(() =>
                 writeOperationPlan(Instance.worktree, {
                   ...params,
                   phases: params.phases ?? [],
                   reportingCloseout: params.reportingCloseout ?? [],
                 }),
               ).pipe(Effect.orDie)
+        const approvalStatus = discoveryMode ? (params.planningApproval?.status ?? "pending") : params.planningApproval?.status
+        const operatorView = "Review the plan preview below or open the markdown artifact path."
+        const preview = yield* Effect.tryPromise(() => Bun.file(result.markdown).text()).pipe(
+          Effect.catch(() => Effect.succeed("")),
+        )
+        const previewText = preview.split("\n").slice(0, 28).join("\n").trim()
+        const nextStep = discoveryMode
+          ? approvalStatus === "approved"
+            ? "bounded_discovery_then_full_duration_plan"
+            : approvalStatus === "rejected"
+              ? "revise_charter_before_discovery"
+              : "ask_operator_to_approve_discovery_charter"
+          : "execute_plan_and_keep_status_updated"
         return {
           title: result.phases === 0 ? `Wrote Discovery Charter for ${result.operationID}` : `Wrote operation plan for ${result.operationID}`,
           output: [
             `operation_id: ${result.operationID}`,
+            `plan_kind: ${discoveryMode ? "discovery_charter" : "operation_plan"}`,
+            `planning_mode: ${params.planningMode ?? (discoveryMode ? "discovery-charter" : "compact")}`,
+            ...(approvalStatus ? [`planning_approval: ${approvalStatus}`] : []),
             `json: ${result.json}`,
             `markdown: ${result.markdown}`,
             `phases: ${result.phases}`,
+            `operator_view: ${operatorView}`,
+            `next_step: ${nextStep}`,
+            ...(previewText ? ["", "plan_preview:", "```markdown", previewText, "```"] : []),
           ].join("\n"),
-          metadata: result,
+          metadata: {
+            ...result,
+            planningMode: params.planningMode ?? (discoveryMode ? "discovery-charter" : "compact"),
+            planningApprovalStatus: approvalStatus,
+            operatorView,
+          },
         }
       }),
   }),

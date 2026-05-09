@@ -46,7 +46,7 @@ describe("ULM model runtime catalog", () => {
       },
     })
 
-    expect(resolveModelRuntime("opencode-go/default", catalog)?.providerKind).toBe("subscription")
+    expect(resolveModelRuntime("opencode-go/qwen3.6-plus", catalog)?.providerKind).toBe("subscription")
   })
 
   test("audits primary and fallback route availability against provider metadata", () => {
@@ -70,11 +70,11 @@ describe("ULM model runtime catalog", () => {
       providers,
       routes: [
         { route: "openai/gpt-5.5-fast", laneID: "report_writing", role: "primary" },
-        { route: "opencode-go/default", laneID: "recon", role: "primary" },
+        { route: "opencode-go/qwen3.6-plus", laneID: "recon", role: "primary" },
         { route: "openai/missing-model", laneID: "recon", role: "fallback" },
       ],
       quotaOverrides: {
-        "opencode-go/default": { kind: "soft", window: "daily", maxCalls: 20 },
+        "opencode-go/qwen3.6-plus": { kind: "soft", window: "daily", maxCalls: 20 },
       },
     })
 
@@ -83,7 +83,7 @@ describe("ULM model runtime catalog", () => {
       hasRuntimeMetadata: true,
       quotaPolicyKnown: false,
     })
-    expect(audit.routes.find((route) => route.route === "opencode-go/default")).toMatchObject({
+    expect(audit.routes.find((route) => route.route === "opencode-go/qwen3.6-plus")).toMatchObject({
       providerKind: "subscription",
       quotaPolicyKnown: true,
     })

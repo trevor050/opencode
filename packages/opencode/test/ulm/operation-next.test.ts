@@ -33,7 +33,38 @@ describe("ULM operation next action", () => {
     if (result.action.action !== "launch_lane") throw new Error("expected launch_lane")
     expect(result.action.lane.id).toBe("district_profile")
     expect(result.action.prompt).toContain('Run operation lane "district_profile"')
+    expect(result.action.prompt).toContain("mode=complete_lane")
+    expect(result.action.prompt).toContain("Use only the allowed tools listed above")
+    expect(result.action.prompt).toContain("Bash, browser, and Playwright tools are unavailable")
+    expect(result.action.prompt).toContain("poll their heartbeat/stdout/stderr artifacts with read/grep")
+    expect(result.action.prompt).toContain("Do not use bash, sleep, cat, tail, or foreground shell commands")
     expect(result.action.recommendedTools).toContain("district_profile")
+  })
+
+  test("does not launch the supervisor lane as normal operation work", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, {
+      operationID: "School",
+      includeSupervisor: true,
+      budgetUSD: 10,
+    })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { id: string; status: string }) => ({
+      ...lane,
+      status: lane.id === "supervisor" ? "ready" : "complete",
+    }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await decideOperationNext(dir.path, { operationID: "School" })
+
+    expect(result.action.action).toBe("wait")
+    if (result.action.action !== "wait") throw new Error("expected wait")
+    expect(result.action.laneID).toBe("supervisor")
   })
 
   test("waits when max concurrent lanes are already running", async () => {

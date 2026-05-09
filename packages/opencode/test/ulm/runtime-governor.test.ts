@@ -78,7 +78,7 @@ describe("ULM runtime governor", () => {
 
     expect(decision.action).toBe("continue")
     expect(decision.contextRatio).toBeUndefined()
-    expect(decision.blockers).not.toContain("model context is above 90% for opencode-go/default")
+    expect(decision.blockers).not.toContain("model context is above 90% for opencode-go/qwen3.6-plus")
   })
 
   test("compacts when the active session reports high compaction pressure", async () => {
@@ -121,13 +121,13 @@ describe("ULM runtime governor", () => {
     await writeOperationGraph(dir.path, {
       operationID: "School",
       budgetUSD: 10,
-      modelRoutes: { throughput: "opencode-go/default" },
+      modelRoutes: { throughput: "opencode-go/qwen3.6-plus" },
     })
     await writeRuntimeSummary(dir.path, {
       operationID: "School",
       modelCalls: {
         total: 4,
-        byModel: { "opencode-go/default": 4 },
+        byModel: { "opencode-go/qwen3.6-plus": 4 },
       },
       usage: { costUSD: 1, budgetUSD: 10 },
       compaction: { pressure: "low" },
@@ -137,7 +137,7 @@ describe("ULM runtime governor", () => {
       operationID: "School",
       laneID: "recon",
       modelCatalog: {
-        "opencode-go/default": {
+        "opencode-go/qwen3.6-plus": {
           providerKind: "subscription",
           contextLimit: 200_000,
           outputLimit: 32_000,
@@ -147,7 +147,7 @@ describe("ULM runtime governor", () => {
     })
 
     expect(decision.action).toBe("stop")
-    expect(decision.blockers).toContain("model route quota exhausted for opencode-go/default")
+    expect(decision.blockers).toContain("model route quota exhausted for opencode-go/qwen3.6-plus")
     expect(decision.fallbackModelRoutes).toContain("openai/gpt-5.4-mini-fast")
     expect(decision.recommendedTools).toContain("runtime_summary")
     expect(decision.recommendedTools).toContain("operation_audit")
@@ -185,14 +185,14 @@ describe("ULM runtime governor", () => {
         },
       },
       quotaOverrides: {
-        "opencode-go/default": { kind: "soft", window: "daily", maxCalls: 20 },
+        "opencode-go/qwen3.6-plus": { kind: "soft", window: "daily", maxCalls: 20 },
       },
     })
 
     expect(audit.json).toContain("model-route-audit.json")
     expect(audit.markdown).toContain("model-route-audit.md")
     expect(audit.record.routes.some((route) => route.role === "fallback")).toBe(true)
-    expect(audit.record.routes.some((route) => route.route === "opencode-go/default" && route.quotaPolicyKnown)).toBe(
+    expect(audit.record.routes.some((route) => route.route === "opencode-go/qwen3.6-plus" && route.quotaPolicyKnown)).toBe(
       true,
     )
     expect(await Bun.file(audit.markdown).text()).toContain("quota policy is not recorded")

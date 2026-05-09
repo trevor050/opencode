@@ -10,6 +10,7 @@ import { taskRestartArgs } from "./task_restart_args"
 import { Effect, Option, Schema } from "effect"
 
 const DEFAULT_TIMEOUT = 60_000
+const ULM_OPERATION_WAIT_TIMEOUT = 30_000
 const POLL_MS = 300
 
 export const Parameters = Schema.Struct({
@@ -25,6 +26,13 @@ export const Parameters = Schema.Struct({
 type State = "running" | "completed" | "error" | "stale"
 type InspectResult = { state: State; text: string }
 type Metadata = { task_id: SessionID; state: State; timed_out: boolean }
+
+export function taskStatusWaitTimeout(input: { job?: BackgroundJob.Info; requestedTimeout?: number; wait?: boolean }) {
+  if (input.job?.metadata?.operationID && input.wait === true) {
+    return Math.min(input.requestedTimeout ?? DEFAULT_TIMEOUT, ULM_OPERATION_WAIT_TIMEOUT)
+  }
+  return input.requestedTimeout ?? DEFAULT_TIMEOUT
+}
 
 function format(input: { taskID: SessionID; state: State; text: string }) {
   return [`task_id: ${input.taskID}`, `state: ${input.state}`, "", "<task_result>", input.text, "</task_result>"].join(
@@ -55,6 +63,15 @@ function jobResult(job: BackgroundJob.Info): InspectResult {
     }
   }
   return { state: "error", text: job.error ?? `Task ${job.status}.` }
+}
+
+function timeoutText(input: { timeout: number; job?: BackgroundJob.Info }) {
+  const base = `Timed out after ${input.timeout}ms while waiting for task completion.`
+  if (!input.job?.metadata?.operationID) return base
+  return [
+    base,
+    "ULM recovery policy: if no fresh lane-owned artifacts appeared after this bounded poll, the next tool should be operation_run with block_lane or skip_lane and a precise recovery reason. Do not keep rereading old operation artifacts.",
+  ].join("\n")
 }
 
 export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.Service | SessionStatus.Service | BackgroundJob.Service>(
@@ -117,9 +134,14 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
       yield* sessions.get(params.task_id)
 
       const job = yield* jobs.get(params.task_id)
+      const effectiveTimeout = taskStatusWaitTimeout({
+        job,
+        requestedTimeout: params.timeout_ms,
+        wait: params.wait,
+      })
       const waitedJob =
         job && params.wait === true
-          ? yield* jobs.wait({ id: params.task_id, timeout: params.timeout_ms ?? DEFAULT_TIMEOUT })
+          ? yield* jobs.wait({ id: params.task_id, timeout: effectiveTimeout })
           : { info: job, timedOut: false }
       if (waitedJob.info) {
         const result = jobResult(waitedJob.info)
@@ -133,9 +155,7 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
           output: format({
             taskID: params.task_id,
             state: result.state,
-            text: waitedJob.timedOut
-              ? `Timed out after ${params.timeout_ms ?? DEFAULT_TIMEOUT}ms while waiting for task completion.`
-              : result.text,
+            text: waitedJob.timedOut ? timeoutText({ timeout: effectiveTimeout, job }) : result.text,
           }),
         }
       }

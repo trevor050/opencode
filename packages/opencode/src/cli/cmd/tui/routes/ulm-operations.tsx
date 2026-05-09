@@ -1,10 +1,14 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { useEvent } from "@tui/context/event"
+import { useProject } from "@tui/context/project"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useSDK } from "@tui/context/sdk"
+import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
+import type { SessionID } from "@/session/schema"
+import { bindOperationSession, listOperationSessionBindings, readOperationPlanExcerpt } from "@/ulm/operation-context"
 
 type OperationStatus = {
   operationID: string
@@ -40,6 +44,11 @@ type OperationStatus = {
   policies?: {
     foregroundCommand?: string
   }
+  plans?: {
+    operation?: boolean
+    discoveryCharter?: boolean
+    discoveryCharterApproval?: string
+  }
   findings?: {
     total?: number
   }
@@ -48,6 +57,11 @@ type OperationStatus = {
   }
   reports?: Record<string, boolean>
   runtimeSummary?: boolean
+  session?: {
+    sessionID: string
+    boundAt?: string
+    source?: string
+  }
 }
 
 type OperationAudit = {
@@ -76,6 +90,7 @@ function operationStatus(value: unknown): OperationStatus | undefined {
   const supervisor = record(item.supervisor)
   const toolInventory = record(item.toolInventory)
   const policies = record(item.policies)
+  const plans = record(item.plans)
   return {
     operationID: item.operationID,
     operation: operation
@@ -120,6 +135,14 @@ function operationStatus(value: unknown): OperationStatus | undefined {
           foregroundCommand: typeof policies.foregroundCommand === "string" ? policies.foregroundCommand : undefined,
         }
       : undefined,
+    plans: plans
+      ? {
+          operation: typeof plans.operation === "boolean" ? plans.operation : undefined,
+          discoveryCharter: typeof plans.discoveryCharter === "boolean" ? plans.discoveryCharter : undefined,
+          discoveryCharterApproval:
+            typeof plans.discoveryCharterApproval === "string" ? plans.discoveryCharterApproval : undefined,
+        }
+      : undefined,
     findings: findings && typeof findings.total === "number" ? { total: findings.total } : undefined,
     evidence: evidence && typeof evidence.total === "number" ? { total: evidence.total } : undefined,
     reports: reports
@@ -155,6 +178,21 @@ function readyReports(item: OperationStatus) {
     .map(([key]) => key)
 }
 
+function planLabel(item: OperationStatus) {
+  if (item.plans?.operation) return "full operation plan"
+  if (item.plans?.discoveryCharter) return `discovery charter / ${item.plans.discoveryCharterApproval ?? "pending"}`
+  return "missing"
+}
+
+function previewText(content: string | undefined) {
+  if (!content) return "No plan artifact found yet."
+  return content
+    .split("\n")
+    .filter((line) => line.trim().length)
+    .slice(0, 18)
+    .join("\n")
+}
+
 function mergeOperationUpdate(
   previous: OperationStatus | undefined,
   update: {
@@ -164,10 +202,12 @@ function mergeOperationUpdate(
     supervisor?: OperationStatus["supervisor"]
     toolInventory?: OperationStatus["toolInventory"]
     policies?: OperationStatus["policies"]
+    plans?: OperationStatus["plans"]
     findings?: OperationStatus["findings"]
     evidence?: OperationStatus["evidence"]
     reports?: OperationStatus["reports"]
     runtimeSummary?: boolean
+    session?: OperationStatus["session"]
   },
 ): OperationStatus {
   return {
@@ -177,23 +217,54 @@ function mergeOperationUpdate(
     supervisor: update.supervisor ?? previous?.supervisor,
     toolInventory: update.toolInventory ?? previous?.toolInventory,
     policies: update.policies ?? previous?.policies,
+    plans: update.plans ?? previous?.plans,
     findings: update.findings ?? previous?.findings,
     evidence: update.evidence ?? previous?.evidence,
     reports: update.reports ?? previous?.reports,
     runtimeSummary: update.runtimeSummary ?? previous?.runtimeSummary,
+    session: update.session ?? previous?.session,
   }
 }
 
 export function UlmOperations() {
   const sdk = useSDK()
+  const sync = useSync()
   const event = useEvent()
   const route = useRoute()
+  const project = useProject()
   const data = useRouteData("ulmOperations")
   const { theme } = useTheme()
   const [selected, setSelected] = createSignal(0)
+
+  function root() {
+    const current = project.instance.path()
+    return current.worktree || current.directory || process.cwd()
+  }
+
+  async function attachSessionBindings(statuses: OperationStatus[]) {
+    const bindings = await listOperationSessionBindings(root())
+    const latest = new Map<string, (typeof bindings)[number]>()
+    for (const binding of bindings) {
+      if (!latest.has(binding.operationID)) latest.set(binding.operationID, binding)
+    }
+    return statuses.map((status) => {
+      const binding = latest.get(status.operationID)
+      if (!binding) return status
+      return {
+        ...status,
+        session: {
+          sessionID: String(binding.sessionID),
+          boundAt: binding.boundAt,
+          source: binding.source,
+        },
+      }
+    })
+  }
+
   const [items, itemsActions] = createResource(async () => {
     const result = await sdk.client.ulm.operation.list({ eventLimit: "2" })
-    return (result.data ?? []).map(operationStatus).filter((item): item is OperationStatus => item !== undefined)
+    const statuses = (result.data ?? []).map(operationStatus).filter((item): item is OperationStatus => item !== undefined)
+    return attachSessionBindings(statuses)
   })
   const [detail, detailActions] = createResource(
     () => data.operationID ?? "",
@@ -203,8 +274,11 @@ export function UlmOperations() {
         sdk.client.ulm.operation.status({ operationID, eventLimit: "8" }),
         sdk.client.ulm.operation.audit({ operationID, finalHandoff: "true" }).catch(() => undefined),
       ])
+      const statuses = await attachSessionBindings(
+        [operationStatus(status.data)].filter((item): item is OperationStatus => item !== undefined),
+      )
       return {
-        status: operationStatus(status.data),
+        status: statuses[0],
         audit: operationAudit(audit?.data),
       }
     },
@@ -215,6 +289,13 @@ export function UlmOperations() {
   const activeStatus = createMemo(() => detail()?.status ?? selectedItem())
   const activeAudit = createMemo(() => detail()?.audit)
   const reports = createMemo(() => (activeStatus() ? readyReports(activeStatus()!) : []))
+  const [planPreview, planPreviewActions] = createResource(
+    () => activeStatus()?.operationID ?? "",
+    async (operationID) => {
+      if (!operationID) return
+      return readOperationPlanExcerpt(root(), operationID, 2600)
+    },
+  )
 
   createEffect(() => {
     if (selected() < visibleItems().length) return
@@ -231,6 +312,39 @@ export function UlmOperations() {
   const refresh = () => {
     void itemsActions.refetch()
     if (data.operationID) void detailActions.refetch()
+    void planPreviewActions.refetch()
+  }
+
+  async function sessionExists(sessionID: string) {
+    if (sync.session.get(sessionID)) return true
+    try {
+      await sdk.client.session.get({ sessionID }, { throwOnError: true })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function openOperation(item: OperationStatus) {
+    let sessionID = item.session?.sessionID
+    if (sessionID && !(await sessionExists(sessionID))) sessionID = undefined
+    if (!sessionID) {
+      const created = await sdk.client.session.create({
+        title: `ULM operation: ${item.operationID}`,
+      })
+      if (created.error || !created.data?.id) return
+      sessionID = created.data.id
+      await bindOperationSession(root(), {
+        sessionID: sessionID as SessionID,
+        operationID: item.operationID,
+        source: "tui.ulm_operations.open",
+      })
+      await sync.session.refresh()
+      refresh()
+    } else {
+      await sync.session.sync(sessionID)
+    }
+    route.navigate({ type: "session", sessionID })
   }
 
   useKeyboard((evt) => {
@@ -251,7 +365,7 @@ export function UlmOperations() {
     }
     if (evt.name === "enter" && selectedItem()) {
       evt.preventDefault()
-      route.navigate({ type: "ulmOperations", operationID: selectedItem()!.operationID })
+      void openOperation(selectedItem()!)
       return
     }
     if (evt.name === "backspace" && data.operationID) {
@@ -283,6 +397,7 @@ export function UlmOperations() {
       audit: current?.audit,
     }))
     if (evt.properties.artifact === "operation_audit") void detailActions.refetch()
+    if (evt.properties.artifact === "operation_plan") void planPreviewActions.refetch()
   })
 
   return (
@@ -291,7 +406,7 @@ export function UlmOperations() {
         <text fg={theme.text} attributes={TextAttributes.BOLD}>
           ULM Operations
         </text>
-        <text fg={theme.textMuted}>r refresh / enter detail / backspace list / esc home</text>
+        <text fg={theme.textMuted}>r refresh / enter chat / backspace list / esc home</text>
       </box>
       <box flexDirection="row" flexGrow={1} gap={2} minHeight={0}>
         <box width={34} flexShrink={0} borderColor={theme.border} borderStyle="single" paddingLeft={1} paddingRight={1}>
@@ -302,7 +417,7 @@ export function UlmOperations() {
                   <box
                     onMouseUp={() => {
                       setSelected(index())
-                      route.navigate({ type: "ulmOperations", operationID: item.operationID })
+                      void openOperation(item)
                     }}
                   >
                     <text
@@ -315,6 +430,14 @@ export function UlmOperations() {
                     <text fg={theme.textMuted}>
                       {"  "}
                       {stageLabel(item)} - {countLabel(item)}
+                    </text>
+                    <text fg={theme.textMuted}>
+                      {"  "}
+                      plan {planLabel(item)}
+                    </text>
+                    <text fg={theme.textMuted}>
+                      {"  "}
+                      chat {item.session?.sessionID ?? "not bound yet"}
                     </text>
                   </box>
                 )}
@@ -360,7 +483,26 @@ export function UlmOperations() {
                       ? `${status().toolInventory?.installed ?? 0}/${status().toolInventory?.total ?? 0} installed, ${status().toolInventory?.highValueMissing ?? 0} high-value missing`
                       : "inventory missing; run tool_inventory"}
                   </text>
+                  <text fg={theme.textMuted} wrapMode="word">
+                    plan: {planLabel(status())}
+                  </text>
                 </box>
+                <Show when={planPreview()}>
+                  {(plan) => (
+                    <box>
+                      <text fg={theme.text}>
+                        current plan
+                        <span style={{ fg: theme.textMuted }}>
+                          {plan().path ? ` / ${plan().path}` : ""}
+                          {plan().truncated ? " / truncated" : ""}
+                        </span>
+                      </text>
+                      <text fg={theme.textMuted} wrapMode="word">
+                        {previewText(plan().content)}
+                      </text>
+                    </box>
+                  )}
+                </Show>
                 <box>
                   <text fg={theme.text}>
                     {countLabel(status())}

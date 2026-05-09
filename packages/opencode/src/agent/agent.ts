@@ -250,6 +250,10 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 todowrite: "deny",
+                task: {
+                  "*": "deny",
+                  evidence: "allow",
+                },
               }),
               user,
             ),
@@ -267,6 +271,10 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 todowrite: "deny",
+                task: {
+                  "*": "deny",
+                  evidence: "allow",
+                },
               }),
               user,
             ),
@@ -302,7 +310,16 @@ export const layer = Layer.effect(
             description:
               "ULMCode subagent for validating or rejecting candidate security findings with repeatable evidence.",
             prompt: PROMPT_ULM_VALIDATOR,
-            permission: Permission.merge(defaults, user),
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                task: {
+                  "*": "deny",
+                  evidence: "allow",
+                },
+              }),
+              user,
+            ),
             options: {},
             mode: "subagent",
             native: true,

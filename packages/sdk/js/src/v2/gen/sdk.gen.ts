@@ -36,6 +36,7 @@ import type {
   ExperimentalWorkspaceRemoveErrors,
   ExperimentalWorkspaceRemoveResponses,
   ExperimentalWorkspaceStatusResponses,
+  ExperimentalWorkspaceSyncListResponses,
   ExperimentalWorkspaceWarpErrors,
   ExperimentalWorkspaceWarpResponses,
   FileListResponses,
@@ -200,11 +201,14 @@ import type {
   TuiSelectSessionResponses,
   TuiShowToastResponses,
   TuiSubmitPromptResponses,
+  UlmCloseOperationsPayload,
   UlmOperationAuditResponses,
   UlmOperationAuditWriteResponses,
+  UlmOperationCloseResponses,
   UlmOperationCredentialCreateResponses,
   UlmOperationCredentialDeleteResponses,
   UlmOperationCredentialMaterializeEnvResponses,
+  UlmOperationCredentialReviewSubmitResponses,
   UlmOperationCredentialsResponses,
   UlmOperationDaemonStartResponses,
   UlmOperationDaemonStatusResponses,
@@ -226,8 +230,12 @@ import type {
   V2SessionMessagesResponses,
   V2SessionPromptResponses,
   V2SessionWaitResponses,
+  VcsApplyErrors,
+  VcsApplyResponses,
+  VcsDiffRawResponses,
   VcsDiffResponses,
   VcsGetResponses,
+  VcsStatusResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -970,6 +978,36 @@ export class Workspace extends HeyApiClient {
   }
 
   /**
+   * Sync workspace list
+   *
+   * Register missing workspaces returned by workspace adapters.
+   */
+  public syncList<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<ExperimentalWorkspaceSyncListResponses, unknown, ThrowOnError>({
+      url: "/experimental/workspace/sync-list",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Workspace status
    *
    * Get connection status for workspaces in the current project.
@@ -1046,6 +1084,7 @@ export class Workspace extends HeyApiClient {
       workspace?: string
       id?: string | null
       sessionID?: string
+      copyChanges?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1058,6 +1097,7 @@ export class Workspace extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "id" },
             { in: "body", key: "sessionID" },
+            { in: "body", key: "copyChanges" },
           ],
         },
       ],
@@ -1579,6 +1619,38 @@ export class Path extends HeyApiClient {
   }
 }
 
+export class Diff extends HeyApiClient {
+  /**
+   * Get raw VCS diff
+   *
+   * Retrieve a raw patch for current uncommitted changes.
+   */
+  public raw<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<VcsDiffRawResponses, unknown, ThrowOnError>({
+      url: "/vcs/diff/raw",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Vcs extends HeyApiClient {
   /**
    * Get VCS info
@@ -1605,6 +1677,36 @@ export class Vcs extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<VcsGetResponses, unknown, ThrowOnError>({
       url: "/vcs",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get VCS status
+   *
+   * Retrieve changed files in the current working tree without patches.
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<VcsStatusResponses, unknown, ThrowOnError>({
+      url: "/vcs/status",
       ...options,
       ...params,
     })
@@ -1640,6 +1742,48 @@ export class Vcs extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  /**
+   * Apply VCS patch
+   *
+   * Apply a raw patch to the current working tree.
+   */
+  public apply<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      patch?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "patch" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<VcsApplyResponses, VcsApplyErrors, ThrowOnError>({
+      url: "/vcs/apply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  private _diff?: Diff
+  get diff2(): Diff {
+    return (this._diff ??= new Diff({ client: this.client }))
   }
 }
 
@@ -5126,6 +5270,40 @@ export class FinalArtifact extends HeyApiClient {
   }
 }
 
+export class Review extends HeyApiClient {
+  /**
+   * Submit ULM credential review
+   *
+   * Mark the current redacted credential records as reviewed and ready for the agent.
+   */
+  public submit<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationCredentialReviewSubmitResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/credentials/submit",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Credential extends HeyApiClient {
   /**
    * Create ULM operation credential
@@ -5258,6 +5436,11 @@ export class Credential extends HeyApiClient {
       },
     })
   }
+
+  private _review?: Review
+  get review(): Review {
+    return (this._review ??= new Review({ client: this.client }))
+  }
 }
 
 export class Operation extends HeyApiClient {
@@ -5290,6 +5473,43 @@ export class Operation extends HeyApiClient {
       url: "/ulm/operation",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Close ULM operations
+   *
+   * Mark selected or all visible ULM operations complete for desktop cleanup.
+   */
+  public close<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      ulmCloseOperationsPayload?: UlmCloseOperationsPayload
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "ulmCloseOperationsPayload", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationCloseResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/close",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 
@@ -5377,7 +5597,9 @@ export class Operation extends HeyApiClient {
       staleAfterMinutes?: string
       minWords?: string
       requireOutlineBudget?: "true" | "false"
+      minOutlineTargetPages?: string
       minOutlineWordsPerPage?: string
+      minPdfPages?: string
       requireFindingSections?: "true" | "false"
       minFindingWords?: string
       finalHandoff?: "true" | "false"
@@ -5396,7 +5618,9 @@ export class Operation extends HeyApiClient {
             { in: "query", key: "staleAfterMinutes" },
             { in: "query", key: "minWords" },
             { in: "query", key: "requireOutlineBudget" },
+            { in: "query", key: "minOutlineTargetPages" },
             { in: "query", key: "minOutlineWordsPerPage" },
+            { in: "query", key: "minPdfPages" },
             { in: "query", key: "requireFindingSections" },
             { in: "query", key: "minFindingWords" },
             { in: "query", key: "finalHandoff" },
@@ -5521,7 +5745,7 @@ export class Operation extends HeyApiClient {
   /**
    * List ULM operation credentials
    *
-   * List redacted credential handles for one ULMCode operation.
+   * List redacted credential records for one ULMCode operation.
    */
   public credentials<ThrowOnError extends boolean = false>(
     parameters: {

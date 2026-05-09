@@ -109,6 +109,7 @@ describe("ULM runtime daemon", () => {
       maxRuntimeSeconds: 120,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
+      supervisorEnabled: false,
       now: fakeClock("2026-05-05T00:00:00.000Z", 10),
       sleep: async () => {},
       launchModelLane: async (params) => {
@@ -119,6 +120,51 @@ describe("ULM runtime daemon", () => {
 
     expect(launched).toEqual(["district_profile"])
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-district_profile"])
+  })
+
+  test("bootstraps readiness proof artifacts for literal long runs", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const manifestPath = path.join(dir.path, "tool-manifest.json")
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          tools: [
+            {
+              id: "fixture-tool",
+              category: "test",
+              purpose: "fixture",
+              validate: "true",
+              install: [],
+              fallbacks: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      toolManifestPath: manifestPath,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    const root = operationPath(dir.path, "School")
+    const preflight = JSON.parse(await fs.readFile(path.join(root, "tools", "tool-preflight.json"), "utf8"))
+    const routeAudit = JSON.parse(await fs.readFile(path.join(root, "deliverables", "model-route-audit.json"), "utf8"))
+    const runtime = JSON.parse(await fs.readFile(path.join(root, "deliverables", "runtime-summary.json"), "utf8"))
+    expect(preflight.blocked).toBe(0)
+    expect(preflight.tools[0]?.toolID).toBe("fixture-tool")
+    expect(routeAudit.routes.some((route: { route?: string }) => route.route === "opencode-go/qwen3.6-plus")).toBe(true)
+    expect(runtime.usage.costUSD).toBe(0)
+    expect(runtime.compaction.pressure).toBe("low")
   })
 
   test("does not exit the wall-clock daemon on compact maintenance decisions", async () => {
@@ -143,6 +189,87 @@ describe("ULM runtime daemon", () => {
     expect(result.cycles.every((cycle) => cycle.run?.action === "compact")).toBe(true)
     expect(result.stopped).toBe(false)
     expect(result.reason).toBe("max scheduler cycles reached")
+  })
+
+  test("stops early when no scheduled operation work remains before the literal window elapses", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      supervisorEnabled: false,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.stopped).toBe(true)
+    expect(result.reason).toBe("no scheduled operation work remains before target runtime elapsed")
+  })
+
+  test("enables supervisor review from the daemon target window even when the stored goal is short", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, {
+      operationID: "School",
+      objective: "Accelerated proof that is being rerun as a literal daemon.",
+      targetDurationHours: 0.02,
+    })
+    await writeOperationPlan(dir.path, {
+      operationID: "School",
+      phases: [
+        {
+          stage: "reporting",
+          objective: "Fix final report blockers.",
+          actions: ["Expand report"],
+          successCriteria: ["Final audit passes"],
+          subagents: ["report-writer"],
+          noSubagents: ["final audit decision"],
+        },
+      ],
+      reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary", "Run operation_audit"],
+    })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    await fs.mkdir(path.join(root, "deliverables"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify({ operationID: "school", ok: false, blockers: ["final_handoff: report is too short"] }, null, 2) + "\n",
+    )
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      supervisorIntervalMinutes: 0,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.cycles[0]?.supervisor?.enabled).toBe(true)
+    expect(result.cycles[0]?.supervisor?.ran).toBe(true)
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_reporting")
+    expect(result.cycles[0]?.supervisor?.reason).toBe("final operation audit has unresolved blockers")
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toBe("final operation audit has unresolved blockers")
   })
 
   test("recovers stale operation jobs before scheduler ticks", async () => {
@@ -396,13 +523,13 @@ describe("ULM runtime daemon", () => {
     expect(parsed.operationID).toBe("school")
     expect(parsed.pid).toBeGreaterThan(0)
     expect(await fs.readFile(parsed.launchPath, "utf8")).toContain('"operationID": "school"')
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < 80; attempt++) {
       try {
         const heartbeat = JSON.parse(await fs.readFile(parsed.heartbeatPath, "utf8"))
         expect(heartbeat.operationID).toBe("school")
         return
       } catch {
-        await Bun.sleep(50)
+        await Bun.sleep(100)
       }
     }
     throw new Error("detached daemon did not write heartbeat")
@@ -460,6 +587,151 @@ describe("ULM runtime daemon", () => {
     const runbook = await fs.readFile(parsed.files.runbook, "utf8")
     expect(runbook).toContain("launchctl bootstrap")
     expect(runbook).toContain("systemctl --user enable --now")
+  })
+
+  test("CLI launcher reuses an active model child instead of duplicating it", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    const launchDir = path.join(root, "scheduler", "cli-launches")
+    await fs.mkdir(launchDir, { recursive: true })
+    await fs.writeFile(
+      path.join(launchDir, "2026-05-05T00-00-00-model-pid-district_profile.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          kind: "model-pid",
+          id: "district_profile",
+          createdAt: "2026-05-05T00:00:00.000Z",
+          pid: process.pid,
+          jobID: "cli-model-lane-district_profile",
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-seconds",
+        "120",
+        "--interval-seconds",
+        "0",
+        "--max-cycles",
+        "1",
+        "--disable-operation-supervisor",
+        "--json",
+      ],
+      {
+        cwd: dir.path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1" },
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    const result = JSON.parse(stdout)
+    expect(result.cycles[0].launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    const records = await fs.readdir(launchDir)
+    expect(records.filter((file) => file.includes("model-pid-district_profile"))).toHaveLength(1)
+    expect(records.some((file) => file.includes("model-reuse-district_profile"))).toBe(true)
+    expect(records.some((file) => file.includes("model-district_profile") && !file.includes("model-pid"))).toBe(false)
+  })
+
+  test("CLI daemon recovers a running lane whose model pid died", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { id: string; status: string }) =>
+      lane.id === "district_profile" ? { ...lane, status: "running" } : lane,
+    )
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+
+    const root = operationPath(dir.path, "School")
+    const launchDir = path.join(root, "scheduler", "cli-launches")
+    await fs.mkdir(launchDir, { recursive: true })
+    await fs.writeFile(
+      path.join(launchDir, "2026-05-05T00-00-00-model-pid-district_profile.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          kind: "model-pid",
+          id: "district_profile",
+          laneID: "district_profile",
+          agent: "recon",
+          modelRoute: "opencode-go/qwen3.6-plus",
+          prompt: "resume district profile",
+          allowedTools: "district_profile, webfetch, websearch, evidence_record, task, operation_run",
+          createdAt: "2026-05-05T00:00:00.000Z",
+          pid: 99999999,
+          jobID: "cli-model-lane-district_profile",
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-seconds",
+        "120",
+        "--interval-seconds",
+        "0",
+        "--max-cycles",
+        "1",
+        "--disable-operation-supervisor",
+        "--json",
+      ],
+      {
+        cwd: dir.path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1" },
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    const result = JSON.parse(stdout)
+    expect(result.recoveredJobs).toEqual(["cli-model-lane-district_profile"])
+    const records = await fs.readdir(launchDir)
+    expect(records.some((file) => file.includes("model-district_profile") && !file.includes("model-pid"))).toBe(true)
+    expect(records.some((file) => file.includes("model-reuse-district_profile"))).toBe(false)
+    const recoveredGraph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    const recoveredLane = recoveredGraph.lanes.find((lane: { id: string }) => lane.id === "district_profile")
+    expect(recoveredLane?.status).toBe("running")
+    expect(recoveredLane?.terminalState).toBeUndefined()
+    expect(recoveredLane?.activeJobs?.[0]?.status).toBe("running")
   })
 
   test("records scheduler errors, backs off, and stops after the error budget", async () => {

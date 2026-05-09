@@ -14,6 +14,7 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import path from "path"
+import open from "open"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
@@ -45,24 +46,25 @@ import type { GrepTool } from "@/tool/grep"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { WebFetchTool } from "@/tool/webfetch"
-import type { WebSearchTool } from "@/tool/websearch"
+import { webSearchProviderLabel, type WebSearchTool } from "@/tool/websearch"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
+import type { OperationCredentialsTool } from "@/tool/operation_credentials"
 import type { SkillTool } from "@/tool/skill"
-import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useEditorContext } from "@tui/context/editor"
-import { useCommandDialog } from "@tui/component/dialog-command"
 import type { DialogContext } from "@tui/ui/dialog"
-import { useKeybind } from "@tui/context/keybind"
 import { useDialog } from "../../ui/dialog"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
+import { Link } from "../../ui/link"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { buildULMToolView } from "./ulm-tool-view"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -87,15 +89,37 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
-import { DialogGoUpsell } from "../../component/dialog-go-upsell"
+import { DialogRetryAction } from "../../component/dialog-retry-action"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
+import { useCommandPalette } from "../../context/command-palette"
+import { useBindings, useCommandShortcut } from "../../keymap"
 
 addDefaultParsers(parsers.parsers)
 
-const GO_UPSELL_LAST_SEEN_AT = "go_upsell_last_seen_at"
-const GO_UPSELL_DONT_SHOW = "go_upsell_dont_show"
+const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
+const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
+const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
+const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+
+function goUpsellKeys(action: SessionRetry.Retryable["action"]) {
+  if (!action) return
+  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+  if (action.reason === "free_tier_limit") {
+    return {
+      lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
+      dontShow: GO_UPSELL_FREE_TIER_DONT_SHOW,
+    }
+  }
+  if (action.reason === "account_rate_limit") {
+    return {
+      lastSeenAt: GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT,
+      dontShow: GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW,
+    }
+  }
+}
 
 const taskMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
 
@@ -126,6 +150,9 @@ export function Session() {
   const event = useEvent()
   const project = useProject()
   const tuiConfig = useTuiConfig()
+  const {
+    keymap: { sections },
+  } = tuiConfig
   const kv = useKV()
   const { theme } = useTheme()
   const promptRef = usePromptRef()
@@ -264,28 +291,30 @@ export function Session() {
     seeded = true
     r.set(route.prompt)
   }
-  const keybind = useKeybind()
+  const command = useCommandPalette()
   const dialog = useDialog()
   const renderer = useRenderer()
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
     if (evt.properties.status.type !== "retry") return
-    if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
+    if (!evt.properties.status.action) return
     if (dialog.stack.length > 0) return
 
-    const seen = kv.get(GO_UPSELL_LAST_SEEN_AT)
+    const keys = goUpsellKeys(evt.properties.status.action)
+    if (!keys) return
+
+    const seen = kv.get(keys.lastSeenAt)
     if (typeof seen === "number" && Date.now() - seen < GO_UPSELL_WINDOW) return
 
-    if (kv.get(GO_UPSELL_DONT_SHOW)) return
+    if (kv.get(keys.dontShow)) return
 
-    void DialogGoUpsell.show(dialog).then((dontShowAgain) => {
-      if (dontShowAgain) kv.set(GO_UPSELL_DONT_SHOW, true)
-      kv.set(GO_UPSELL_LAST_SEEN_AT, Date.now())
+    void DialogRetryAction.show(dialog, evt.properties.status.action).then((dontShowAgain) => {
+      if (dontShowAgain) kv.set(keys.dontShow, true)
+      kv.set(keys.lastSeenAt, Date.now())
     })
   })
 
-  // Allow exit when in child session (prompt is hidden)
   const exit = useExit()
 
   createEffect(() => {
@@ -302,13 +331,6 @@ export function Session() {
         ``,
       ].join("\n"),
     )
-  })
-
-  useKeyboard((evt) => {
-    if (!session()?.parentID) return
-    if (keybind.match("app_exit", evt)) {
-      void exit()
-    }
   })
 
   // Helper: Find next visible message boundary in direction
@@ -393,26 +415,24 @@ export function Session() {
     }
   }
 
-  function childSessionHandler(func: (dialog: DialogContext) => void) {
-    return (dialog: DialogContext) => {
+  function childSessionHandler(func: () => void) {
+    return () => {
       if (!session()?.parentID || dialog.stack.length > 0) return
-      func(dialog)
+      func()
     }
   }
 
-  const command = useCommandDialog()
-  command.register(() => [
+  const sessionCommandList = createMemo(() => [
     {
       title: session()?.share?.url ? "Copy share link" : "Share session",
       value: "session.share",
       suggested: route.type === "session",
-      keybind: "session_share",
       category: "Session",
       enabled: sync.data.config.share !== "disabled",
       slash: {
         name: "share",
       },
-      onSelect: async (dialog) => {
+      run: async () => {
         const copy = (url: string) =>
           Clipboard.copy(url)
             .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
@@ -445,24 +465,22 @@ export function Session() {
     {
       title: "Rename session",
       value: "session.rename",
-      keybind: "session_rename",
       category: "Session",
       slash: {
         name: "rename",
       },
-      onSelect: (dialog) => {
+      run: () => {
         dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
       },
     },
     {
       title: "Jump to message",
       value: "session.timeline",
-      keybind: "session_timeline",
       category: "Session",
       slash: {
         name: "timeline",
       },
-      onSelect: (dialog) => {
+      run: () => {
         dialog.replace(() => (
           <DialogTimeline
             onMove={(messageID) => {
@@ -480,12 +498,11 @@ export function Session() {
     {
       title: "Fork session",
       value: "session.fork",
-      keybind: "session_fork",
       category: "Session",
       slash: {
         name: "fork",
       },
-      onSelect: (dialog) => {
+      run: () => {
         dialog.replace(() => (
           <DialogForkFromTimeline
             onMove={(messageID) => {
@@ -503,13 +520,12 @@ export function Session() {
     {
       title: "Compact session",
       value: "session.compact",
-      keybind: "session_compact",
       category: "Session",
       slash: {
         name: "compact",
         aliases: ["summarize"],
       },
-      onSelect: (dialog) => {
+      run: () => {
         const selectedModel = local.model.current()
         if (!selectedModel) {
           toast.show({
@@ -530,13 +546,12 @@ export function Session() {
     {
       title: "Unshare session",
       value: "session.unshare",
-      keybind: "session_unshare",
       category: "Session",
       enabled: !!session()?.share?.url,
       slash: {
         name: "unshare",
       },
-      onSelect: async (dialog) => {
+      run: async () => {
         await sdk.client.session
           .unshare({
             sessionID: route.sessionID,
@@ -554,12 +569,11 @@ export function Session() {
     {
       title: "Undo previous message",
       value: "session.undo",
-      keybind: "messages_undo",
       category: "Session",
       slash: {
         name: "undo",
       },
-      onSelect: async (dialog) => {
+      run: async () => {
         const status = sync.data.session_status?.[route.sessionID]
         if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
         const revert = session()?.revert?.messageID
@@ -592,13 +606,12 @@ export function Session() {
     {
       title: "Redo",
       value: "session.redo",
-      keybind: "messages_redo",
       category: "Session",
       enabled: !!session()?.revert?.messageID,
       slash: {
         name: "redo",
       },
-      onSelect: (dialog) => {
+      run: () => {
         dialog.clear()
         const messageID = session()?.revert?.messageID
         if (!messageID) return
@@ -619,9 +632,8 @@ export function Session() {
     {
       title: sidebarVisible() ? "Hide sidebar" : "Show sidebar",
       value: "session.sidebar.toggle",
-      keybind: "sidebar_toggle",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         batch(() => {
           const isVisible = sidebarVisible()
           setSidebar(() => (isVisible ? "hide" : "auto"))
@@ -633,9 +645,8 @@ export function Session() {
     {
       title: conceal() ? "Disable code concealment" : "Enable code concealment",
       value: "session.toggle.conceal",
-      keybind: "messages_toggle_conceal",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         setConceal((prev) => !prev)
         dialog.clear()
       },
@@ -648,7 +659,7 @@ export function Session() {
         name: "timestamps",
         aliases: ["toggle-timestamps"],
       },
-      onSelect: (dialog) => {
+      run: () => {
         setTimestamps((prev) => (prev === "show" ? "hide" : "show"))
         dialog.clear()
       },
@@ -656,13 +667,12 @@ export function Session() {
     {
       title: showThinking() ? "Hide thinking" : "Show thinking",
       value: "session.toggle.thinking",
-      keybind: "display_thinking",
       category: "Session",
       slash: {
         name: "thinking",
         aliases: ["toggle-thinking"],
       },
-      onSelect: (dialog) => {
+      run: () => {
         setShowThinking((prev) => !prev)
         dialog.clear()
       },
@@ -670,9 +680,8 @@ export function Session() {
     {
       title: showDetails() ? "Hide tool details" : "Show tool details",
       value: "session.toggle.actions",
-      keybind: "tool_details",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         setShowDetails((prev) => !prev)
         dialog.clear()
       },
@@ -680,9 +689,8 @@ export function Session() {
     {
       title: "Toggle session scrollbar",
       value: "session.toggle.scrollbar",
-      keybind: "scrollbar_toggle",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         setShowScrollbar((prev) => !prev)
         dialog.clear()
       },
@@ -691,7 +699,7 @@ export function Session() {
       title: showGenericToolOutput() ? "Hide generic tool output" : "Show generic tool output",
       value: "session.toggle.generic_tool_output",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         setShowGenericToolOutput((prev) => !prev)
         dialog.clear()
       },
@@ -699,10 +707,9 @@ export function Session() {
     {
       title: "Page up",
       value: "session.page.up",
-      keybind: "messages_page_up",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollBy(-scroll.height / 2)
         dialog.clear()
       },
@@ -710,10 +717,9 @@ export function Session() {
     {
       title: "Page down",
       value: "session.page.down",
-      keybind: "messages_page_down",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollBy(scroll.height / 2)
         dialog.clear()
       },
@@ -721,10 +727,9 @@ export function Session() {
     {
       title: "Line up",
       value: "session.line.up",
-      keybind: "messages_line_up",
       category: "Session",
-      disabled: true,
-      onSelect: (dialog) => {
+      enabled: false,
+      run: () => {
         scroll.scrollBy(-1)
         dialog.clear()
       },
@@ -732,10 +737,9 @@ export function Session() {
     {
       title: "Line down",
       value: "session.line.down",
-      keybind: "messages_line_down",
       category: "Session",
-      disabled: true,
-      onSelect: (dialog) => {
+      enabled: false,
+      run: () => {
         scroll.scrollBy(1)
         dialog.clear()
       },
@@ -743,10 +747,9 @@ export function Session() {
     {
       title: "Half page up",
       value: "session.half.page.up",
-      keybind: "messages_half_page_up",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollBy(-scroll.height / 4)
         dialog.clear()
       },
@@ -754,10 +757,9 @@ export function Session() {
     {
       title: "Half page down",
       value: "session.half.page.down",
-      keybind: "messages_half_page_down",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollBy(scroll.height / 4)
         dialog.clear()
       },
@@ -765,10 +767,9 @@ export function Session() {
     {
       title: "First message",
       value: "session.first",
-      keybind: "messages_first",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollTo(0)
         dialog.clear()
       },
@@ -776,10 +777,9 @@ export function Session() {
     {
       title: "Last message",
       value: "session.last",
-      keybind: "messages_last",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         scroll.scrollTo(scroll.scrollHeight)
         dialog.clear()
       },
@@ -787,10 +787,9 @@ export function Session() {
     {
       title: "Jump to last user message",
       value: "session.messages_last_user",
-      keybind: "messages_last_user",
       category: "Session",
       hidden: true,
-      onSelect: () => {
+      run: () => {
         const messages = sync.data.message[route.sessionID]
         if (!messages || !messages.length) return
 
@@ -819,25 +818,22 @@ export function Session() {
     {
       title: "Next message",
       value: "session.message.next",
-      keybind: "messages_next",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => scrollToMessage("next", dialog),
+      run: () => scrollToMessage("next", dialog),
     },
     {
       title: "Previous message",
       value: "session.message.previous",
-      keybind: "messages_previous",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => scrollToMessage("prev", dialog),
+      run: () => scrollToMessage("prev", dialog),
     },
     {
       title: "Copy last assistant message",
       value: "messages.copy",
-      keybind: "messages_copy",
       category: "Session",
-      onSelect: (dialog) => {
+      run: () => {
         const revertID = session()?.revert?.messageID
         const lastAssistantMessage = messages().findLast(
           (msg) => msg.role === "assistant" && (!revertID || msg.id < revertID),
@@ -882,7 +878,7 @@ export function Session() {
       slash: {
         name: "copy",
       },
-      onSelect: async (dialog) => {
+      run: async () => {
         try {
           const sessionData = session()
           if (!sessionData) return
@@ -903,12 +899,11 @@ export function Session() {
     {
       title: "Export session transcript",
       value: "session.export",
-      keybind: "session_export",
       category: "Session",
       slash: {
         name: "export",
       },
-      onSelect: async (dialog) => {
+      run: async () => {
         try {
           const sessionData = session()
           if (!sessionData) return
@@ -960,10 +955,9 @@ export function Session() {
     {
       title: "Go to child session",
       value: "session.child.first",
-      keybind: "session_child_first",
       category: "Session",
       hidden: true,
-      onSelect: (dialog) => {
+      run: () => {
         moveFirstChild()
         dialog.clear()
       },
@@ -971,11 +965,10 @@ export function Session() {
     {
       title: "Go to parent session",
       value: "session.parent",
-      keybind: "session_parent",
       category: "Session",
       hidden: true,
       enabled: !!session()?.parentID,
-      onSelect: childSessionHandler((dialog) => {
+      run: childSessionHandler(() => {
         const parentID = session()?.parentID
         if (parentID) {
           navigate({
@@ -989,11 +982,10 @@ export function Session() {
     {
       title: "Next child session",
       value: "session.child.next",
-      keybind: "session_child_cycle",
       category: "Session",
       hidden: true,
       enabled: !!session()?.parentID,
-      onSelect: childSessionHandler((dialog) => {
+      run: childSessionHandler(() => {
         moveChild(1)
         dialog.clear()
       }),
@@ -1001,16 +993,35 @@ export function Session() {
     {
       title: "Previous child session",
       value: "session.child.previous",
-      keybind: "session_child_cycle_reverse",
       category: "Session",
       hidden: true,
       enabled: !!session()?.parentID,
-      onSelect: childSessionHandler((dialog) => {
+      run: childSessionHandler(() => {
         moveChild(-1)
         dialog.clear()
       }),
     },
   ])
+
+  const sessionCommands = createMemo(() =>
+    sessionCommandList().map((command) => ({
+      namespace: "palette",
+      name: command.value,
+      desc: "description" in command ? command.description : undefined,
+      slashName: "slash" in command ? command.slash?.name : undefined,
+      slashAliases: "slash" in command ? command.slash?.aliases : undefined,
+      ...command,
+    })),
+  )
+
+  useBindings(() => ({
+    commands: sessionCommands(),
+  }))
+
+  useBindings(() => ({
+    enabled: command.matcher,
+    bindings: sections.session,
+  }))
 
   const revertInfo = createMemo(() => session()?.revert)
   const revertMessageID = createMemo(() => revertInfo()?.messageID)
@@ -1056,8 +1067,8 @@ export function Session() {
         tui: tuiConfig,
       }}
     >
-      <box flexDirection="row">
-        <box flexGrow={1} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
+      <box flexDirection="row" flexGrow={1} minHeight={0}>
+        <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
           <Show when={session()}>
             <scrollbox
               ref={(r) => (scroll = r)}
@@ -1083,7 +1094,8 @@ export function Session() {
                   <Switch>
                     <Match when={message.id === revert()?.messageID}>
                       {(function () {
-                        const command = useCommandDialog()
+                        const command = useCommandPalette()
+                        const redoShortcut = useCommandShortcut("session.redo")
                         const [hover, setHover] = createSignal(false)
                         const dialog = useDialog()
 
@@ -1094,7 +1106,7 @@ export function Session() {
                             "Are you sure you want to restore the reverted messages?",
                           )
                           if (confirmed) {
-                            command.trigger("session.redo")
+                            command.run("session.redo")
                           }
                         }
 
@@ -1117,8 +1129,7 @@ export function Session() {
                             >
                               <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
                               <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
-                                restore
+                                <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
                               </text>
                               <Show when={revert()!.diffFiles?.length}>
                                 <box marginTop={1}>
@@ -1374,7 +1385,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     return props.message.time.completed - user.time.created
   })
 
-  const keybind = useKeybind()
+  const childShortcut = useCommandShortcut("session.child.first")
 
   return (
     <>
@@ -1396,7 +1407,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
-            {keybind.print("session_child_first")}
+            {childShortcut()}
             <span style={{ fg: theme.textMuted }}> view subagents</span>
           </text>
         </box>
@@ -1592,6 +1603,19 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "operation_credentials"}>
+          <OperationCredentials {...toolprops} />
+        </Match>
+        <Match
+          when={
+            props.part.tool.startsWith("operation_") ||
+            props.part.tool === "command_supervise" ||
+            props.part.tool === "runtime_scheduler" ||
+            props.part.tool === "runtime_daemon"
+          }
+        >
+          <ULMOperationTool {...toolprops} />
         </Match>
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
@@ -1953,10 +1977,11 @@ function WebFetch(props: ToolProps<typeof WebFetchTool>) {
 }
 
 function WebSearch(props: ToolProps<typeof WebSearchTool>) {
-  const metadata = props.metadata as { numResults?: number }
+  const metadata = props.metadata as { numResults?: number; provider?: unknown }
   return (
     <InlineTool icon="◈" pending="Searching web..." complete={props.input.query} part={props.part}>
-      Exa Web Search "{props.input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
+      {webSearchProviderLabel(metadata.provider)} "{props.input.query}"{" "}
+      <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
     </InlineTool>
   )
 }
@@ -2220,6 +2245,91 @@ function Question(props: ToolProps<typeof QuestionTool>) {
         </InlineTool>
       </Match>
     </Switch>
+  )
+}
+
+function OperationCredentials(props: ToolProps<typeof OperationCredentialsTool>) {
+  const { theme } = useTheme()
+  const action = createMemo(() => props.input.action)
+  const operationID = createMemo(() => props.metadata.operationID ?? props.input.operationID ?? "")
+  const vaultUrl = createMemo(() => props.metadata.fullVaultUrl ?? props.metadata.vaultUrl ?? "")
+  const opened = createMemo(() => props.metadata.opened)
+  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
+
+  return (
+    <Switch>
+      <Match when={isVault()}>
+        <BlockTool title="# Credential Vault" part={props.part}>
+          <box gap={1}>
+            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
+            <text fg={opened() ? theme.success : theme.warning}>
+              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
+            </text>
+            <Show when={vaultUrl()}>
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.textMuted}>Fallback:</text>
+                <Link href={String(vaultUrl())} fg={theme.primary} />
+              </box>
+            </Show>
+            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <ULMOperationTool {...props} />
+      </Match>
+    </Switch>
+  )
+}
+
+function ULMOperationTool(props: ToolProps<any>) {
+  const { theme } = useTheme()
+  const running = createMemo(() => props.part.state.status === "running")
+  const view = createMemo(() =>
+    buildULMToolView({
+      tool: props.part.tool,
+      input: props.input,
+      metadata: props.metadata,
+      output: props.output,
+    }),
+  )
+
+  return (
+    <BlockTool title={view().title} spinner={running()} part={props.part}>
+      <box gap={1}>
+        <For each={view().rows}>
+          {(row) => (
+            <box flexDirection="row" gap={1}>
+              <text fg={theme.textMuted}>{row.label}:</text>
+              <text fg={theme.text}>{row.value}</text>
+            </box>
+          )}
+        </For>
+        <Show when={view().preview.length}>
+          <box gap={1} paddingTop={1}>
+            <text fg={theme.textMuted}>Preview</text>
+            <For each={view().preview}>
+              {(line) => <text fg={theme.text}>{line}</text>}
+            </For>
+          </box>
+        </Show>
+        <For each={view().sections}>
+          {(section) => (
+            <box gap={1} paddingTop={1}>
+              <text fg={theme.textMuted}>{section.title}</text>
+              <For each={section.rows}>
+                {(row) => (
+                  <box flexDirection="row" gap={1}>
+                    <text fg={theme.textMuted}>{row.label}.</text>
+                    <text fg={theme.text}>{row.value}</text>
+                  </box>
+                )}
+              </For>
+            </box>
+          )}
+        </For>
+      </box>
+    </BlockTool>
   )
 }
 

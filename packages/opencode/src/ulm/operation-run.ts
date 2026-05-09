@@ -11,6 +11,7 @@ export type OperationRunMode = "advance" | "complete_lane" | "skip_lane" | "bloc
 export type OperationRunInput = {
   operationID: string
   mode?: OperationRunMode
+  controller?: "scheduler" | "tool"
   laneID?: string
   jobID?: string
   summary?: string
@@ -37,6 +38,7 @@ export type OperationRunResult = {
     operationID: string
     laneID: string
     modelRoute: string
+    allowedTools: string[]
     background: boolean
   }
   commandProfiles?: string[]
@@ -162,7 +164,7 @@ async function expectedArtifactExists(root: string, expected: string) {
       const entries = await fs.readdir(resolved)
       return entries.length > 0
     }
-    return stat.size > 0
+    return stat.size > 0 || expected.endsWith("/stderr.log")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
     throw error
@@ -184,6 +186,14 @@ function laneRequiresEvidenceRefs(lane: OperationLane) {
     "report_review",
     "operator_summary",
   ].includes(lane.id)
+}
+
+const COVERAGE_RANK: Record<OperationLaneCoverageImpact, number> = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  blocks_release: 4,
 }
 
 async function validateLaneCompletionProof(root: string, lane: OperationLane, proof: LaneCompletionProof) {
@@ -258,6 +268,16 @@ async function persistLaneTerminalProof(
   }
   const blockers: string[] = []
   if (!proof.summary) blockers.push(`${lane.id}: ${status} lanes require summary`)
+  if (lane.releaseRequired === true && input.releaseRequired === false) {
+    blockers.push(`${lane.id}: releaseRequired cannot be downgraded by ${status}`)
+  }
+  if (
+    lane.coverageImpact &&
+    input.coverageImpact &&
+    COVERAGE_RANK[input.coverageImpact] < COVERAGE_RANK[lane.coverageImpact]
+  ) {
+    blockers.push(`${lane.id}: coverageImpact cannot be downgraded from ${lane.coverageImpact} to ${input.coverageImpact}`)
+  }
   if (!blockers.length) await persistLaneCompletionProof(root, proof)
   return { proof, blockers }
 }
@@ -303,6 +323,7 @@ async function syncBackgroundJobs(
     if (metadataOperation !== operationID || typeof laneID !== "string" || !laneID) continue
     const lane = graph.lanes.find((item) => item.id === laneID)
     if (!lane) continue
+    if (lane.status === "complete" || lane.status === "skipped" || lane.status === "blocked") continue
     lane.activeJobs = [
       ...(lane.activeJobs ?? []).filter((item) => item.id !== job.id),
       {
@@ -313,15 +334,19 @@ async function syncBackgroundJobs(
       },
     ]
     synced.push(job.id)
-    if (job.status === "running" && lane.status !== "complete") lane.status = "running"
-    if (job.status === "completed" && lane.status !== "complete") {
+    if (job.status === "running") lane.status = "running"
+    if (job.status === "completed") {
       const proof = await readLaneCompletionProof(root, lane)
       if (!proof || !(await proofIsValid(root, lane, proof))) continue
       lane.status = "complete"
       lane.terminalState = "complete"
       completed.push(lane.id)
     }
-    if ((job.status === "error" || job.status === "cancelled" || job.status === "stale") && lane.status !== "failed") {
+    if (
+      job.type !== "command_supervise" &&
+      (job.status === "error" || job.status === "cancelled" || job.status === "stale") &&
+      lane.status !== "failed"
+    ) {
       lane.status = "failed"
       lane.terminalState = "failed"
       failed.push(lane.id)
@@ -337,7 +362,16 @@ function commandProfilesForLane(lane: OperationLane) {
   return []
 }
 
+function laneSpecificInstruction(lane: OperationLane) {
+  if (lane.id === "finding_validation")
+    return "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
+  if (lane.id === "report_writing")
+    return "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
+  return undefined
+}
+
 function taskParamsForLane(lane: OperationLane) {
+  const specific = laneSpecificInstruction(lane)
   return {
     description: lane.title.slice(0, 60),
     prompt: [
@@ -347,12 +381,18 @@ function taskParamsForLane(lane: OperationLane) {
       `Allowed tools: ${lane.allowedTools.join(", ")}`,
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
+      "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
+      "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
+      ...(specific ? [specific] : []),
+      "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
+      "Do not call operation_run with mode=advance, runtime_scheduler, runtime_daemon, task, or command_supervise to launch downstream lanes; the parent scheduler owns the next-lane handoff.",
     ].join("\n"),
     subagent_type: lane.agent,
     operationID: lane.operationID,
     laneID: lane.id,
     modelRoute: lane.modelRoute,
+    allowedTools: lane.allowedTools,
     background: true,
   }
 }
@@ -427,6 +467,71 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   if (completedLanes.length || skippedLanes.length || blockedLanes.length || failedLanes.length) {
     graph.updatedAt = new Date().toISOString()
     await writeJson(synced.graphPath, graph)
+  }
+
+  if (mode === "complete_lane" || mode === "skip_lane" || mode === "block_lane" || mode === "fail_lane") {
+    const laneID = input.laneID
+    const reason = blockers.length
+      ? `${mode} did not update lane ${laneID}: ${blockers.join("; ")}`
+      : `recorded ${mode} for lane ${laneID}; scheduler will choose the next lane`
+    const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
+      time: new Date().toISOString(),
+      mode,
+      laneID,
+      jobID: input.jobID,
+      summary: input.summary,
+      action: "wait",
+      reason,
+    })
+
+    return {
+      operationID,
+      mode,
+      action: "wait",
+      reason,
+      laneID,
+      graphPath: persistedGraphPath,
+      runLogPath: persistedRunLogPath,
+      completedLanes,
+      skippedLanes,
+      blockedLanes,
+      failedLanes,
+      syncedJobs,
+      syncedWorkUnits,
+      completedWorkUnits,
+      failedWorkUnits,
+      blockers,
+    }
+  }
+
+  if (mode === "advance" && input.controller === "tool") {
+    const reason = "operation_run advance is scheduler-owned; use runtime_scheduler or runtime_daemon to launch lanes"
+    const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
+      time: new Date().toISOString(),
+      mode,
+      jobID: input.jobID,
+      summary: input.summary,
+      action: "wait",
+      reason,
+    })
+
+    return {
+      operationID,
+      mode,
+      action: "wait",
+      reason,
+      graphPath: persistedGraphPath,
+      runLogPath: persistedRunLogPath,
+      completedLanes,
+      skippedLanes,
+      blockedLanes,
+      failedLanes,
+      syncedJobs,
+      syncedWorkUnits,
+      completedWorkUnits,
+      failedWorkUnits,
+      blockers,
+    }
   }
 
   const next = await decideOperationNext(worktree, { operationID })

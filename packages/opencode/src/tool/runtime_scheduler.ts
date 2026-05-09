@@ -7,6 +7,7 @@ import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { Instance } from "@/project/instance"
 import { formatRuntimeScheduler, runRuntimeScheduler } from "@/ulm/runtime-scheduler"
+import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import * as Tool from "./tool"
 import DESCRIPTION from "./runtime_scheduler.txt"
 import { TaskTool } from "./task"
@@ -55,6 +56,7 @@ export const RuntimeSchedulerTool = Tool.define<
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx) =>
         Effect.gen(function* () {
+          assertLaneToolAllowed("runtime_scheduler")
           const backgroundJobs = yield* jobs.list()
           const result = yield* Effect.tryPromise(() =>
             runRuntimeScheduler(Instance.worktree, {

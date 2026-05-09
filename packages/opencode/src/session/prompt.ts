@@ -64,6 +64,7 @@ import { SessionTable } from "./session.sql"
 import { activeOperationForContext } from "@/ulm/operation-context"
 import { effectiveULMContinuation, readULMConfig } from "@/ulm/config"
 import { superviseOperation, type OperationSupervisorAction } from "@/ulm/operation-supervisor"
+import { readOperationStatus } from "@/ulm/artifact"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -80,6 +81,14 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
+
+export function allowsULMTurnEndSupervisor(agent: string | undefined) {
+  return agent === "pentest"
+}
+
+export function shouldSkipULMTurnEndSupervisorForOperationStatus(status: string | undefined) {
+  return status === "complete" || status === "cancelled"
+}
 
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
@@ -392,18 +401,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: input.agent.name,
         messages: input.messages,
         metadata: (val) =>
-          input.processor.updateToolCall(options.toolCallId, (match) => {
-            if (!["running", "pending"].includes(match.state.status)) return match
-            return {
-              ...match,
-              state: {
-                title: val.title,
-                metadata: val.metadata,
-                status: "running",
-                input: args,
-                time: { start: Date.now() },
-              },
-            }
+          Effect.gen(function* () {
+            yield* input.processor.updateToolCall(options.toolCallId, (match) => {
+              if (!["running", "pending"].includes(match.state.status)) return match
+              return {
+                ...match,
+                state: {
+                  title: val.title,
+                  metadata: val.metadata,
+                  status: "running",
+                  input: args,
+                  time: { start: Date.now() },
+                },
+              }
+            })
+            EventV2.run(SessionEvent.Tool.Progress.Sync, {
+              sessionID: input.session.id,
+              callID: options.toolCallId,
+              structured: val.metadata ?? {},
+              content: val.title
+                ? [
+                    {
+                      type: "text",
+                      text: val.title,
+                    },
+                  ]
+                : [],
+              timestamp: DateTime.makeUnsafe(Date.now()),
+            })
           }),
         ask: (req) =>
           permission
@@ -1463,10 +1488,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       messages: MessageV2.WithParts[]
     }) {
       const freshSession = yield* sessions.get(input.sessionID).pipe(Effect.orElseSucceed(() => input.session))
+      if (!allowsULMTurnEndSupervisor(input.lastUser.agent)) return false
       const ctx = yield* InstanceState.context
-      const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
+      const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       if (!operation) return false
-      if (input.lastUser.agent === "action") return false
+      const operationStatus = yield* Effect.tryPromise(() =>
+        readOperationStatus(operation.worktree, operation.operationID),
+      ).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      if (shouldSkipULMTurnEndSupervisorForOperationStatus(operationStatus?.operation?.status)) return false
       const continuation = effectiveULMContinuation(operation.goal, yield* Effect.promise(() => readULMConfig(ctx)))
       if (!continuation.turnEndReview) return false
       if (!continuation.enabled) return false
@@ -1730,12 +1759,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const [skills, rawEnv, instructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent),
-              sys.environment(model),
+              sys.environment(model, { sessionID }),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
             const env = toolDeniedUser.tools?.["*"] === false ? rawEnv.map(stripULMOperationContext) : rawEnv
-            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+            // Keep stable instructions before volatile environment/ULM context so provider prompt caches
+            // can reuse the longest exact prefix across turns.
+            const system = [...instructions, ...(skills ? [skills] : []), ...env]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({

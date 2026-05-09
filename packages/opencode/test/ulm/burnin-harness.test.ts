@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { runBurnInHarness } from "@/ulm/burnin-harness"
+import { operationPath } from "@/ulm/artifact"
+import { writeOperationGraph } from "@/ulm/operation-graph"
 import { tmpdir } from "../fixture/fixture"
 
 describe("ULM accelerated burn-in harness", () => {
@@ -105,5 +107,41 @@ describe("ULM accelerated burn-in harness", () => {
     expect(parsed.proof.supervisorScenario.completionBlockedBeforeAudit).toBe(true)
     expect(parsed.proof.supervisorScenario.goalCompletedAfterAudit).toBe(true)
     expect(await fs.readFile(parsed.proofPath, "utf8")).toContain('"elapsedTargetSeconds": 120')
+  })
+
+  test("does not mutate the target operation graph while writing supervisor proof", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "Existing Operation"
+    await writeOperationGraph(dir.path, { operationID, budgetUSD: 10 })
+    const root = operationPath(dir.path, operationID)
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
+    const runtimeSummaryPath = path.join(root, "deliverables", "runtime-summary.md")
+    const auditPath = path.join(root, "deliverables", "operation-audit.json")
+    await fs.mkdir(path.dirname(finalManifestPath), { recursive: true })
+    await fs.writeFile(finalManifestPath, JSON.stringify({ operationID, artifacts: { html: "report.html" } }, null, 2) + "\n")
+    await fs.writeFile(runtimeSummaryPath, "# Runtime Summary\n\nOriginal runtime summary.\n")
+    await fs.writeFile(auditPath, JSON.stringify({ operationID, ok: true, source: "real-audit" }, null, 2) + "\n")
+    const before = await Promise.all(
+      [graphPath, finalManifestPath, runtimeSummaryPath, auditPath].map(
+        async (file) => [file, await fs.readFile(file, "utf8")] as const,
+      ),
+    )
+
+    const result = await runBurnInHarness(dir.path, {
+      operationID,
+      targetElapsedSeconds: 60,
+      tickSeconds: 60,
+      reset: true,
+    })
+
+    expect(result.audit.status).toBe("passed")
+    for (const [file, content] of before) {
+      expect(await fs.readFile(file, "utf8")).toBe(content)
+    }
+    expect(result.proof.supervisorScenario.proofPath).toBe(
+      path.join(operationPath(dir.path, operationID), "burnin", "burnin-supervisor-scenario.json"),
+    )
+    await fs.access(path.join(operationPath(dir.path, operationID), "burnin", "scenario-worktree"))
   })
 })

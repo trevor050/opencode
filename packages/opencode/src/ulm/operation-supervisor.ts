@@ -77,6 +77,11 @@ type OperationGraphLike = {
   lanes?: Array<{ id?: string; status?: string; activeJobs?: Array<{ status?: string }> }>
 }
 
+type OperationAuditLike = {
+  ok?: boolean
+  blockers?: unknown[]
+}
+
 async function readJson<T>(file: string): Promise<T | undefined> {
   try {
     return JSON.parse(await fs.readFile(file, "utf8")) as T
@@ -97,12 +102,22 @@ function hasRuntimeBlindSpot(status: OperationStatusSummary) {
 function hasStaleOrFailedLane(graph: OperationGraphLike | undefined) {
   return (
     graph?.lanes?.some(
-      (lane) =>
-        lane.status === "failed" ||
-        lane.status === "blocked" ||
-        lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled"),
+      (lane) => {
+        if (lane.status === "complete" || lane.status === "skipped") return false
+        return (
+          lane.status === "failed" ||
+          lane.status === "blocked" ||
+          lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled")
+        )
+      },
     ) ?? false
   )
+}
+
+function nextReportToolForAuditBlockers(blockers: string[]) {
+  if (blockers.some((blocker) => blocker.includes("reports/report-outline.md"))) return "report_outline"
+  if (blockers.some((blocker) => blocker.includes("deliverables/final/report.pdf"))) return "report_render"
+  return "report_lint"
 }
 
 function graphIncomplete(status: OperationStatusSummary) {
@@ -118,13 +133,17 @@ function longRunGoal(goal: OperationGoalRecord | undefined) {
   return (goal?.targetDurationHours ?? 0) >= 1
 }
 
+function approvedDiscoveryCharter(status: OperationStatusSummary) {
+  return status.plans.discoveryCharter && status.plans.discoveryCharterApproval === "approved"
+}
+
 function decisionsFor(input: {
   reviewKind: OperationSupervisorReviewKind
   goal?: OperationGoalRecord
   status: OperationStatusSummary
   graph?: OperationGraphLike
   coverage: CoverageReadiness
-  finalArtifacts: { operationAudit: boolean; handoffGate: boolean }
+  finalArtifacts: { operationAudit: boolean; operationAuditOk?: boolean; operationAuditBlockers: string[]; handoffGate: boolean }
 }) {
   const decisions: OperationSupervisorDecision[] = []
   if (!input.goal) {
@@ -139,7 +158,20 @@ function decisionsFor(input: {
       }),
     )
   }
-  if (!input.status.plans.operation) {
+  if (!input.status.plans.operation && approvedDiscoveryCharter(input.status)) {
+    decisions.push(
+      decision({
+        action: "continue_coverage",
+        reason: "approved Discovery Charter needs bounded discovery before the full operation plan",
+        requiredNextTool: "command_supervise",
+        requiredArtifacts: ["plans/discovery-charter.json", "evidence/"],
+        operatorMessage: "Use the approved charter to gather bounded discovery evidence, then write the full operation plan.",
+        modelPrompt:
+          "Run only bounded passive/basic discovery through safe foreground commands or command_supervise, record evidence, then call operation_plan with planningMode=full-duration once duration-fit is defensible.",
+      }),
+    )
+  }
+  if (!input.status.plans.operation && !approvedDiscoveryCharter(input.status)) {
     decisions.push(
       decision({
         action: "blocked",
@@ -187,6 +219,30 @@ function decisionsFor(input: {
         operatorMessage: "Coverage is not ready for release; continue safe testing, retry/fallback lanes, or ask the operator if scope affects safety.",
         modelPrompt:
           "Use operation_next and operation_run to continue coverage. For blocked scope/safety decisions, use ask_operator instead of treating a skip as completion.",
+      }),
+    )
+  }
+  if (input.status.plans.operation && input.finalArtifacts.operationAudit && input.finalArtifacts.operationAuditOk === false) {
+    const nextReportTool = nextReportToolForAuditBlockers(input.finalArtifacts.operationAuditBlockers)
+    decisions.push(
+      decision({
+        action: "continue_reporting",
+        reason: "final operation audit has unresolved blockers",
+        requiredNextTool: nextReportTool,
+        requiredArtifacts: [
+          "reports/report-outline.md",
+          "reports/report.md or reports/report.html",
+          "deliverables/final/manifest.json",
+          "deliverables/operation-audit.json",
+        ],
+        operatorMessage: "Final audit exists but still has blockers; reopen report closeout instead of idling.",
+        modelPrompt: [
+          "Read deliverables/operation-audit.json and fix every blocker.",
+          "For long-report blockers, regenerate report_outline/report content, rerun report_lint, report_render, runtime_summary, and operation_audit with the same strict gates.",
+          input.finalArtifacts.operationAuditBlockers.length
+            ? `Current blockers: ${input.finalArtifacts.operationAuditBlockers.join("; ")}`
+            : "Current blockers were not listed; rerun operation_audit for details.",
+        ].join(" "),
       }),
     )
   }
@@ -376,9 +432,15 @@ export async function superviseOperation(
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphLike>(path.join(root, "plans", "operation-graph.json"))
   const finalArtifacts = {
-    operationAudit: !!(await readJson(path.join(root, "deliverables", "operation-audit.json"))),
+    operationAudit: false,
+    operationAuditOk: undefined as boolean | undefined,
+    operationAuditBlockers: [] as string[],
     handoffGate: !!(await readJson(path.join(root, "deliverables", "stage-gates", "handoff.json"))),
   }
+  const operationAudit = await readJson<OperationAuditLike>(path.join(root, "deliverables", "operation-audit.json"))
+  finalArtifacts.operationAudit = !!operationAudit
+  finalArtifacts.operationAuditOk = operationAudit?.ok
+  finalArtifacts.operationAuditBlockers = (operationAudit?.blockers ?? []).filter((item): item is string => typeof item === "string")
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const review: OperationSupervisorReview = {
     operationID,

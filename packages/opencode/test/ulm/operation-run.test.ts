@@ -21,7 +21,12 @@ describe("ULM operation run controller", () => {
     expect(result.action).toBe("launch_lane")
     expect(result.laneID).toBe("district_profile")
     expect(result.taskParams?.background).toBe(true)
-    expect(result.taskParams?.modelRoute).toBe("opencode-go/default")
+    expect(result.taskParams?.modelRoute).toBe("opencode-go/qwen3.6-plus")
+    expect(result.taskParams?.allowedTools).toEqual(["district_profile", "webfetch", "websearch", "evidence_record", "task", "operation_run"])
+    expect(result.taskParams?.prompt).toContain("Use only the allowed tools listed above")
+    expect(result.taskParams?.prompt).toContain("Bash, browser, and Playwright tools are unavailable")
+    expect(result.taskParams?.prompt).toContain("poll their heartbeat/stdout/stderr artifacts with read/grep")
+    expect(result.taskParams?.prompt).toContain("Do not use bash, sleep, cat, tail, or foreground shell commands")
     expect(result.commandProfiles).toEqual([])
     const graph = JSON.parse(await fs.readFile(result.graphPath, "utf8"))
     expect(graph.lanes.find((lane: { id: string }) => lane.id === "district_profile")?.status).toBe("running")
@@ -57,7 +62,45 @@ describe("ULM operation run controller", () => {
     const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("complete")
     expect(updated.lanes.find((lane: { id: string }) => lane.id === "web_inventory")?.status).toBe("ready")
+    expect(result.action).toBe("wait")
+    expect(result.reason).toBe("recorded complete_lane for lane recon; scheduler will choose the next lane")
+    expect(result.laneID).toBe("recon")
+    expect(result.taskParams).toBeUndefined()
     expect(result.completedLanes).toContain("recon")
+  })
+
+  test("accepts empty supervised command stderr logs as completion proof", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
+
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "evidence", "raw"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "commands", "service-inventory"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "evidence", "raw", "service-inventory.xml"), "<nmaprun />\n")
+    await fs.writeFile(path.join(operationRoot, "commands", "service-inventory", "stderr.log"), "")
+    await fs.writeFile(path.join(operationRoot, "status.md"), "recon done\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "recon",
+      summary: "Recon finished with clean supervised command stderr.",
+      artifacts: ["evidence/raw/", "commands/service-inventory/stderr.log", "status.md"],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    expect(result.blockers).toEqual([])
+    expect(result.completedLanes).toContain("recon")
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("complete")
   })
 
   test("does not complete a pending or unlaunched lane", async () => {
@@ -143,6 +186,36 @@ describe("ULM operation run controller", () => {
     expect(lane?.terminalState).toBe("skipped")
     expect(lane?.coverageImpact).toBe("blocks_release")
     expect(proof.status).toBe("skipped")
+  })
+
+  test("does not let a tool downgrade release-required lane impact while skipping", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "skip_lane",
+      laneID: "recon",
+      summary: "Trying to make a release-required lane disappear.",
+      coverageImpact: "low",
+      releaseRequired: false,
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const lane = updated.lanes.find((item: { id: string }) => item.id === "recon")
+    expect(result.blockers).toContain("recon: releaseRequired cannot be downgraded by skipped")
+    expect(result.blockers).toContain("recon: coverageImpact cannot be downgraded from blocks_release to low")
+    expect(result.skippedLanes).not.toContain("recon")
+    expect(lane?.status).toBe("ready")
+    await expect(
+      fs.readFile(path.join(dir.path, ".ulmcode", "operations", "school", "lane-complete", "recon.json"), "utf8"),
+    ).rejects.toThrow()
   })
 
   test("auto-completes running lanes only when lane completion proof references real artifacts", async () => {
@@ -268,6 +341,42 @@ describe("ULM operation run controller", () => {
     expect(recon?.activeJobs[0]?.status).toBe("completed")
     const queue = JSON.parse(await fs.readFile(path.join(operationRoot, "work-queue.json"), "utf8"))
     expect(queue.units[0]?.status).toBe("complete")
+  })
+
+  test("does not fail a running lane just because one supervised command errors", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      backgroundJobs: [
+        {
+          id: "cmd_udp_scan",
+          type: "command_supervise",
+          title: "udp-top-ports-sweep",
+          status: "error",
+          startedAt: Date.now() - 1000,
+          completedAt: Date.now(),
+          metadata: { operationID: "school", laneID: "recon", profileID: "udp-top-ports-sweep" },
+        },
+      ],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const recon = updated.lanes.find((lane: { id: string }) => lane.id === "recon")
+    expect(result.syncedJobs).toContain("cmd_udp_scan")
+    expect(result.failedLanes).not.toContain("recon")
+    expect(recon?.status).toBe("running")
+    expect(recon?.activeJobs[0]?.status).toBe("error")
   })
 
   test("syncs a recovered running job back from failed to running", async () => {

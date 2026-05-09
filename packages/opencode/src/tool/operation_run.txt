@@ -1,15 +1,20 @@
 Advance a durable ULM operation graph.
 
-Use this after `operation_schedule` and repeatedly during unattended work. It
-reads the persisted graph, auto-completes running lanes whose lane-complete
-proof references real non-empty expected artifacts, syncs completed/failed background jobs that include laneID
-metadata, calls the next-action logic, marks launchable lanes as running, and
-writes `plans/operation-run.jsonl`.
+Use this after `operation_schedule` to record lane lifecycle state. It reads the
+persisted graph, auto-completes running lanes whose lane-complete proof
+references real non-empty expected artifacts, syncs completed/failed background
+jobs that include laneID metadata, and writes `plans/operation-run.jsonl`.
+
+`operationID` may be omitted only when the current chat session is already bound
+to an active operation by `operation_goal`, `operation_resume`, or another
+explicit operation read. Fresh chats never inherit the newest operation from the
+worktree; pass `operationID` explicitly when resuming from a new chat.
 
 For long and overnight operations, run `operation_supervise` on startup, heartbeat, post-compaction, and pre-handoff cycles. If the supervisor returns `blocked`, `recover`, `schedule`, or `queue_work`, resolve that decision before blindly advancing the graph. `operation_run` advances lanes; it is not a substitute for supervisor review.
 
 Modes:
-- `advance`: pick and mark the next lane running when the governor allows it.
+- `advance`: scheduler-owned. Public tool calls return `wait` and do not mark a
+  lane running; use `runtime_scheduler` or `runtime_daemon` to launch lanes.
 - `complete_lane`: mark a lane complete and unlock dependent lanes.
 - `skip_lane`: mark a lane skipped with a durable reason and coverage impact.
 - `block_lane`: mark a lane blocked with a durable reason and coverage impact.
@@ -23,11 +28,6 @@ missing files, absolute paths, and paths escaping the operation root are rejecte
 `coverageImpact` and `releaseRequired` honestly; coverage-critical skips remain
 handoff blockers unless the coverage contract explicitly allows them.
 
-The tool returns background `task` launch parameters and suggested command
-profiles, but the parent model still invokes `task` or `command_supervise` so
-tool permissions and approvals stay explicit.
-
-Set `launchModelLane=true` when you want this tool to immediately invoke the
-background `task` tool for the selected lane after mutating graph state. Command
-profiles are still returned for explicit `command_supervise` calls because they
-need runtime variables such as target, URL, input file, or wordlist.
+Lane workers should call only terminal modes (`complete_lane`, `skip_lane`,
+`block_lane`, or `fail_lane`) before exiting. They should not call `advance` or
+launch downstream lanes; the scheduler owns that handoff.

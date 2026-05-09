@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
-import { operationPath, slug } from "./artifact"
+import { operationPath, slug, writeRuntimeSummary } from "./artifact"
 import { readOperationGoal } from "./operation-goal"
 import {
   superviseOperation,
@@ -15,10 +15,13 @@ import {
   type OperationRunResult,
   type OperationRuntimeSyncResult,
 } from "./operation-run"
+import { writeRuntimeGovernorRouteAudit } from "./runtime-governor"
+import { acquireManifestTools } from "./tool-acquisition"
 import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNextResult } from "./work-queue"
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
 type SchedulerCommandParams = WorkQueueNextResult["units"][number]["commandSupervise"]
+const REPORT_REPAIR_LANE_ID = "report_repair"
 
 export type RuntimeSchedulerInput = {
   operationID: string
@@ -32,6 +35,8 @@ export type RuntimeSchedulerInput = {
   supervisorIntervalMinutes?: number
   lastSupervisorReviewAt?: Date | string
   supervisorReviewKind?: OperationSupervisorReviewKind
+  ensureReadinessProof?: boolean
+  toolManifestPath?: string
   now?: Date
 }
 
@@ -41,6 +46,8 @@ export type RuntimeSchedulerSupervisorSummary = {
   action?: OperationSupervisorAction
   reason?: string
   requiredNextTool?: string
+  operatorMessage?: string
+  modelPrompt?: string
   nextTools: string[]
   blocking: boolean
   generatedAt?: string
@@ -105,10 +112,127 @@ function supervisorBlocks(action: OperationSupervisorAction | undefined) {
   )
 }
 
+function hasActiveReportRepairJob(input: { operationID: string; backgroundJobs?: BackgroundJob.Info[] }) {
+  return (input.backgroundJobs ?? []).some(
+    (job) =>
+      job.status === "running" &&
+      job.metadata?.operationID === input.operationID &&
+      job.metadata?.laneID === REPORT_REPAIR_LANE_ID,
+  )
+}
+
+function reportRepairTaskParams(
+  operationID: string,
+  supervisor: RuntimeSchedulerSupervisorSummary,
+): SchedulerLaunchParams {
+  const nextTool = supervisor.requiredNextTool ?? "report_lint"
+  const prompt = [
+    `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
+    supervisor.modelPrompt,
+    `Required next tool: ${nextTool}.`,
+    "Read deliverables/operation-audit.json first, then fix every listed blocker.",
+    "Use the report pipeline tools as needed: report_outline for page/section budget issues, report_lint for content gaps, report_render for final HTML/PDF packaging, runtime_summary for accounting, and operation_audit to prove the final gates.",
+    "Do not mark the operation ready until operation_audit passes with the same strict handoff gates.",
+  ]
+    .filter((line): line is string => !!line)
+    .join("\n\n")
+  return {
+    description: "Repair final report audit",
+    prompt,
+    subagent_type: "report-writer",
+    operationID,
+    laneID: REPORT_REPAIR_LANE_ID,
+    modelRoute: "openai/gpt-5.5-fast",
+    allowedTools: ["report_outline", "write", "report_lint", "report_render", "runtime_summary", "operation_audit"],
+    background: true,
+  }
+}
+
 async function defaultSupervisorEnabled(worktree: string, operationID: string, configured: boolean | undefined) {
   if (configured !== undefined) return configured
   const goal = (await readOperationGoal(worktree, operationID)).goal
   return (goal?.targetDurationHours ?? 0) >= 1
+}
+
+async function readJson<T>(file: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8")) as T
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+}
+
+async function exists(file: string) {
+  try {
+    await fs.access(file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function shouldEnsureReadinessProof(worktree: string, operationID: string, configured: boolean | undefined) {
+  if (configured !== undefined) return configured
+  const goal = (await readOperationGoal(worktree, operationID)).goal
+  if ((goal?.targetDurationHours ?? 0) >= 20) return true
+  const plan = await readJson<{ timeBudget?: { targetHours?: number } }>(
+    path.join(operationPath(worktree, operationID), "plans", "operation-plan.json"),
+  )
+  return (plan?.timeBudget?.targetHours ?? 0) >= 20
+}
+
+async function ensureReadinessProofArtifacts(
+  worktree: string,
+  input: { operationID: string; toolManifestPath?: string; enabled?: boolean },
+) {
+  if (!(await shouldEnsureReadinessProof(worktree, input.operationID, input.enabled))) return
+  const root = operationPath(worktree, input.operationID)
+  if (!(await exists(path.join(root, "tools", "tool-preflight.json")))) {
+    await acquireManifestTools({
+      worktree,
+      operationID: input.operationID,
+      manifestPath: input.toolManifestPath,
+    }).catch((error) =>
+      writeJson(path.join(root, "tools", "tool-preflight.json"), {
+        operationID: input.operationID,
+        total: 1,
+        available: 0,
+        blocked: 1,
+        installed: 0,
+        installAttempted: false,
+        tools: [
+          {
+            operationID: input.operationID,
+            toolID: "tool-manifest",
+            available: false,
+            installed: false,
+            blocker: error instanceof Error ? error.message : String(error),
+            validationCommand: "read tool manifest",
+            fallbacks: [],
+          },
+        ],
+        checkedAt: new Date().toISOString(),
+      }),
+    )
+  }
+  await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  if (!(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
+    const graph = await readJson<{ lanes?: Array<{ budget?: { maxUSD?: number } }> }>(
+      path.join(root, "plans", "operation-graph.json"),
+    )
+    const budgetUSD = graph?.lanes?.reduce((sum, lane) => sum + (lane.budget?.maxUSD ?? 0), 0)
+    await writeRuntimeSummary(worktree, {
+      operationID: input.operationID,
+      modelCalls: { total: 0, byModel: {} },
+      usage: {
+        costUSD: 0,
+        ...(budgetUSD && budgetUSD > 0 ? { budgetUSD: Number(budgetUSD.toFixed(4)) } : {}),
+      },
+      compaction: { count: 0, pressure: "low" },
+      notes: ["Bootstrapped by runtime scheduler readiness proof before the first literal long-run cycle."],
+    })
+  }
 }
 
 async function maybeRunSupervisor(
@@ -142,6 +266,8 @@ async function maybeRunSupervisor(
     action,
     reason: primary?.reason,
     requiredNextTool: primary?.requiredNextTool,
+    operatorMessage: primary?.operatorMessage,
+    modelPrompt: primary?.modelPrompt,
     nextTools,
     blocking: supervisorBlocks(action),
     generatedAt: review.generatedAt,
@@ -163,6 +289,12 @@ export async function runRuntimeScheduler(
   let lastSupervisorReviewAt = parseDate(input.lastSupervisorReviewAt)
   let stopped = false
   let reason = "max scheduler cycles reached"
+
+  await ensureReadinessProofArtifacts(worktree, {
+    operationID,
+    toolManifestPath: input.toolManifestPath,
+    enabled: input.ensureReadinessProof,
+  })
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     const now = input.now ?? new Date()
@@ -186,7 +318,12 @@ export async function runRuntimeScheduler(
     let run: OperationRunResult | undefined
     let launchedJobs: string[] = []
     let launchedCommandJobs: string[] = []
-    if (!supervisor?.blocking) {
+    if (supervisor?.action === "continue_reporting" && input.launchModelLane) {
+      const launched = hasActiveReportRepairJob({ operationID, backgroundJobs: input.backgroundJobs })
+        ? undefined
+        : await input.launchModelLane(reportRepairTaskParams(operationID, supervisor))
+      launchedJobs = launched?.jobID ? [launched.jobID] : []
+    } else if (!supervisor?.blocking) {
       run = await runOperationStep(worktree, {
         operationID,
         backgroundJobs: input.backgroundJobs,
@@ -195,7 +332,7 @@ export async function runRuntimeScheduler(
       launchedJobs = launched?.jobID ? [launched.jobID] : []
     }
     const commandUnits =
-      !supervisor?.blocking && input.launchCommandWorkUnit
+      !supervisor?.blocking && supervisor?.action !== "continue_reporting" && input.launchCommandWorkUnit
         ? await nextWorkUnits(worktree, {
             operationID,
             limit: input.commandWorkUnitLimit ?? 2,
@@ -250,6 +387,10 @@ export async function runRuntimeScheduler(
     if (supervisor?.blocking) {
       stopped = supervisor.action === "blocked" || supervisor.action === "pause"
       reason = supervisor.reason ?? `supervisor requested ${supervisor.action}`
+      break
+    }
+    if (supervisor?.action === "continue_reporting") {
+      reason = supervisor.reason ?? "supervisor requested reporting continuation"
       break
     }
     if (!run) {

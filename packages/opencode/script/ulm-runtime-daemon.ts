@@ -3,12 +3,14 @@ import { formatRuntimeDaemon, runRuntimeDaemon } from "../src/ulm/runtime-daemon
 import { writeRuntimeSupervisor, type RuntimeSupervisorKind } from "../src/ulm/runtime-supervisor"
 import { operationPath, slug } from "../src/ulm/artifact"
 import { spawn } from "child_process"
-import { closeSync, mkdirSync, openSync, writeFileSync } from "fs"
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 import type { OperationRunResult } from "../src/ulm/operation-run"
 import type { RuntimeDaemonInput } from "../src/ulm/runtime-daemon"
+import type { BackgroundJob } from "../src/background/job"
 import { buildCommandPlan, writeCommandPlan } from "../src/ulm/tool-manifest"
+import { resolveScriptWorktree } from "./ulm-script-worktree"
 
 type Args = {
   operationID: string
@@ -162,11 +164,12 @@ function parseArgs(argv: string[]): Args {
 const args = parseArgs(process.argv.slice(2))
 const operationID = slug(args.operationID, "operation")
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..")
+const worktree = resolveScriptWorktree()
 
 if (args.supervisor) {
   const result = await writeRuntimeSupervisor({
     operationID,
-    worktree: process.cwd(),
+    worktree,
     bunPath: process.execPath,
     scriptPath: fileURLToPath(import.meta.url),
     durationSeconds: args.durationSeconds,
@@ -212,14 +215,14 @@ function childArgv(argv: string[]) {
 }
 
 if (args.detach) {
-  const daemonDir = path.join(operationPath(process.cwd(), operationID), "scheduler")
+  const daemonDir = path.join(operationPath(worktree, operationID), "scheduler")
   const logPath = path.resolve(args.detachLog ?? path.join(daemonDir, "daemon-process.log"))
   const launchPath = path.join(daemonDir, "daemon-launch.json")
   mkdirSync(path.dirname(logPath), { recursive: true })
   mkdirSync(daemonDir, { recursive: true })
   const logFD = openSync(logPath, "a")
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...childArgv(process.argv.slice(2))], {
-    cwd: process.cwd(),
+    cwd: worktree,
     detached: true,
     stdio: ["ignore", logFD, logFD],
     env: process.env,
@@ -261,7 +264,7 @@ function formatDetachedLaunch(launch: {
 }
 
 function launchRecordPath(kind: string, id: string) {
-  const dir = path.join(operationPath(process.cwd(), operationID), "scheduler", "cli-launches")
+  const dir = path.join(operationPath(worktree, operationID), "scheduler", "cli-launches")
   mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")
   return path.join(dir, `${stamp}-${kind}-${id}.json`)
@@ -273,13 +276,114 @@ function writeLaunchRecord(kind: string, id: string, value: Record<string, unkno
   return file
 }
 
+function processIsAlive(pid: unknown) {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function activeCliModelLaunch(laneID: string) {
+  const dir = path.join(operationPath(worktree, operationID), "scheduler", "cli-launches")
+  try {
+    return readdirSync(dir)
+      .filter((file) => file.endsWith(`-model-pid-${laneID}.json`))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(path.join(dir, file), "utf8")) as {
+            jobID?: string
+            pid?: number
+            createdAt?: string
+          }
+        } catch {
+          return undefined
+        }
+      })
+      .filter((record): record is { jobID?: string; pid?: number; createdAt?: string } => !!record)
+      .toSorted((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+      .find((record) => processIsAlive(record.pid))
+  } catch {
+    return undefined
+  }
+}
+
+function cliModelBackgroundJobs(): BackgroundJob.Info[] {
+  const root = operationPath(worktree, operationID)
+  const graphPath = path.join(root, "plans", "operation-graph.json")
+  const launchDir = path.join(root, "scheduler", "cli-launches")
+  try {
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      lanes?: Array<{ id?: string; status?: string }>
+    }
+    const runningLanes = new Set((graph.lanes ?? []).filter((lane) => lane.status === "running" && lane.id).map((lane) => lane.id as string))
+    if (!runningLanes.size) return []
+    const pidRecords = readdirSync(launchDir)
+      .filter((file) => file.includes("-model-pid-") && file.endsWith(".json"))
+      .map((file) => {
+        try {
+          const record = JSON.parse(readFileSync(path.join(launchDir, file), "utf8")) as {
+            laneID?: string
+            agent?: string
+            modelRoute?: string
+            prompt?: string
+            allowedTools?: string
+            pid?: number
+            createdAt?: string
+            jobID?: string
+          }
+          return { ...record, file }
+        } catch {
+          return undefined
+        }
+      })
+      .filter((record): record is NonNullable<typeof record> => !!record && !!record.laneID && runningLanes.has(record.laneID))
+      .toSorted((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+    const latestByLane = new Map<string, (typeof pidRecords)[number]>()
+    for (const record of pidRecords) {
+      if (record.laneID && !latestByLane.has(record.laneID)) latestByLane.set(record.laneID, record)
+    }
+    return [...latestByLane.values()]
+      .filter((record) => !processIsAlive(record.pid))
+      .filter((record) => typeof record.prompt === "string" && typeof record.agent === "string")
+      .map((record) => ({
+        id: record.jobID ?? `cli-model-lane-${record.laneID}`,
+        type: "task",
+        title: `CLI model lane ${record.laneID}`,
+        status: "stale",
+        startedAt: record.createdAt ? Date.parse(record.createdAt) : Date.now(),
+        error: `CLI model lane pid ${record.pid ?? "unknown"} is no longer running`,
+        metadata: {
+          operationID,
+          laneID: record.laneID,
+          prompt: record.prompt,
+          subagent_type: record.agent,
+          modelRoute: record.modelRoute,
+          allowedTools: record.allowedTools,
+          worktree,
+        },
+      }))
+  } catch {
+    return []
+  }
+}
+
 function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) {
   const jobID = `cli-model-lane-${params.laneID}`
+  const active = activeCliModelLaunch(params.laneID)
+  if (active?.jobID) {
+    writeLaunchRecord("model-reuse", params.laneID, { jobID: active.jobID, pid: active.pid })
+    return Promise.resolve({ jobID: active.jobID })
+  }
+  const allowedTools = params.allowedTools.join(", ")
   const record = {
     laneID: params.laneID,
     agent: params.subagent_type,
     modelRoute: params.modelRoute,
     prompt: params.prompt,
+    allowedTools,
   }
   if (process.env.ULMCODE_DAEMON_DRY_RUN_LAUNCHES === "1") {
     writeLaunchRecord("model", params.laneID, { ...record, dryRun: true, jobID })
@@ -289,6 +393,8 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
   const [provider, ...modelParts] = params.modelRoute.split("/")
   const model = provider && modelParts.length ? params.modelRoute : undefined
   const logPath = writeLaunchRecord("model", params.laneID, { ...record, dryRun: false, jobID })
+  const outputPath = launchRecordPath("model-output", params.laneID).replace(/\.json$/, ".log")
+  const outputFD = openSync(outputPath, "a")
   const child = spawn(
     process.execPath,
     [
@@ -296,7 +402,7 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
       path.join(packageRoot, "src", "index.ts"),
       "run",
       "--dir",
-      process.cwd(),
+      worktree,
       "--agent",
       params.subagent_type,
       "--title",
@@ -307,19 +413,49 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
     {
       cwd: packageRoot,
       detached: true,
-      stdio: ["ignore", "ignore", "ignore"],
-      env: { ...process.env, ULMCODE_DAEMON_CHILD: "1" },
+      stdio: ["ignore", outputFD, outputFD],
+      env: {
+        ...process.env,
+        ULMCODE_DAEMON_CHILD: "1",
+        ULMCODE_LANE_ID: params.laneID,
+        ULMCODE_LANE_ALLOWED_TOOLS: allowedTools,
+      },
     },
   )
   child.unref()
-  writeLaunchRecord("model-pid", params.laneID, { ...record, pid: child.pid, logPath, jobID })
+  closeSync(outputFD)
+  writeLaunchRecord("model-pid", params.laneID, { ...record, pid: child.pid, logPath, outputPath, jobID })
   return Promise.resolve({ jobID })
+}
+
+async function recoverCliModelJob(job: BackgroundJob.Info) {
+  const laneID = typeof job.metadata?.laneID === "string" ? job.metadata.laneID : undefined
+  const prompt = typeof job.metadata?.prompt === "string" ? job.metadata.prompt : undefined
+  const subagentType = typeof job.metadata?.subagent_type === "string" ? job.metadata.subagent_type : undefined
+  if (!laneID || !prompt || !subagentType) return undefined
+  const allowedTools =
+    typeof job.metadata?.allowedTools === "string"
+      ? job.metadata.allowedTools
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : []
+  return launchModelLane({
+    description: `Recover ${laneID}`,
+    prompt,
+    subagent_type: subagentType,
+    operationID,
+    laneID,
+    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "opencode-go/qwen3.6-plus",
+    allowedTools,
+    background: true,
+  })
 }
 
 async function launchCommandWorkUnit(params: Parameters<NonNullable<RuntimeDaemonInput["launchCommandWorkUnit"]>>[0]) {
   const jobID = `cli-command-${params.workUnitID ?? params.profileID}`
   const plan = await buildCommandPlan({
-    worktree: process.cwd(),
+    worktree,
     operationID,
     profileID: params.profileID,
     variables: params.variables,
@@ -366,7 +502,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 try {
-  const result = await runRuntimeDaemon(process.cwd(), {
+  const result = await runRuntimeDaemon(worktree, {
     operationID: args.operationID,
     maxRuntimeSeconds: args.durationSeconds,
     cycleIntervalSeconds: args.intervalSeconds,
@@ -379,6 +515,8 @@ try {
     supervisorEnabled: args.supervisorEnabled,
     supervisorIntervalMinutes: args.supervisorIntervalMinutes,
     supervisorReviewKind: args.supervisorReviewKind,
+    backgroundJobProvider: async () => cliModelBackgroundJobs(),
+    recoverBackgroundJob: recoverCliModelJob,
     launchModelLane,
     launchCommandWorkUnit,
     signal: controller.signal,

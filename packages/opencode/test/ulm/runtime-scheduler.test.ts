@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { createOperationGoal } from "@/ulm/operation-goal"
-import { operationPath, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import { operationPath, writeCoverageContract, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { runRuntimeScheduler } from "@/ulm/runtime-scheduler"
 import { tmpdir } from "../fixture/fixture"
@@ -104,7 +104,7 @@ describe("ULM runtime scheduler", () => {
       },
     })
 
-    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "opencode-go/default" }])
+    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "opencode-go/qwen3.6-plus" }])
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-district_profile"])
     const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
     expect(heartbeat.launchedJobs).toEqual(["job-district_profile"])
@@ -347,6 +347,119 @@ describe("ULM runtime scheduler", () => {
     expect(result.cycles[0]?.supervisor?.nextTools).toContain("operation_resume")
     expect(result.cycles[0]?.run).toBeUndefined()
     expect(launched).toEqual([])
+  })
+
+  test("supervisor reporting decisions launch a report repair task instead of idling", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeLongSupervisedOperation(dir.path)
+    const root = operationPath(dir.path, "School")
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const graph = JSON.parse(await fs.readFile(graphPath, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n")
+    await writeCoverageContract(dir.path, {
+      operationID: "School",
+      status: "met",
+      goals: ["Complete the authorized operation lanes."],
+      minimumEvidence: ["Lane proof exists for each required lane."],
+      requiredLanes: graph.lanes.map((lane: { id: string }) => lane.id),
+      allowedSkippedLanes: [],
+      fallbackRules: ["No fallback needed in this fixture."],
+      retryRules: ["No retry needed in this fixture."],
+      subagentOpportunities: ["report repair"],
+      reportGates: ["operation_audit passes"],
+    })
+    await fs.mkdir(path.join(root, "deliverables"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          ok: false,
+          blockers: ["final_handoff: reports/report-outline.md target_pages is too small: 4, expected at least 50"],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    const launched: Array<{ laneID: string; subagent_type: string; prompt: string }> = []
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 1,
+      supervisorIntervalMinutes: 0,
+      launchModelLane: async (params) => {
+        launched.push({ laneID: params.laneID, subagent_type: params.subagent_type, prompt: params.prompt })
+        return { jobID: `job-${params.laneID}` }
+      },
+    })
+
+    expect(result.reason).toBe("final operation audit has unresolved blockers")
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_reporting")
+    expect(launched[0]?.laneID).toBe("report_repair")
+    expect(launched[0]?.subagent_type).toBe("report-writer")
+    expect(launched[0]?.prompt).toContain("reports/report-outline.md target_pages is too small")
+    expect(result.cycles[0]?.launchedJobs).toEqual(["job-report_repair"])
+  })
+
+  test("supervisor reporting decisions do not duplicate an active report repair task", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeLongSupervisedOperation(dir.path)
+    const root = operationPath(dir.path, "School")
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const graph = JSON.parse(await fs.readFile(graphPath, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n")
+    await writeCoverageContract(dir.path, {
+      operationID: "School",
+      status: "met",
+      goals: ["Complete the authorized operation lanes."],
+      minimumEvidence: ["Lane proof exists for each required lane."],
+      requiredLanes: graph.lanes.map((lane: { id: string }) => lane.id),
+      allowedSkippedLanes: [],
+      fallbackRules: ["No fallback needed in this fixture."],
+      retryRules: ["No retry needed in this fixture."],
+      subagentOpportunities: ["report repair"],
+      reportGates: ["operation_audit passes"],
+    })
+    await fs.mkdir(path.join(root, "deliverables"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          ok: false,
+          blockers: ["final_handoff: deliverables/final/report.pdf has 11 pages, expected at least 50"],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    const launched: string[] = []
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 1,
+      supervisorIntervalMinutes: 0,
+      backgroundJobs: [
+        {
+          id: "task_report_repair",
+          type: "task",
+          title: "Repair final report audit",
+          status: "running",
+          startedAt: Date.now(),
+          metadata: { operationID: "school", laneID: "report_repair" },
+        },
+      ],
+      launchModelLane: async (params) => {
+        launched.push(params.laneID)
+        return { jobID: `job-${params.laneID}` }
+      },
+    })
+
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_reporting")
+    expect(launched).toEqual([])
+    expect(result.cycles[0]?.launchedJobs).toEqual([])
   })
 
   test("supervisor pre-handoff decisions reject complete lanes without lane proof", async () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import path from "path"
 import { auditLiteralRunReadiness, formatLiteralRunReadiness } from "../src/ulm/literal-run-readiness"
+import { resolveScriptWorktree } from "./ulm-script-worktree"
 
 function hasArg(name: string) {
   return process.argv.includes(name)
@@ -24,7 +24,7 @@ const positionalOperation = process.argv.find(
   (arg, index) => index > 1 && !arg.startsWith("--") && !process.argv[index - 1]?.startsWith("--"),
 )
 const operationID = readArg("--operation-id") ?? positionalOperation ?? "literal-run"
-const worktree = path.resolve(readArg("--worktree") ?? process.cwd())
+const worktree = resolveScriptWorktree(readArg("--worktree"))
 const targetElapsedSeconds = readNumberArg("--target-seconds")
 
 const result = await auditLiteralRunReadiness(worktree, {

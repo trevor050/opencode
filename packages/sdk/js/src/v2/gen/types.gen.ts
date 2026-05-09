@@ -273,6 +273,14 @@ export type SessionStatus =
       type: "retry"
       attempt: number
       message: string
+      action?: {
+        reason: string
+        provider: string
+        title: string
+        message: string
+        label: string
+        link?: string
+      }
       next: number
     }
   | {
@@ -1485,12 +1493,27 @@ export type VcsInfo = {
   default_branch?: string
 }
 
+export type VcsFileStatus = {
+  file: string
+  additions: number
+  deletions: number
+  status: "added" | "deleted" | "modified"
+}
+
 export type VcsFileDiff = {
   file: string
   patch: string
   additions: number
   deletions: number
   status?: "added" | "deleted" | "modified"
+}
+
+export type VcsApplyError = {
+  name: "VcsApplyError"
+  data: {
+    message: string
+    reason: "non-git" | "not-clean"
+  }
 }
 
 export type Command = {
@@ -1881,6 +1904,15 @@ export type UlmTemplateStartResult = {
   }
 }
 
+export type UlmCloseOperationsPayload = {
+  operationIDs?: Array<string>
+}
+
+export type UlmCloseOperationsResult = {
+  closed: Array<string>
+  remaining: number
+}
+
 export type UlmOperationCheckpointBrief = {
   objective: string
   stage: "intake" | "recon" | "mapping" | "validation" | "reporting" | "handoff"
@@ -2051,6 +2083,13 @@ export type UlmCredentialListResult = {
   credentials: Array<UlmCredentialRecord>
 }
 
+export type UlmCredentialReviewSubmitResult = {
+  operationID: string
+  submittedAt: string
+  file: string
+  credentials: Array<UlmCredentialRecord>
+}
+
 export type UlmCredentialDeleteResult = {
   operationID: string
   credentialID: string
@@ -2076,6 +2115,14 @@ export type Workspace = {
   directory: string | null
   extra: unknown | null
   projectID: string
+  timeUsed: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type WorkspaceWarpError = {
+  name: "WorkspaceWarpError"
+  data: {
+    message: string
+  }
 }
 
 export type SyncEventMessageUpdated = {
@@ -4473,6 +4520,25 @@ export type VcsGetResponses = {
 
 export type VcsGetResponse = VcsGetResponses[keyof VcsGetResponses]
 
+export type VcsStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/vcs/status"
+}
+
+export type VcsStatusResponses = {
+  /**
+   * VCS status
+   */
+  200: Array<VcsFileStatus>
+}
+
+export type VcsStatusResponse = VcsStatusResponses[keyof VcsStatusResponses]
+
 export type VcsDiffData = {
   body?: never
   path?: never
@@ -4492,6 +4558,57 @@ export type VcsDiffResponses = {
 }
 
 export type VcsDiffResponse = VcsDiffResponses[keyof VcsDiffResponses]
+
+export type VcsDiffRawData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/vcs/diff/raw"
+}
+
+export type VcsDiffRawResponses = {
+  /**
+   * Raw VCS diff
+   */
+  200: string
+}
+
+export type VcsDiffRawResponse = VcsDiffRawResponses[keyof VcsDiffRawResponses]
+
+export type VcsApplyData = {
+  body?: {
+    patch: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/vcs/apply"
+}
+
+export type VcsApplyErrors = {
+  /**
+   * VcsApplyError
+   */
+  400: VcsApplyError
+}
+
+export type VcsApplyError2 = VcsApplyErrors[keyof VcsApplyErrors]
+
+export type VcsApplyResponses = {
+  /**
+   * VCS patch applied
+   */
+  200: {
+    applied: boolean
+  }
+}
+
+export type VcsApplyResponse = VcsApplyResponses[keyof VcsApplyResponses]
 
 export type CommandListData = {
   body?: never
@@ -4547,7 +4664,7 @@ export type AppSkillsResponses = {
    */
   200: Array<{
     name: string
-    description: string
+    description?: string
     location: string
     content: string
   }>
@@ -7168,6 +7285,25 @@ export type UlmOperationTemplateStartResponses = {
 export type UlmOperationTemplateStartResponse =
   UlmOperationTemplateStartResponses[keyof UlmOperationTemplateStartResponses]
 
+export type UlmOperationCloseData = {
+  body?: UlmCloseOperationsPayload
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/close"
+}
+
+export type UlmOperationCloseResponses = {
+  /**
+   * Closed ULM operations
+   */
+  200: UlmCloseOperationsResult
+}
+
+export type UlmOperationCloseResponse = UlmOperationCloseResponses[keyof UlmOperationCloseResponses]
+
 export type UlmOperationStatusData = {
   body?: never
   path: {
@@ -7225,7 +7361,9 @@ export type UlmOperationAuditData = {
     staleAfterMinutes?: string
     minWords?: string
     requireOutlineBudget?: "true" | "false"
+    minOutlineTargetPages?: string
     minOutlineWordsPerPage?: string
+    minPdfPages?: string
     requireFindingSections?: "true" | "false"
     minFindingWords?: string
     finalHandoff?: "true" | "false"
@@ -7500,6 +7638,28 @@ export type UlmOperationCredentialCreateResponses = {
 export type UlmOperationCredentialCreateResponse =
   UlmOperationCredentialCreateResponses[keyof UlmOperationCredentialCreateResponses]
 
+export type UlmOperationCredentialReviewSubmitData = {
+  body?: never
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/credentials/submit"
+}
+
+export type UlmOperationCredentialReviewSubmitResponses = {
+  /**
+   * ULMCode submitted credential review
+   */
+  200: UlmCredentialReviewSubmitResult
+}
+
+export type UlmOperationCredentialReviewSubmitResponse =
+  UlmOperationCredentialReviewSubmitResponses[keyof UlmOperationCredentialReviewSubmitResponses]
+
 export type UlmOperationCredentialDeleteData = {
   body?: never
   path: {
@@ -7626,6 +7786,26 @@ export type ExperimentalWorkspaceCreateResponses = {
 export type ExperimentalWorkspaceCreateResponse =
   ExperimentalWorkspaceCreateResponses[keyof ExperimentalWorkspaceCreateResponses]
 
+export type ExperimentalWorkspaceSyncListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/workspace/sync-list"
+}
+
+export type ExperimentalWorkspaceSyncListResponses = {
+  /**
+   * Workspace list synced
+   */
+  204: void
+}
+
+export type ExperimentalWorkspaceSyncListResponse =
+  ExperimentalWorkspaceSyncListResponses[keyof ExperimentalWorkspaceSyncListResponses]
+
 export type ExperimentalWorkspaceStatusData = {
   body?: never
   path?: never
@@ -7685,6 +7865,7 @@ export type ExperimentalWorkspaceWarpData = {
   body?: {
     id: string | null
     sessionID: string
+    copyChanges?: boolean
   }
   path?: never
   query?: {
@@ -7696,9 +7877,9 @@ export type ExperimentalWorkspaceWarpData = {
 
 export type ExperimentalWorkspaceWarpErrors = {
   /**
-   * Bad request
+   * WorkspaceWarpError | VcsApplyError
    */
-  400: BadRequestError
+  400: WorkspaceWarpError | VcsApplyError
 }
 
 export type ExperimentalWorkspaceWarpError = ExperimentalWorkspaceWarpErrors[keyof ExperimentalWorkspaceWarpErrors]

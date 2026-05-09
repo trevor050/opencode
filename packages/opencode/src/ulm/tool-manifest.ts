@@ -32,6 +32,8 @@ export type CommandProfile = {
   id: string
   tool: string
   safety: ToolSafety
+  requiresPrivilege?: boolean
+  privilegeReason?: string
   template: string
   heartbeatSeconds: number
   idleTimeoutSeconds: number
@@ -47,6 +49,7 @@ export type CommandPlanInput = {
   variables?: Record<string, string | undefined>
   outputPrefix?: string
   manifestPath?: string
+  dryRun?: boolean
 }
 
 export type CommandPlan = {
@@ -69,6 +72,7 @@ export type CommandPlan = {
   stdoutPath: string
   stderrPath: string
   heartbeatPath: string
+  dryRun?: boolean
 }
 
 export function defaultToolManifestPath(worktree: string) {
@@ -104,6 +108,35 @@ function renderedArtifacts(profile: CommandProfile, outputPrefix: string) {
   return [...artifacts]
 }
 
+async function commandRootForPlan(input: { root: string; profileID: string; outputPrefix: string }) {
+  const names = [
+    slug(input.profileID, "command-profile"),
+    slug(`${input.profileID}-${input.outputPrefix}`, "command-profile"),
+  ]
+  for (let index = 0; index < 10; index++) {
+    const name = names[index] ?? slug(`${input.profileID}-${input.outputPrefix}-${Date.now()}-${index}`, "command-profile")
+    const candidate = path.join(input.root, "commands", name)
+    try {
+      const existing = JSON.parse(await fs.readFile(path.join(candidate, "command-plan.json"), "utf8")) as {
+        profileID?: string
+        outputPrefix?: string
+        dryRun?: boolean
+      }
+      if (existing.dryRun === true && existing.profileID === input.profileID && existing.outputPrefix === input.outputPrefix) {
+        return candidate
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return candidate
+      throw error
+    }
+  }
+  return path.join(
+    input.root,
+    "commands",
+    slug(`${input.profileID}-${input.outputPrefix}-${Date.now()}`, "command-profile"),
+  )
+}
+
 export async function buildCommandPlan(input: CommandPlanInput): Promise<CommandPlan> {
   const manifestPath = input.manifestPath ?? defaultToolManifestPath(input.worktree)
   const manifest = await readToolManifest(manifestPath)
@@ -112,14 +145,20 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
   if (profile.safety !== "non_destructive") {
     throw new Error(`command profile ${profile.id} is ${profile.safety}; unattended command_supervise only allows non_destructive`)
   }
+  if (profile.requiresPrivilege === true) {
+    throw new Error(
+      `command profile ${profile.id} requires elevated privileges; unattended command_supervise cannot launch it` +
+        (profile.privilegeReason ? `: ${profile.privilegeReason}` : ""),
+    )
+  }
   const tool = manifest.tools.find((item) => item.id === profile.tool)
   if (!tool) throw new Error(`command profile ${profile.id} references missing tool ${profile.tool}`)
 
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(input.worktree, operationID)
-  const commandRoot = path.join(root, "commands", slug(profile.id, "command-profile"))
   const outputPrefix =
     input.outputPrefix ?? path.join("evidence", "raw", `${slug(profile.id, "command")}-${Date.now()}`)
+  const commandRoot = await commandRootForPlan({ root, profileID: profile.id, outputPrefix })
   const variables = { ...input.variables, outputPrefix }
   const command = renderTemplate(profile.template, variables)
   const artifacts = renderedArtifacts(profile, outputPrefix)
@@ -148,11 +187,18 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
     stdoutPath,
     stderrPath,
     heartbeatPath,
+    dryRun: input.dryRun,
   }
 }
 
 export async function writeCommandPlan(plan: CommandPlan) {
   await fs.mkdir(path.dirname(plan.planPath), { recursive: true })
+  for (const artifact of plan.artifacts) {
+    if (!artifact || path.isAbsolute(artifact) || artifact.includes("..")) continue
+    const resolved = path.resolve(plan.operationRoot, artifact)
+    if (!resolved.startsWith(path.resolve(plan.operationRoot) + path.sep)) continue
+    await fs.mkdir(path.dirname(resolved), { recursive: true })
+  }
   await fs.writeFile(
     plan.planPath,
     JSON.stringify(
@@ -171,6 +217,7 @@ export async function writeCommandPlan(plan: CommandPlan) {
         stdoutPath: plan.stdoutPath,
         stderrPath: plan.stderrPath,
         heartbeatPath: plan.heartbeatPath,
+        dryRun: plan.dryRun,
         plannedAt: new Date().toISOString(),
       },
       null,

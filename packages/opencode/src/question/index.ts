@@ -116,6 +116,7 @@ interface PendingEntry {
   info: Request
   deferred: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
   timeoutAt?: number
+  timeoutWindowMillis?: number
 }
 
 interface State {
@@ -179,7 +180,7 @@ export const layer = Layer.effect(
 
       const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
       const ctx = yield* InstanceState.context
-      const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
+      const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       const ulmConfig = yield* Effect.promise(() => readULMConfig(ctx))
       const activeOperation = operation && operationAllowsUnattendedFallback(operation.goal, ulmConfig) ? operation : undefined
       const timeoutMillis =
@@ -203,7 +204,7 @@ export const layer = Layer.effect(
         questions: input.questions,
         tool: input.tool,
       })
-      pending.set(id, { info, deferred, timeoutAt })
+      pending.set(id, { info, deferred, timeoutAt, timeoutWindowMillis: timeoutMillis })
       yield* bus.publish(Event.Asked, info)
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
@@ -289,7 +290,8 @@ export const layer = Layer.effect(
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
       if (!existing || existing.timeoutAt === undefined) return false
-      const holdUntil = Date.now() + (input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+      const holdUntil =
+        Date.now() + Math.max(existing.timeoutWindowMillis ?? 0, input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
       const timeoutAt = Math.max(existing.timeoutAt, holdUntil)
       existing.timeoutAt = timeoutAt
       existing.info = Schema.decodeUnknownSync(Request)({

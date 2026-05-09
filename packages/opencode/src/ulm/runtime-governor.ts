@@ -5,6 +5,7 @@ import type { OperationGraphRecord, OperationLane } from "./operation-graph"
 import {
   auditModelRoutes,
   resolveModelRuntime,
+  splitModelRoute,
   type ModelRouteAudit,
   type ModelRuntimeCatalog,
   type ModelRuntimeInfo,
@@ -253,7 +254,7 @@ export async function writeRuntimeGovernorRouteAudit(
   worktree: string,
   input: {
     operationID: string
-    providers: ProviderCatalogSource
+    providers?: ProviderCatalogSource
     quotaOverrides?: Record<string, ModelRuntimeInfo["quota"] | undefined>
   },
 ) {
@@ -276,11 +277,12 @@ export async function writeRuntimeGovernorRouteAudit(
       routes.push({ route: fallback, laneID: lane.id, role: "fallback" })
     }
   }
+  const inferred = inferProviderCatalogFromRoutes(routes.map((route) => route.route))
   const record = auditModelRoutes({
     operationID,
-    providers: input.providers,
+    providers: input.providers ?? inferred.providers,
     routes,
-    quotaOverrides: input.quotaOverrides,
+    quotaOverrides: { ...inferred.quotaOverrides, ...input.quotaOverrides },
   })
   const json = path.join(root, "deliverables", "model-route-audit.json")
   const markdown = path.join(root, "deliverables", "model-route-audit.md")
@@ -288,6 +290,23 @@ export async function writeRuntimeGovernorRouteAudit(
   await fs.writeFile(json, JSON.stringify(record, null, 2) + "\n")
   await fs.writeFile(markdown, routeAuditMarkdown(record))
   return { operationID, json, markdown, record }
+}
+
+function inferProviderCatalogFromRoutes(routes: string[]) {
+  const providers: ProviderCatalogSource = {}
+  const quotaOverrides: Record<string, ModelRuntimeInfo["quota"] | undefined> = {}
+  for (const route of routes) {
+    const parsed = splitModelRoute(route)
+    if (!parsed) continue
+    const runtime = resolveModelRuntime(route)
+    const provider = (providers[parsed.providerID] ??= { source: "inferred", models: {} })
+    provider.models ??= {}
+    provider.models[parsed.modelID] = {
+      limit: runtime ? { context: runtime.contextLimit, output: runtime.outputLimit } : undefined,
+    }
+    if (runtime?.quota) quotaOverrides[route] = runtime.quota
+  }
+  return { providers, quotaOverrides }
 }
 
 export function formatGovernorDecision(decision: GovernorDecision) {

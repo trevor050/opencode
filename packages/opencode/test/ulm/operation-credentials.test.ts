@@ -4,8 +4,11 @@ import path from "path"
 import { Effect } from "effect"
 import { Storage } from "@/storage/storage"
 import {
+  inspectOperationCredentials,
   materializeOperationCredentials,
   readOperationCredentials,
+  readOperationCredentialReview,
+  submitOperationCredentialReview,
   writeOperationCredential,
 } from "@/ulm/operation-credentials"
 import { tmpdir } from "../fixture/fixture"
@@ -94,5 +97,41 @@ describe("ULM operation credentials", () => {
     expect(await fs.readFile(materialized.envFile, "utf8")).toContain("correct horse battery staple")
     expect(await fs.readFile(materialized.envFile, "utf8")).toContain("ULMCODE_CREDENTIAL_STUDENT_PORTAL_TEST_ACCOUNT_SECRET")
     expect(await fs.readFile(materialized.envFile, "utf8")).toContain("ULMCODE_CREDENTIAL_STUDENT_PORTAL_TEST_ACCOUNT_TARGET")
+
+    const submission = await submitOperationCredentialReview(dir.path, { operationID: "School Login" })
+    expect((await fs.stat(submission.file)).mode & 0o777).toBe(0o600)
+    expect(submission.credentials[0]?.credentialID).toBe("student-portal-test-account")
+    expect(JSON.stringify(submission)).not.toContain("correct horse battery staple")
+
+    const review = await readOperationCredentialReview(dir.path, { operationID: "School Login" })
+    expect(review.submittedAt).toBe(submission.submittedAt)
+    expect(review.credentials[0]?.password).toBe("********")
+  })
+
+  test("inspects raw-note credentials with secret values redacted", async () => {
+    await using dir = await tmpdir({ git: true })
+    const storage = memoryStorage()
+    await writeOperationCredential(storage, dir.path, {
+      operationID: "Home Network",
+      label: "Wifi Info",
+      type: "Raw Note",
+      secret: "ssid: TrevorNet\npassword: hunter2\noperator note: router closet upstairs",
+      target: "raw vault item",
+      notes: "Use only for home network validation.",
+      rules: "No credential spraying.",
+    })
+
+    const inspected = await inspectOperationCredentials(storage, dir.path, {
+      operationID: "Home Network",
+      credentialID: "Wifi Info",
+    })
+
+    expect(JSON.stringify(inspected)).not.toContain("hunter2")
+    expect(inspected.credentials[0]?.secret).toBe("********")
+    expect(inspected.credentials[0]?.secretPreview).toContain("ssid: TrevorNet")
+    expect(inspected.credentials[0]?.secretPreview).toContain("password: ********")
+    expect(inspected.credentials[0]?.secretPreview).toContain("operator note: router closet upstairs")
+    expect(inspected.credentials[0]?.notes).toBe("Use only for home network validation.")
+    expect(inspected.credentials[0]?.rules).toBe("No credential spraying.")
   })
 })

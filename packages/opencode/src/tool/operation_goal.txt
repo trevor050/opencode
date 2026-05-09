@@ -4,6 +4,8 @@ The operation goal is the long-run objective contract. It stores the operator's 
 
 Use `action="create"` near the start of any long-running pentest operation, after the operator has provided the authorized objective and expected runtime. For overnight work, include `targetDurationHours`. `operationID` is optional for create; if omitted, ULMCode generates a readable two- or three-word id with a short uniqueness tag.
 
+For unattended ULM runs, do not shrink `continuation.operatorFallbackTimeoutSeconds` below 300 seconds unless the operator explicitly asked for very fast auto-fallback. The default is five minutes so a human has time to read and answer staged kickoff questions.
+
 Use `action="read"` after compaction, resume, or when a supervisor lane needs to verify the current objective. `operationID` is required.
 
 Use `action="complete"` only after the operation has real handoff artifacts. `operationID` is required. Completion is evidence-gated: the tool checks runtime summary, final render manifest, operation audit, and the required stage gate before marking the goal complete. If artifacts are missing, it writes `goals/completion-blockers.json` and keeps the goal active.

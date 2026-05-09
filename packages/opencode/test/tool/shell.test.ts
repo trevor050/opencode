@@ -4,7 +4,13 @@ import os from "os"
 import path from "path"
 import { Config } from "@/config/config"
 import { Shell } from "../../src/shell/shell"
-import { isDangerousProcessKillCommand, ShellTool } from "../../src/tool/shell"
+import {
+  isDangerousProcessKillCommand,
+  isULMForegroundScanCommand,
+  isULMOperationArtifactShellRead,
+  isULMOperationArtifactMutation,
+  ShellTool,
+} from "../../src/tool/shell"
 import { Instance } from "../../src/project/instance"
 import { WithInstance } from "../../src/project/with-instance"
 import { Filesystem } from "@/util/filesystem"
@@ -87,6 +93,55 @@ describe("isDangerousProcessKillCommand", () => {
     "allows scoped process stop: %s",
     (command) => {
       expect(isDangerousProcessKillCommand(command)).toBe(false)
+    },
+  )
+})
+
+describe("isULMForegroundScanCommand", () => {
+  test.each([
+    "nmap -sn -T2 --max-retries 1 --max-rtt-timeout 500ms 192.168.1.0/24",
+    "ffuf -w words.txt -u http://192.168.1.1/FUZZ",
+    "for ip in 192.168.1.{1..254}; do ping -c 1 $ip; done",
+  ])("blocks raw ULM scan command: %s", (command) => {
+    expect(isULMForegroundScanCommand(command)).toBe(true)
+  })
+
+  test.each(["nmap --version", "arp -a", "ifconfig en0 | grep inet"])("allows passive/version command: %s", (command) => {
+    expect(isULMForegroundScanCommand(command)).toBe(false)
+  })
+})
+
+describe("isULMOperationArtifactMutation", () => {
+  test.each([
+    "mkdir -p /repo/.ulmcode/operations/quick/evidence/raw/network-discovery",
+    "cp .ulmcode/operations/quick/evidence/raw/*.txt .ulmcode/operations/quick/evidence/raw/network-discovery/",
+    "mv /repo/.ulmcode/operations/quick/lane-complete/foo.json /tmp/foo.json",
+  ])("blocks raw operation artifact mutation: %s", (command) => {
+    expect(isULMOperationArtifactMutation(command)).toBe(true)
+  })
+
+  test.each(["ls .ulmcode/operations/quick", "nmap --version", "mkdir -p dist"])(
+    "allows non-operation mutation/read command: %s",
+    (command) => {
+      expect(isULMOperationArtifactMutation(command)).toBe(false)
+    },
+  )
+})
+
+describe("isULMOperationArtifactShellRead", () => {
+  test.each([
+    "ls -la /repo/.ulmcode/operations/quick/evidence/",
+    "stat .ulmcode/operations/quick/evidence/raw/foo.txt",
+    "find .ulmcode/operations/quick -maxdepth 2 -type f",
+    "rg stale /repo/.ulmcode/operations/quick",
+  ])("blocks raw operation artifact shell read: %s", (command) => {
+    expect(isULMOperationArtifactShellRead(command)).toBe(true)
+  })
+
+  test.each(["ls dist", "rg stale packages/opencode/src", "read .ulmcode/operations/quick"])(
+    "allows non-shell-artifact read command: %s",
+    (command) => {
+      expect(isULMOperationArtifactShellRead(command)).toBe(false)
     },
   )
 })

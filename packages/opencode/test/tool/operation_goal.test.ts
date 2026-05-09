@@ -6,6 +6,7 @@ import { Config } from "@/config/config"
 import { MessageID } from "@/session/schema"
 import { OperationGoalTool } from "@/tool/operation_goal"
 import { Truncate } from "@/tool/truncate"
+import { operationForSession } from "@/ulm/operation-context"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
@@ -44,6 +45,7 @@ describe("tool.operation_goal", () => {
             expect(created.output).toContain("<operation_goal_json>")
             expect(created.metadata.created).toBe(true)
             expect(created.metadata.status).toBe("active")
+            expect((yield* Effect.promise(() => operationForSession(dir.path, context.sessionID)))?.operationID).toBe("school")
 
             const read = yield* def.execute({ action: "read", operationID: "School" }, context)
             expect(read.title).toBe("Read operation goal for school")
@@ -75,6 +77,32 @@ describe("tool.operation_goal", () => {
             expect(created.metadata.created).toBe(true)
             expect(created.metadata.operationID).toMatch(/^[a-z]+-[a-z]+(-[a-z]+)?-[a-f0-9]{6}$/)
             expect(created.output).toContain(`operation_id: ${created.metadata.operationID}`)
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
+  test("clamps model-supplied unattended operator timeouts below five minutes", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationGoalTool
+            const def = yield* tool.init()
+            const created = yield* def.execute(
+              {
+                action: "create",
+                operationID: "Home Network",
+                objective: "Authorized unattended home network test",
+                targetDurationHours: 4.3,
+                continuation: { operatorFallbackTimeoutSeconds: 120 },
+              },
+              context,
+            )
+
+            expect(created.output).toContain('"operatorFallbackTimeoutSeconds": 300')
           }).pipe(Effect.provide(layer)),
         ),
     })

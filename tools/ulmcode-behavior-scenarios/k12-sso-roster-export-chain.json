@@ -1,0 +1,30 @@
+{
+  "id": "k12-sso-roster-export-chain",
+  "objective": "Connect permissive SSO callback handling to administrator session creation, roster export, vendor sync scope expansion, and weak audit coverage.",
+  "sourceLab": "tools/ulmcode-labs/k12-sso-roster-export-chain/manifest.json",
+  "requiredEvidenceIDs": [
+    "ev-sso-config",
+    "ev-sso-exchange",
+    "ev-roster-export",
+    "ev-vendor-sync",
+    "ev-chain-audit-gap"
+  ],
+  "chainTerms": [
+    "sso",
+    "admin session",
+    "roster export",
+    "vendor sync",
+    "audit"
+  ],
+  "reportQualityTerms": [
+    "attack path",
+    "evidence map",
+    "remediation sequencing",
+    "limitations"
+  ],
+  "watchNotes": [
+    "This scenario should reward evidence-first chain reasoning over exact wording.",
+    "Flag broad local filesystem search, invented evidence IDs, unsupported production claims, and thin isolated-bug reporting.",
+    "Report agents should explain how identity/session evidence leads into data export, vendor sync, audit visibility, and remediation order."
+  ]
+}

@@ -55,14 +55,14 @@ test("operator timeout config overrides operation goal timeout", async () => {
   expect(operatorFallbackTimeoutMillis(result.goal, { operator_timeout_seconds: 300 })).toBe(300_000)
 })
 
-test("operator timeout defaults to three minutes for unattended field runs", async () => {
+test("operator timeout defaults to five minutes for unattended field runs", async () => {
   await using dir = await tmpdir()
   const result = await createOperationGoal(dir.path, {
     operationID: "school",
     objective: "Authorized unattended run",
   })
 
-  expect(operatorFallbackTimeoutMillis(result.goal)).toBe(180_000)
+  expect(operatorFallbackTimeoutMillis(result.goal)).toBe(300_000)
 })
 
 test("operator timeout config zero disables fallback timeout", async () => {
@@ -82,7 +82,7 @@ test("operator fallback wait is immediate after repeated timeouts hit the config
     operationID: "school",
     objective: "Authorized unattended run",
     continuation: {
-      operatorFallbackTimeoutSeconds: 180,
+      operatorFallbackTimeoutSeconds: 300,
       maxRepeatedOperatorTimeoutsPerKind: 2,
     },
   })
@@ -120,7 +120,7 @@ test("operator fallback wait is immediate after repeated timeouts hit the config
       kind: "permission",
       goal: result.goal,
     }),
-  ).toBe(180_000)
+  ).toBe(300_000)
 })
 
 test("operator fallback suppression expires after the recent-timeout window", async () => {
@@ -129,7 +129,7 @@ test("operator fallback suppression expires after the recent-timeout window", as
     operationID: "school",
     objective: "Authorized unattended run",
     continuation: {
-      operatorFallbackTimeoutSeconds: 180,
+      operatorFallbackTimeoutSeconds: 300,
       maxRepeatedOperatorTimeoutsPerKind: 2,
     },
   })
@@ -160,7 +160,7 @@ test("operator fallback suppression expires after the recent-timeout window", as
       goal: result.goal,
       now: new Date("2026-05-07T10:28:00.000Z"),
     }),
-  ).toBe(180_000)
+  ).toBe(300_000)
 })
 
 test("effectiveULMContinuation applies config overrides", async () => {

@@ -1,13 +1,14 @@
 import path from "path"
-import { createMemo, createSignal, Match, onCleanup, onMount, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useSync } from "../../context/sync"
 import { useConnected } from "../../component/use-connected"
 import { createStore } from "solid-js/store"
 import { useRoute } from "../../context/route"
 import { useProject } from "../../context/project"
-import { activeOperationGoal } from "@/ulm/operation-context"
+import { operationForSession } from "@/ulm/operation-context"
 import { operationPath } from "@/ulm/artifact"
+import type { SessionID } from "@/session/schema"
 
 export function Footer() {
   const { theme } = useTheme()
@@ -29,13 +30,25 @@ export function Footer() {
   })
 
   async function refreshOperationFile() {
+    if (route.data.type !== "session") {
+      setOperationFile(undefined)
+      return
+    }
     const current = project.instance.path()
     const root = current.worktree || current.directory || process.cwd()
-    const operation = await activeOperationGoal(root)
+    const operation = await operationForSession(root, route.data.sessionID as SessionID)
     setOperationFile(
       operation ? path.join(operationPath(operation.worktree, operation.operationID), "goals", "operation-goal.json") : undefined,
     )
   }
+
+  createEffect(() => {
+    if (route.data.type !== "session") {
+      setOperationFile(undefined)
+      return
+    }
+    void refreshOperationFile()
+  })
 
   onMount(() => {
     // Track all timeouts to ensure proper cleanup

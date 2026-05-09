@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_supervise.txt"
 import { Instance } from "@/project/instance"
 import { superviseOperation } from "@/ulm/operation-supervisor"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -40,9 +41,18 @@ export const OperationSuperviseTool = Tool.define<typeof Parameters, Metadata, n
   Effect.succeed({
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const result = yield* Effect.tryPromise(() => superviseOperation(Instance.worktree, params)).pipe(Effect.orDie)
+        if (result.goal) {
+          yield* Effect.promise(() =>
+            bindOperationSession(Instance.worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: "operation_supervise",
+            }),
+          )
+        }
         return {
           title: `Supervisor ${result.operationID}: ${result.decisions.map((item) => item.action).join(", ")}`,
           output: [

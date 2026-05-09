@@ -13,6 +13,7 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const providerID = ProviderID.make("test")
+const retryProvider = "test"
 const it = testEffect(Layer.mergeAll(SessionStatus.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
@@ -92,6 +93,7 @@ describe("session.retry.delay", () => {
 
         const step = yield* Schedule.toStepWithMetadata(
           SessionRetry.policy({
+            provider: "test",
             parse: (err) => MessageV2.APIError.Schema.parse(err),
             set: (info) =>
               status.set(sessionID, {
@@ -128,6 +130,7 @@ describe("session.retry.delay", () => {
           Effect.retry(
             SessionRetry.policy({
               maxRetries: 2,
+              provider: retryProvider,
               parse: (err) => MessageV2.APIError.Schema.parse(err),
               set: () =>
                 Effect.sync(() => {
@@ -149,12 +152,12 @@ describe("session.retry.delay", () => {
 describe("session.retry.retryable", () => {
   test("maps too_many_requests json messages", () => {
     const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
-    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Too Many Requests" })
   })
 
   test("maps overloaded provider codes", () => {
     const error = wrap(JSON.stringify({ code: "resource_exhausted" }))
-    expect(SessionRetry.retryable(error)).toBe("Provider is overloaded")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Provider is overloaded" })
   })
 
   test("maps nested overloaded provider errors", () => {
@@ -170,42 +173,42 @@ describe("session.retry.retryable", () => {
         },
       }),
     )
-    expect(SessionRetry.retryable(error)).toBe("Provider is overloaded")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Provider is overloaded" })
   })
 
   test("does not retry unknown json messages", () => {
     const error = wrap(JSON.stringify({ error: { message: "no_kv_space" } }))
-    expect(SessionRetry.retryable(error)).toBeUndefined()
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
   })
 
   test("does not throw on numeric error codes", () => {
     const error = wrap(JSON.stringify({ type: "error", error: { code: 123 } }))
-    const result = SessionRetry.retryable(error)
+    const result = SessionRetry.retryable(error, retryProvider)
     expect(result).toBeUndefined()
   })
 
   test("returns undefined for non-json message", () => {
     const error = wrap("not-json")
-    expect(SessionRetry.retryable(error)).toBeUndefined()
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
   })
 
   test("retries plain text rate limit errors from Alibaba", () => {
     const msg =
       "Upstream error from Alibaba: Request rate increased too quickly. To ensure system stability, please adjust your client logic to scale requests more smoothly over time."
     const error = wrap(msg)
-    expect(SessionRetry.retryable(error)).toBe(msg)
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: msg })
   })
 
   test("retries plain text rate limit errors", () => {
     const msg = "Rate limit exceeded, please try again later"
     const error = wrap(msg)
-    expect(SessionRetry.retryable(error)).toBe(msg)
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: msg })
   })
 
   test("retries too many requests in plain text", () => {
     const msg = "Too many requests, please slow down"
     const error = wrap(msg)
-    expect(SessionRetry.retryable(error)).toBe(msg)
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: msg })
   })
 
   test("does not retry context overflow errors", () => {
@@ -214,7 +217,7 @@ describe("session.retry.retryable", () => {
       responseBody: '{"error":{"code":"context_length_exceeded"}}',
     }).toObject()
 
-    expect(SessionRetry.retryable(error)).toBeUndefined()
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
   })
 
   test("retries 500 errors even when isRetryable is false", () => {
@@ -227,7 +230,7 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
 
-    expect(SessionRetry.retryable(error)).toBe("Internal server error")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Internal server error" })
   })
 
   test("retries 502 bad gateway errors", () => {
@@ -239,7 +242,7 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
 
-    expect(SessionRetry.retryable(error)).toBe("Bad gateway")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Bad gateway" })
   })
 
   test("retries 503 service unavailable errors", () => {
@@ -251,7 +254,7 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
 
-    expect(SessionRetry.retryable(error)).toBe("Service unavailable")
+    expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Service unavailable" })
   })
 
   test("does not retry 4xx errors when isRetryable is false", () => {
@@ -263,7 +266,7 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
 
-    expect(SessionRetry.retryable(error)).toBeUndefined()
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
   })
 
   test("retries ZlibError decompression failures", () => {
@@ -275,9 +278,100 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
 
-    const retryable = SessionRetry.retryable(error)
+    const retryable = SessionRetry.retryable(error, retryProvider)
     expect(retryable).toBeDefined()
-    expect(retryable).toBe("Response decompression failed")
+    expect(retryable).toEqual({ message: "Response decompression failed" })
+  })
+
+  test("maps free limits to Go upsell action", () => {
+    const error = MessageV2.APIError.Schema.parse(
+      new MessageV2.APIError({
+        message: "Free usage exceeded",
+        isRetryable: true,
+        statusCode: 429,
+        responseBody: JSON.stringify({
+          type: "error",
+          error: { type: "FreeUsageLimitError", message: "Free usage exceeded" },
+        }),
+      }).toObject(),
+    )
+
+    expect(SessionRetry.retryable(error, "opencode")).toEqual({
+      message: SessionRetry.GO_UPSELL_MESSAGE,
+      action: {
+        reason: "free_tier_limit",
+        provider: "opencode",
+        title: "Free limit reached",
+        message: "Subscribe to OpenCode Go for reliable access to the best open-source models, starting at $5/month.",
+        label: "subscribe",
+        link: SessionRetry.GO_UPSELL_URL,
+      },
+    })
+  })
+
+  test("maps Go subscription limits to workspace PAYG upsell", () => {
+    const error = MessageV2.APIError.Schema.parse(
+      new MessageV2.APIError({
+        message: "Subscription quota exceeded. You can continue using free models.",
+        isRetryable: true,
+        statusCode: 429,
+        responseHeaders: {
+          "retry-after": "19380",
+        },
+        responseBody: JSON.stringify({
+          type: "error",
+          error: {
+            type: "GoUsageLimitError",
+            message: "Subscription quota exceeded. You can continue using free models.",
+          },
+          metadata: {
+            workspace: "wrk_01K6XGM22R6FM8JVABE9XDQXGH",
+            limitName: "5 hour",
+          },
+        }),
+      }).toObject(),
+    )
+
+    expect(SessionRetry.retryable(error, "opencode-go")).toEqual({
+      message:
+        "5 hour usage limit reached. It will reset in 5 hours 23 minutes. To continue using this model now, enable usage from your available balance - https://opencode.ai/workspace/wrk_01K6XGM22R6FM8JVABE9XDQXGH/go",
+      action: {
+        reason: "account_rate_limit",
+        provider: "opencode-go",
+        title: "Go limit reached",
+        message:
+          "5 hour usage limit reached. It will reset in 5 hours 23 minutes. To continue using this model now, enable usage from your available balance",
+        label: "open settings",
+        link: "https://opencode.ai/workspace/wrk_01K6XGM22R6FM8JVABE9XDQXGH/go",
+      },
+    })
+  })
+
+  test("maps Go subscription limits without limit metadata", () => {
+    const error = MessageV2.APIError.Schema.parse(
+      new MessageV2.APIError({
+        message: "Subscription quota exceeded. You can continue using free models.",
+        isRetryable: true,
+        statusCode: 429,
+        responseHeaders: {
+          "retry-after": "900",
+        },
+        responseBody: JSON.stringify({
+          type: "error",
+          error: {
+            type: "GoUsageLimitError",
+            message: "Subscription quota exceeded. You can continue using free models.",
+          },
+          metadata: {
+            workspace: "wrk_01K6XGM22R6FM8JVABE9XDQXGH",
+          },
+        }),
+      }).toObject(),
+    )
+
+    expect(SessionRetry.retryable(error, "opencode-go")?.action?.message).toBe(
+      "Usage limit reached. It will reset in 15 minutes. To continue using this model now, enable usage from your available balance",
+    )
   })
 })
 
@@ -328,9 +422,9 @@ describe("session.message-v2.fromError", () => {
       }).toObject(),
     )
 
-    const retryable = SessionRetry.retryable(error)
+    const retryable = SessionRetry.retryable(error, retryProvider)
     expect(retryable).toBeDefined()
-    expect(retryable).toBe("Connection reset by server")
+    expect(retryable).toEqual({ message: "Connection reset by server" })
   })
 
   test("marks OpenAI 404 status codes as retryable", () => {
@@ -368,7 +462,9 @@ describe("session.message-v2.fromError", () => {
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
     if (!MessageV2.APIError.isInstance(result)) throw new Error("expected APIError")
     expect(result.data.isRetryable).toBe(true)
-    expect(SessionRetry.retryable(result)).toBe("An error occurred while processing your request.")
+    expect(SessionRetry.retryable(result, retryProvider)).toEqual({
+      message: "An error occurred while processing your request.",
+    })
   })
 
   test("converts OpenAI server_is_overloaded stream chunks to retryable APIError", () => {
@@ -391,6 +487,6 @@ describe("session.message-v2.fromError", () => {
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
     if (!MessageV2.APIError.isInstance(result)) throw new Error("expected APIError")
     expect(result.data.isRetryable).toBe(true)
-    expect(SessionRetry.retryable(result)).toBe("Provider is overloaded")
+    expect(SessionRetry.retryable(result, retryProvider)).toEqual({ message: "Provider is overloaded" })
   })
 })

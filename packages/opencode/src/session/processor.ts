@@ -76,6 +76,7 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: MessageV2.TextPart | undefined
   reasoningMap: Record<string, MessageV2.ReasoningPart>
+  pendingToolUpdates: Record<string, ((part: MessageV2.ToolPart) => MessageV2.ToolPart)[]>
 }
 
 type StreamEvent = Event
@@ -126,6 +127,7 @@ export const layer: Layer.Layer<
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        pendingToolUpdates: {},
       }
       let aborted = false
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
@@ -139,6 +141,7 @@ export const layer: Layer.Layer<
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
         delete ctx.toolcalls[toolCallID]
+        delete ctx.pendingToolUpdates[toolCallID]
         if (done) yield* Deferred.succeed(done, undefined).pipe(Effect.ignore)
       })
 
@@ -162,7 +165,10 @@ export const layer: Layer.Layer<
         update: (part: MessageV2.ToolPart) => MessageV2.ToolPart,
       ) {
         const match = yield* readToolCall(toolCallID)
-        if (!match) return
+        if (!match) {
+          ctx.pendingToolUpdates[toolCallID] = [...(ctx.pendingToolUpdates[toolCallID] ?? []), update]
+          return
+        }
         const part = yield* session.updatePart(update(match.part))
         ctx.toolcalls[toolCallID] = {
           ...match.call,
@@ -171,6 +177,15 @@ export const layer: Layer.Layer<
           sessionID: part.sessionID,
         }
         return part
+      })
+
+      const applyPendingToolUpdates = Effect.fn("SessionProcessor.applyPendingToolUpdates")(function* (toolCallID: string) {
+        const updates = ctx.pendingToolUpdates[toolCallID]
+        if (!updates?.length) return
+        delete ctx.pendingToolUpdates[toolCallID]
+        for (const update of updates) {
+          yield* updateToolCall(toolCallID, update)
+        }
       })
 
       const completeToolCall = Effect.fn("SessionProcessor.completeToolCall")(function* (
@@ -301,6 +316,7 @@ export const layer: Layer.Layer<
               messageID: part.messageID,
               sessionID: part.sessionID,
             }
+            yield* applyPendingToolUpdates(value.id)
             return
 
           case "tool-input-delta":
@@ -616,9 +632,10 @@ export const layer: Layer.Layer<
         }
         ctx.reasoningMap = {}
 
+        const toolSettleTimeout = aborted ? "5 seconds" : "250 millis"
         yield* Effect.forEach(
           Object.values(ctx.toolcalls),
-          (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
+          (call) => Deferred.await(call.done).pipe(Effect.timeout(toolSettleTimeout), Effect.ignore),
           { concurrency: "unbounded" },
         )
 
@@ -720,6 +737,7 @@ export const layer: Layer.Layer<
             Effect.retry(
               SessionRetry.policy({
                 maxRetries: cfg.max_retries,
+                provider: input.model.providerID,
                 parse,
                 set: (info) => {
                   // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
@@ -736,6 +754,7 @@ export const layer: Layer.Layer<
                     type: "retry",
                     attempt: info.attempt,
                     message: info.message,
+                    action: info.action,
                     next: info.next,
                   })
                 },

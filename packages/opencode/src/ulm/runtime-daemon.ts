@@ -27,6 +27,8 @@ export type RuntimeDaemonInput = {
   supervisorIntervalMinutes?: Parameters<typeof runRuntimeScheduler>[1]["supervisorIntervalMinutes"]
   lastSupervisorReviewAt?: Parameters<typeof runRuntimeScheduler>[1]["lastSupervisorReviewAt"]
   supervisorReviewKind?: Parameters<typeof runRuntimeScheduler>[1]["supervisorReviewKind"]
+  ensureReadinessProof?: Parameters<typeof runRuntimeScheduler>[1]["ensureReadinessProof"]
+  toolManifestPath?: Parameters<typeof runRuntimeScheduler>[1]["toolManifestPath"]
   recoverBackgroundJob?: (job: BackgroundJob.Info) => Promise<{ jobID?: string | undefined } | undefined>
   maxRecoveriesPerTick?: number
   now?: () => Date
@@ -110,6 +112,14 @@ async function releaseLock(lockPath: string) {
   if (!lock || lock.pid === process.pid) await fs.rm(lockPath, { force: true })
 }
 
+function schedulerStoppedBeforeRuntimeWork(input: { stopped: boolean; reason: string; elapsedSeconds: number; maxRuntimeSeconds: number }) {
+  return (
+    input.stopped &&
+    input.reason === "all operation lanes are complete" &&
+    input.elapsedSeconds < input.maxRuntimeSeconds
+  )
+}
+
 export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInput): Promise<RuntimeDaemonResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
@@ -154,6 +164,7 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
 
       const backgroundJobs = input.backgroundJobProvider ? await input.backgroundJobProvider() : input.backgroundJobs
       const recoveredThisTick: string[] = []
+      const recoveredJobIDs = new Set<string>()
       if (input.recoverBackgroundJob && backgroundJobs?.length) {
         const restartable = restartableOperationJobs({
           operationID,
@@ -163,25 +174,38 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         for (const job of restartable) {
           const recovered = await input.recoverBackgroundJob(job)
           recoveredThisTick.push(recovered?.jobID ?? job.id)
+          recoveredJobIDs.add(job.id)
         }
         if (restartable.length) {
           recoveredJobs.push(...recoveredThisTick)
           await markRecoveredLanesRunning(worktree, { operationID, jobs: restartable })
         }
       }
+      const schedulerBackgroundJobs = backgroundJobs?.map((job) =>
+        recoveredJobIDs.has(job.id)
+          ? {
+              ...job,
+              status: "running" as const,
+              error: undefined,
+              completedAt: undefined,
+            }
+          : job,
+      )
 
       const scheduler = await runRuntimeScheduler(worktree, {
         operationID,
         maxCycles: schedulerCyclesPerTick,
         leaseSeconds: input.leaseSeconds,
-        backgroundJobs,
+        backgroundJobs: schedulerBackgroundJobs,
         launchModelLane: input.launchModelLane,
         launchCommandWorkUnit: input.launchCommandWorkUnit,
         commandWorkUnitLimit: input.commandWorkUnitLimit,
-        supervisorEnabled: input.supervisorEnabled,
+        supervisorEnabled: input.supervisorEnabled ?? maxRuntimeSeconds >= 60 * 60,
         supervisorIntervalMinutes: input.supervisorIntervalMinutes,
         lastSupervisorReviewAt,
         supervisorReviewKind: input.supervisorReviewKind,
+        ensureReadinessProof: input.ensureReadinessProof ?? maxRuntimeSeconds >= 20 * 60 * 60,
+        toolManifestPath: input.toolManifestPath,
         now: tickTime,
       }).catch(async (error) => {
         consecutiveErrors += 1
@@ -228,6 +252,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       if (latestSupervisor?.generatedAt) lastSupervisorReviewAt = latestSupervisor.generatedAt
       stopped = scheduler.stopped
       reason = scheduler.reason
+      if (schedulerStoppedBeforeRuntimeWork({ stopped, reason, elapsedSeconds, maxRuntimeSeconds })) {
+        reason = "no scheduled operation work remains before target runtime elapsed"
+      }
       const heartbeat = {
         operationID,
         pid: process.pid,

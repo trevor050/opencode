@@ -7,6 +7,7 @@ import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { Instance } from "@/project/instance"
 import { formatRuntimeDaemon, runRuntimeDaemon } from "@/ulm/runtime-daemon"
+import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import * as Tool from "./tool"
 import DESCRIPTION from "./runtime_daemon.txt"
 import { TaskTool } from "./task"
@@ -75,6 +76,7 @@ export const RuntimeDaemonTool = Tool.define<
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx) =>
         Effect.gen(function* () {
+          assertLaneToolAllowed("runtime_daemon")
           const result = yield* Effect.tryPromise(() =>
             runRuntimeDaemon(Instance.worktree, {
               ...params,

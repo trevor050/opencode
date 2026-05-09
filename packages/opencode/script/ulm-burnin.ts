@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { formatBurnInHarness, runBurnInHarness } from "../src/ulm/burnin-harness"
+import { resolveScriptWorktree } from "./ulm-script-worktree"
 
 type Args = {
   operationID: string
@@ -69,7 +70,7 @@ function parseArgs(argv: string[]): Args {
 
 try {
   const args = parseArgs(process.argv.slice(2))
-  const result = await runBurnInHarness(process.cwd(), {
+  const result = await runBurnInHarness(resolveScriptWorktree(), {
     operationID: args.operationID,
     targetElapsedSeconds: args.targetSeconds,
     tickSeconds: args.tickSeconds,

@@ -49,7 +49,7 @@ function status(input: Partial<OperationStatusSummary> = {}): OperationStatusSum
       foregroundCommand:
         "Commands expected to exceed two minutes must run through command_supervise, task background=true, runtime_scheduler, or runtime_daemon.",
     },
-    plans: { operation: true },
+    plans: { operation: true, discoveryCharter: false },
     findings: {
       total: 2,
       byState: { candidate: 0, needs_validation: 0, validated: 1, report_ready: 1, rejected: 0 },

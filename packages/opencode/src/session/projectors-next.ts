@@ -177,6 +177,9 @@ export default [
   SyncEvent.project(SessionEvent.Tool.Called.Sync, (db, data, event) => {
     update(db, { id: SessionMessage.ID.make(event.id), type: "session.next.tool.called", data })
   }),
+  SyncEvent.project(SessionEvent.Tool.Progress.Sync, (db, data, event) => {
+    update(db, { id: SessionMessage.ID.make(event.id), type: "session.next.tool.progress", data })
+  }),
   SyncEvent.project(SessionEvent.Tool.Success.Sync, (db, data, event) => {
     update(db, { id: SessionMessage.ID.make(event.id), type: "session.next.tool.success", data })
   }),

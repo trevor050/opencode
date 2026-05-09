@@ -1,25 +1,24 @@
 import { createStore } from "solid-js/store"
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
-import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
-import { useKeybind } from "../../context/keybind"
 import { useTheme, selectedForeground } from "../../context/theme"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../component/border"
 import { useSync } from "../../context/sync"
-import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useProject } from "../../context/project"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
-import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
 import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "@/tool/shell/id"
+import { webSearchProviderLabel } from "@/tool/websearch"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
 import { OperatorAutoResume } from "./operator-auto-resume"
+import { useBindings, useCommandShortcut } from "../../keymap"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -139,8 +138,9 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
-  const [pausedUntil, setPausedUntil] = createSignal(0)
   let lastTouch = 0
+  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
+  const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -160,12 +160,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setPausedUntil(now + 30_000)
+    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.permission.touch({
       requestID: props.request.id,
-      holdMillis: 30_000,
       workspace: project.workspace.current(),
     })
   }
@@ -356,7 +355,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const query = typeof data.query === "string" ? data.query : ""
               return {
                 icon: "◈",
-                title: `Exa Web Search "${query}"`,
+                title: `${webSearchProviderLabel(data.provider)} "${query}"`,
                 body: (
                   <Show when={query}>
                     <box paddingLeft={1}>
@@ -444,8 +443,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               escapeKey="reject"
               fullscreen
               timeoutAt={props.request.timeoutAt}
-              holdUntil={props.request.holdUntil}
-              pausedUntil={pausedUntil()}
+              resetTimeoutAt={resetTimeoutAt()}
               onActivity={touchOperatorPrompt}
               onSelect={(option) => {
                 if (option === "always") {
@@ -483,26 +481,46 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void; onActivity?: () => void }) {
   let input: TextareaRenderable
   const { theme } = useTheme()
-  const keybind = useKeybind()
-  const textareaKeybindings = useTextareaKeybindings()
+  const tuiConfig = useTuiConfig()
+  const keymapConfig = tuiConfig.keymap
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
-
-  useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
-    props.onActivity?.()
-
-    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
-      evt.preventDefault()
-      props.onCancel()
-      return
-    }
-    if (evt.name === "return") {
-      evt.preventDefault()
-      props.onConfirm(input.plainText)
-    }
-  })
+  useBindings(() => ({
+    enabled: dialog.stack.length === 0,
+    commands: [
+      {
+        name: "permission.reject.cancel",
+        title: "Cancel permission rejection",
+        category: "Permission",
+        run() {
+          props.onActivity?.()
+          props.onCancel()
+        },
+      },
+    ],
+    bindings: [
+      {
+        key: "escape",
+        desc: "Cancel permission rejection",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          props.onCancel()
+        },
+      },
+      ...keymapConfig.pick("permission", ["permission.reject.cancel"]),
+      {
+        key: "return",
+        desc: "Confirm permission rejection",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          props.onConfirm(input.plainText)
+        },
+      },
+    ],
+  }))
 
   return (
     <box
@@ -541,7 +559,6 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
           textColor={theme.text}
           focusedTextColor={theme.text}
           cursorColor={theme.primary}
-          keyBindings={textareaKeybindings()}
         />
         <box flexDirection="row" gap={2} flexShrink={0}>
           <text fg={theme.text}>
@@ -565,56 +582,117 @@ function Prompt<const T extends Record<string, string>>(props: {
   fullscreen?: boolean
   onSelect: (option: keyof T) => void
   timeoutAt?: string
-  holdUntil?: string
-  pausedUntil?: number
+  resetTimeoutAt?: string
   onActivity?: () => void
 }) {
   const { theme } = useTheme()
-  const keybind = useKeybind()
+  const tuiConfig = useTuiConfig()
+  const keymapConfig = tuiConfig.keymap
   const dimensions = useTerminalDimensions()
   const keys = Object.keys(props.options) as (keyof T)[]
   const [store, setStore] = createStore({
     selected: keys[0],
     expanded: false,
   })
-  const diffKey = Keybind.parse("ctrl+f")[0]
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
+  const fullscreenHint = useCommandShortcut("permission.prompt.fullscreen")
 
-  useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
-    props.onActivity?.()
-
-    if (evt.name === "left" || evt.name == "h") {
-      evt.preventDefault()
-      const idx = keys.indexOf(store.selected)
-      const next = keys[(idx - 1 + keys.length) % keys.length]
-      setStore("selected", next)
-    }
-
-    if (evt.name === "right" || evt.name == "l") {
-      evt.preventDefault()
-      const idx = keys.indexOf(store.selected)
-      const next = keys[(idx + 1) % keys.length]
-      setStore("selected", next)
-    }
-
-    if (evt.name === "return") {
-      evt.preventDefault()
-      props.onSelect(store.selected)
-    }
-
-    if (props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
-      evt.preventDefault()
-      props.onSelect(props.escapeKey)
-    }
-
-    if (props.fullscreen && diffKey && Keybind.match(diffKey, keybind.parse(evt))) {
-      evt.preventDefault()
-      evt.stopPropagation()
-      setStore("expanded", (v) => !v)
-    }
-  })
+  useBindings(() => ({
+    enabled: dialog.stack.length === 0,
+    commands: [
+      {
+        name: "permission.prompt.escape",
+        title: "Reject permission",
+        category: "Permission",
+        run() {
+          if (!props.escapeKey) return
+          props.onActivity?.()
+          props.onSelect(props.escapeKey)
+        },
+      },
+      {
+        name: "permission.prompt.fullscreen",
+        title: "Toggle permission fullscreen",
+        category: "Permission",
+        run() {
+          if (!props.fullscreen) return
+          props.onActivity?.()
+          setStore("expanded", (v) => !v)
+        },
+      },
+    ],
+    bindings: [
+      {
+        key: "left",
+        desc: "Previous permission option",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          const idx = keys.indexOf(store.selected)
+          const next = keys[(idx - 1 + keys.length) % keys.length]
+          setStore("selected", next)
+        },
+      },
+      {
+        key: "h",
+        desc: "Previous permission option",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          const idx = keys.indexOf(store.selected)
+          const next = keys[(idx - 1 + keys.length) % keys.length]
+          setStore("selected", next)
+        },
+      },
+      {
+        key: "right",
+        desc: "Next permission option",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          const idx = keys.indexOf(store.selected)
+          const next = keys[(idx + 1) % keys.length]
+          setStore("selected", next)
+        },
+      },
+      {
+        key: "l",
+        desc: "Next permission option",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          const idx = keys.indexOf(store.selected)
+          const next = keys[(idx + 1) % keys.length]
+          setStore("selected", next)
+        },
+      },
+      {
+        key: "return",
+        desc: "Select permission option",
+        group: "Permission",
+        cmd: () => {
+          props.onActivity?.()
+          props.onSelect(store.selected)
+        },
+      },
+      ...(props.escapeKey
+        ? [
+            {
+              key: "escape",
+              desc: "Reject permission",
+              group: "Permission",
+              cmd: () => {
+                props.onActivity?.()
+                props.onSelect(props.escapeKey!)
+              },
+            },
+          ]
+        : []),
+      ...(props.escapeKey ? keymapConfig.pick("permission", ["permission.prompt.escape"]) : []),
+      ...(props.fullscreen ? keymapConfig.pick("permission", ["permission.prompt.fullscreen"]) : []),
+    ],
+  }))
 
   const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
   useRenderer()
@@ -686,10 +764,10 @@ function Prompt<const T extends Record<string, string>>(props: {
           </For>
         </box>
         <box flexDirection="row" gap={2} flexShrink={0}>
-          <OperatorAutoResume timeoutAt={props.timeoutAt} holdUntil={props.holdUntil} pausedUntil={props.pausedUntil} />
+          <OperatorAutoResume timeoutAt={props.timeoutAt} resetTimeoutAt={props.resetTimeoutAt} />
           <Show when={props.fullscreen}>
             <text fg={theme.text}>
-              {"ctrl+f"} <span style={{ fg: theme.textMuted }}>{hint()}</span>
+              {fullscreenHint()} <span style={{ fg: theme.textMuted }}>{hint()}</span>
             </text>
           </Show>
           <text fg={theme.text}>

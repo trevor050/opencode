@@ -297,4 +297,29 @@ describe("ULM HttpApi", () => {
       command: expect.stringContaining("report.html"),
     })
   })
+
+  test("serves credential vault submit flow through Hono bridge", async () => {
+    await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    await instanceWorktree(tmp.path)
+    const headers = { "x-opencode-directory": tmp.path, "content-type": "application/json" }
+    const created = await app().request("/ulm/operation/school/credentials", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        label: "Router admin",
+        username: "admin",
+        secret: "do-not-leak",
+        target: "192.168.1.1",
+      }),
+    })
+    await expectStatus(created, 200)
+    expect(JSON.stringify(await created.json())).not.toContain("do-not-leak")
+
+    const submitted = await app().request("/ulm/operation/school/credentials/submit", { method: "POST", headers })
+    await expectStatus(submitted, 200)
+    const body = (await submitted.json()) as { submittedAt: string; credentials: Array<{ credentialID: string }> }
+    expect(body.submittedAt).toContain("T")
+    expect(body.credentials[0]?.credentialID).toBe("router-admin")
+    expect(JSON.stringify(body)).not.toContain("do-not-leak")
+  })
 })

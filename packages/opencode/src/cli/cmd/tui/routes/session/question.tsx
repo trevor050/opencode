@@ -1,27 +1,28 @@
 import { createStore } from "solid-js/store"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { useKeyboard } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
-import { useKeybind } from "../../context/keybind"
 import { selectedForeground, tint, useTheme } from "../../context/theme"
 import type { QuestionAnswer, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../component/border"
-import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useDialog } from "../../ui/dialog"
 import { OperatorAutoResume } from "./operator-auto-resume"
+import { useTuiConfig } from "../../context/tui-config"
+import { useBindings } from "../../keymap"
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
   const { theme } = useTheme()
-  const keybind = useKeybind()
-  const bindings = useTextareaKeybindings()
+  const tuiConfig = useTuiConfig()
+  const {
+    keymap: { sections },
+  } = tuiConfig
+  const keymapConfig = tuiConfig.keymap
 
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const tabs = createMemo(() => (single() ? 1 : questions().length + 1)) // questions + confirm tab (no confirm for single select)
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
-  const [pausedUntil, setPausedUntil] = createSignal(0)
   const [store, setStore] = createStore({
     tab: 0,
     answers: [] as QuestionAnswer[],
@@ -32,6 +33,8 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   let textarea: TextareaRenderable | undefined
   let lastTouch = 0
+  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
+  const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const question = createMemo(() => questions()[store.tab])
   const confirm = createMemo(() => !single() && store.tab === questions().length)
@@ -49,12 +52,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setPausedUntil(now + 30_000)
+    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.question.touch({
       requestID: props.request.id,
-      holdMillis: 30_000,
     })
   }
 
@@ -137,132 +139,159 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   const dialog = useDialog()
 
-  useKeyboard((evt) => {
-    // Skip processing if a dialog (e.g., command palette) is open
-    if (dialog.stack.length > 0) return
-    touchOperatorPrompt()
-
-    // When editing custom answer textarea
-    if (store.editing && !confirm()) {
-      if (evt.name === "escape") {
-        evt.preventDefault()
-        setStore("editing", false)
-        return
-      }
-      if (keybind.match("input_clear", evt)) {
-        evt.preventDefault()
-        const text = textarea?.plainText ?? ""
-        if (!text) {
+  useBindings(() => ({
+    enabled: dialog.stack.length === 0 && store.editing && !confirm(),
+    commands: [
+      {
+        name: "question.edit.clear",
+        title: "Clear answer edit",
+        category: "Question",
+        run() {
+          touchOperatorPrompt()
+          const text = textarea?.plainText ?? ""
+          if (!text) {
+            setStore("editing", false)
+            return
+          }
+          textarea?.setText("")
+        },
+      },
+    ],
+    bindings: [
+      {
+        key: "escape",
+        desc: "Cancel answer edit",
+        group: "Question",
+        cmd: () => {
+          touchOperatorPrompt()
           setStore("editing", false)
-          return
-        }
-        textarea?.setText("")
-        return
-      }
-      if (evt.name === "return") {
-        evt.preventDefault()
-        const text = textarea?.plainText?.trim() ?? ""
-        const prev = store.custom[store.tab]
+        },
+      },
+      ...keymapConfig.pick("question", ["question.edit.clear"]),
+      {
+        key: "return",
+        desc: "Submit answer edit",
+        group: "Question",
+        cmd: () => {
+          touchOperatorPrompt()
+          const text = textarea?.plainText?.trim() ?? ""
+          const prev = store.custom[store.tab]
 
-        if (!text) {
-          if (prev) {
+          if (!text) {
+            if (prev) {
+              const inputs = [...store.custom]
+              inputs[store.tab] = ""
+              setStore("custom", inputs)
+
+              const answers = [...store.answers]
+              answers[store.tab] = (answers[store.tab] ?? []).filter((x) => x !== prev)
+              setStore("answers", answers)
+            }
+            setStore("editing", false)
+            return
+          }
+
+          if (multi()) {
             const inputs = [...store.custom]
-            inputs[store.tab] = ""
+            inputs[store.tab] = text
             setStore("custom", inputs)
 
+            const existing = store.answers[store.tab] ?? []
+            const next = [...existing]
+            if (prev) {
+              const index = next.indexOf(prev)
+              if (index !== -1) next.splice(index, 1)
+            }
+            if (!next.includes(text)) next.push(text)
             const answers = [...store.answers]
-            answers[store.tab] = (answers[store.tab] ?? []).filter((x) => x !== prev)
+            answers[store.tab] = next
             setStore("answers", answers)
+            setStore("editing", false)
+            return
           }
+
+          pick(text, true)
           setStore("editing", false)
-          return
-        }
+        },
+      },
+    ],
+  }))
 
-        if (multi()) {
-          const inputs = [...store.custom]
-          inputs[store.tab] = text
-          setStore("custom", inputs)
+  useBindings(() => {
+    const opts = options()
+    const total = opts.length + (custom() ? 1 : 0)
+    const max = Math.min(total, 9)
 
-          const existing = store.answers[store.tab] ?? []
-          const next = [...existing]
-          if (prev) {
-            const index = next.indexOf(prev)
-            if (index !== -1) next.splice(index, 1)
-          }
-          if (!next.includes(text)) next.push(text)
-          const answers = [...store.answers]
-          answers[store.tab] = next
-          setStore("answers", answers)
-          setStore("editing", false)
-          return
-        }
-
-        pick(text, true)
-        setStore("editing", false)
-        return
-      }
-      // Let textarea handle all other keys
-      return
-    }
-
-    if (evt.name === "left" || evt.name === "h") {
-      evt.preventDefault()
-      selectTab((store.tab - 1 + tabs()) % tabs())
-    }
-
-    if (evt.name === "right" || evt.name === "l") {
-      evt.preventDefault()
-      selectTab((store.tab + 1) % tabs())
-    }
-
-    if (evt.name === "tab") {
-      evt.preventDefault()
-      const direction = evt.shift ? -1 : 1
-      selectTab((store.tab + direction + tabs()) % tabs())
-    }
-
-    if (confirm()) {
-      if (evt.name === "return") {
-        evt.preventDefault()
-        submit()
-      }
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
-        evt.preventDefault()
-        reject()
-      }
-    } else {
-      const opts = options()
-      const total = opts.length + (custom() ? 1 : 0)
-      const max = Math.min(total, 9)
-      const digit = Number(evt.name)
-
-      if (!Number.isNaN(digit) && digit >= 1 && digit <= max) {
-        evt.preventDefault()
-        const index = digit - 1
-        moveTo(index)
-        selectOption()
-        return
-      }
-
-      if (evt.name === "up" || evt.name === "k") {
-        evt.preventDefault()
-        moveTo((store.selected - 1 + total) % total)
-      }
-
-      if (evt.name === "down" || evt.name === "j") {
-        evt.preventDefault()
-        moveTo((store.selected + 1) % total)
-      }
-
-      if (evt.name === "return") {
-        evt.preventDefault()
-        selectOption()
-      }
-
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
-        evt.preventDefault()
-        reject()
-      }
+    return {
+      enabled: dialog.stack.length === 0 && !store.editing,
+      commands: [
+        {
+          name: "question.reject",
+          title: "Reject question",
+          category: "Question",
+          run() {
+            reject()
+          },
+        },
+      ],
+      bindings: [
+        {
+          key: "left",
+          desc: "Previous question",
+          group: "Question",
+          cmd: () => selectTab((store.tab - 1 + tabs()) % tabs()),
+        },
+        {
+          key: "h",
+          desc: "Previous question",
+          group: "Question",
+          cmd: () => selectTab((store.tab - 1 + tabs()) % tabs()),
+        },
+        { key: "right", desc: "Next question", group: "Question", cmd: () => selectTab((store.tab + 1) % tabs()) },
+        { key: "l", desc: "Next question", group: "Question", cmd: () => selectTab((store.tab + 1) % tabs()) },
+        {
+          key: "tab",
+          desc: "Next question",
+          group: "Question",
+          cmd: ({ event }: { event: { shift: boolean } }) => {
+            selectTab((store.tab + (event.shift ? -1 : 1) + tabs()) % tabs())
+          },
+        },
+        ...(confirm()
+          ? [
+              { key: "return", desc: "Submit answer", group: "Question", cmd: () => submit() },
+              { key: "escape", desc: "Reject question", group: "Question", cmd: () => reject() },
+              ...sections.question,
+            ]
+          : [
+              ...Array.from({ length: max }, (_, index) => ({
+                key: String(index + 1),
+                desc: `Select answer ${index + 1}`,
+                group: "Question",
+                cmd: () => {
+                  moveTo(index)
+                  selectOption()
+                },
+              })),
+              {
+                key: "up",
+                desc: "Previous answer",
+                group: "Question",
+                cmd: () => moveTo((store.selected - 1 + total) % total),
+              },
+              {
+                key: "k",
+                desc: "Previous answer",
+                group: "Question",
+                cmd: () => moveTo((store.selected - 1 + total) % total),
+              },
+              { key: "down", desc: "Next answer", group: "Question", cmd: () => moveTo((store.selected + 1) % total) },
+              { key: "j", desc: "Next answer", group: "Question", cmd: () => moveTo((store.selected + 1) % total) },
+              { key: "return", desc: "Select answer", group: "Question", cmd: () => selectOption() },
+              { key: "escape", desc: "Reject question", group: "Question", cmd: () => reject() },
+              ...sections.question,
+            ]),
+      ],
     }
   })
 
@@ -422,7 +451,6 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                         textColor={theme.text}
                         focusedTextColor={theme.text}
                         cursorColor={theme.primary}
-                        keyBindings={bindings()}
                       />
                     </box>
                   </Show>
@@ -469,11 +497,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         justifyContent="space-between"
       >
         <box flexDirection="row" gap={2}>
-          <OperatorAutoResume
-            timeoutAt={props.request.timeoutAt}
-            holdUntil={props.request.holdUntil}
-            pausedUntil={pausedUntil()}
-          />
+          <OperatorAutoResume timeoutAt={props.request.timeoutAt} resetTimeoutAt={resetTimeoutAt()} />
           <Show when={!single()}>
             <text fg={theme.text}>
               {"⇆"} <span style={{ fg: theme.textMuted }}>tab</span>

@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_audit.txt"
 import { Instance } from "@/project/instance"
 import { buildOperationAudit, formatOperationAudit } from "@/ulm/artifact"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -16,6 +17,9 @@ export const Parameters = Schema.Struct({
   }),
   requireOutlineBudget: Schema.optional(Schema.Boolean).annotate({
     description: "Require the report to satisfy the report-outline target page budget.",
+  }),
+  minOutlineTargetPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum target_pages value required in reports/report-outline.md for long-run handoff reports.",
   }),
   minOutlineWordsPerPage: Schema.optional(Schema.Number).annotate({
     description: "Minimum words per target outline page when enforcing outline budget. Defaults to 300.",
@@ -36,6 +40,9 @@ export const Parameters = Schema.Struct({
   }),
   minFindingWords: Schema.optional(Schema.Number).annotate({
     description: "Minimum word count for each validated/report-ready finding section when a report file exists.",
+  }),
+  minPdfPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum rendered page count required in deliverables/final/report.pdf.",
   }),
   finalHandoff: Schema.optional(Schema.Boolean).annotate({
     description: "Require final handoff readiness. Defaults to true.",
@@ -58,7 +65,7 @@ export const OperationAuditTool = Tool.define<typeof Parameters, Metadata, never
   Effect.succeed({
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const result = yield* Effect.tryPromise(() =>
           buildOperationAudit(Instance.worktree, params.operationID, {
@@ -67,15 +74,24 @@ export const OperationAuditTool = Tool.define<typeof Parameters, Metadata, never
             requireReport: params.requireReport,
             minWords: params.minWords,
             requireOutlineBudget: params.requireOutlineBudget,
+            minOutlineTargetPages: params.minOutlineTargetPages,
             minOutlineWordsPerPage: params.minOutlineWordsPerPage,
             requireOutlineSections: params.requireOutlineSections,
             minOutlineSectionWords: params.minOutlineSectionWords,
             minOutlineSectionWordsPerPage: params.minOutlineSectionWordsPerPage,
             requireFindingSections: params.requireFindingSections,
             minFindingWords: params.minFindingWords,
+            minPdfPages: params.minPdfPages,
             finalHandoff: params.finalHandoff,
           }),
         ).pipe(Effect.orDie)
+        yield* Effect.promise(() =>
+          bindOperationSession(Instance.worktree, {
+            sessionID: ctx.sessionID,
+            operationID: result.operationID,
+            source: "operation_audit",
+          }),
+        )
         return {
           title: result.ok ? "operation audit passed" : `${result.blockers.length} operation audit blockers`,
           output: [

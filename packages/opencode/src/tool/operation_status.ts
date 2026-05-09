@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_status.txt"
 import { Instance } from "@/project/instance"
 import { formatOperationStatusDashboard, readOperationStatus } from "@/ulm/artifact"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -21,11 +22,20 @@ export const OperationStatusTool = Tool.define<typeof Parameters, Metadata, neve
   Effect.succeed({
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const result = yield* Effect.tryPromise(() =>
           readOperationStatus(Instance.worktree, params.operationID, { eventLimit: params.eventLimit }),
         ).pipe(Effect.orDie)
+        if (result.goal) {
+          yield* Effect.promise(() =>
+            bindOperationSession(Instance.worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: "operation_status",
+            }),
+          )
+        }
         return {
           title: result.operation
             ? `${result.operationID}: ${result.operation.stage}/${result.operation.status}`

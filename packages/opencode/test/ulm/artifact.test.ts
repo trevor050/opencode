@@ -147,6 +147,27 @@ describe("ULM artifact ledger", () => {
     expect(await fs.readFile(path.join(result.root, "events.jsonl"), "utf8")).toContain('"type":"checkpoint"')
   })
 
+  test("preserves checkpoint objective on operation updates", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "School Assessment",
+      objective: "Authorized school assessment",
+      stage: "intake",
+      status: "running",
+      summary: "Initial checkpoint.",
+    })
+
+    const result = await writeOperationCheckpoint(worktree, {
+      operationID: "School Assessment",
+      stage: "recon",
+      status: "running",
+      summary: "Recon update without restating objective.",
+    })
+
+    expect(result.record.objective).toBe("Authorized school assessment")
+    expect(result.record.stage).toBe("recon")
+  })
+
   test("publishes operation update events after durable writes", async () => {
     const worktree = await tmpdir()
     const received: Array<{ operationID: string; artifact: string; path?: string }> = []
@@ -390,6 +411,95 @@ describe("ULM artifact ledger", () => {
     })
     expect(result.ok).toBe(false)
     expect(result.gaps).toContain("report misses outline budget: 152 words, expected at least 400 for 4 target pages")
+  })
+
+  test("lints long-run reports with undersized outline target pages", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "reporting",
+      status: "running",
+      summary: "Reporting started.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const result = await lintReport(worktree, "school", {
+      requireReport: true,
+      requireOutlineBudget: true,
+      minOutlineTargetPages: 50,
+      minOutlineWordsPerPage: 10,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.gaps).toContain("reports/report-outline.md target_pages is too small: 4, expected at least 50")
+  })
+
+  test("final handoff lint defaults to 50 target pages for 20h plans", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.mkdir(path.join(outline.root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(outline.root, "plans", "operation-plan.json"),
+      JSON.stringify({ operationID: "school", timeBudget: { targetHours: 20 } }, null, 2) + "\n",
+    )
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const result = await lintReport(worktree, "school", {
+      finalHandoff: true,
+      minOutlineWordsPerPage: 10,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.gaps).toContain("reports/report-outline.md target_pages is too small: 4, expected at least 50")
   })
 
   test("lints missing outline report sections even when total report is long", async () => {
@@ -843,6 +953,19 @@ describe("ULM artifact ledger", () => {
 
     await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
     await fs.writeFile(
+      result.pdf,
+      "%PDF-1.4\n% /ULMCodeRenderer (styled-html)\n2 0 obj\n<< /Type /Pages /Kids [] /Count 1 >>\nendobj\n%%EOF\n",
+    )
+    lint = await lintReport(worktree, "school", { finalHandoff: true, minPdfPages: 2 })
+    expect(lint.ok).toBe(false)
+    expect(lint.gaps).toContain("deliverables/final/report.pdf has 1 pages, expected at least 2")
+    const audit = await buildOperationAudit(worktree, "school", { finalHandoff: true, minPdfPages: 2 })
+    expect(audit.ok).toBe(false)
+    expect(audit.blockers).toContain("final_handoff: deliverables/final/report.pdf has 1 pages, expected at least 2")
+    expect(audit.checks.finalHandoff.gates?.minPdfPages).toBe(2)
+
+    await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
+    await fs.writeFile(
       result.manifest,
       JSON.stringify({ operationID: "school", artifacts: { html: "/tmp/missing.html" }, counts: {} }, null, 2),
     )
@@ -1237,6 +1360,115 @@ describe("ULM artifact ledger", () => {
     expect(audit.ok).toBe(false)
     expect(audit.blockers).toContain("final_handoff: Executive Summary: outline section is missing")
     expect(audit.recommendedTools).toContain("report_outline")
+  })
+
+  test("operation audit forwards minimum outline target pages", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff review.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    await fs.writeFile(path.join(outline.root, "reports", "report.md"), `# Report\n\n${"detail ".repeat(1300)}`)
+
+    const audit = await buildOperationAudit(worktree, "school", {
+      finalHandoff: true,
+      requireOutlineBudget: true,
+      minOutlineTargetPages: 50,
+      minOutlineWordsPerPage: 10,
+    })
+
+    expect(audit.ok).toBe(false)
+    expect(audit.blockers).toContain(
+      "final_handoff: reports/report-outline.md target_pages is too small: 4, expected at least 50",
+    )
+    expect(audit.checks.finalHandoff.gates?.minOutlineTargetPages).toBe(50)
+    expect(audit.recommendedTools).toContain("report_outline")
+  })
+
+  test("operation audit requires submitted credential review for credentialed plans", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Ready for handoff review.",
+    })
+    const root = path.join(worktree, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(root, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "plans", "operation-plan.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          timeBudget: {
+            targetHours: 20,
+            allocations: [{ stage: "validation", hours: 18, work: "Use provided credentials for authenticated checks." }],
+          },
+          phases: [
+            {
+              actions: ["Use credential vault records for authenticated router and portal validation."],
+              successCriteria: ["Credentialed checks cite vault credential IDs only."],
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const audit = await buildOperationAudit(worktree, "school", { finalHandoff: true })
+
+    expect(audit.ok).toBe(false)
+    expect(audit.checks.credentialHandoff.status).toBe("attention_required")
+    expect(audit.blockers).toContain("credential_handoff: credentialed plan requires submitted credential vault review")
+    expect(audit.recommendedTools).toContain("operation_credentials")
+
+    const credentialDir = path.join(root, "credentials")
+    await fs.mkdir(credentialDir, { recursive: true, mode: 0o700 })
+    await fs.writeFile(
+      path.join(credentialDir, "review-submission.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          submittedAt: new Date().toISOString(),
+          credentials: [{ credentialID: "router-admin", label: "Router Admin", password: "********", tags: [] }],
+          file: path.join(credentialDir, "review-submission.json"),
+        },
+        null,
+        2,
+      ) + "\n",
+      { mode: 0o600 },
+    )
+
+    const reviewed = await buildOperationAudit(worktree, "school", { finalHandoff: true })
+    expect(reviewed.checks.credentialHandoff.status).toBe("ready")
+    expect(JSON.stringify(reviewed)).not.toContain("router-password")
   })
 
   test("blocks validation stage gates until findings are report-ready", async () => {

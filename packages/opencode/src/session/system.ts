@@ -17,10 +17,11 @@ import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
-import { activeOperationGoal, readOperationPlanExcerpt } from "@/ulm/operation-context"
+import { operationForSession, readOperationPlanExcerpt } from "@/ulm/operation-context"
 import { effectiveULMContinuation, readULMConfig } from "@/ulm/config"
 import { operatorFallbackTimeoutMillis } from "@/ulm/operator-timeout"
 import { readOperationMemory } from "@/ulm/operation-extras"
+import type { SessionID } from "./schema"
 
 type OperationGoalContext = {
   operationID: string
@@ -105,8 +106,9 @@ async function toolInventory(worktree: string, operationID: string) {
   return readJson<ToolInventoryContext>(path.join(worktree, ".ulmcode", "operations", operationID, "tool-inventory", "tool-inventory.json"))
 }
 
-async function ulmOperationContext(worktree: string) {
-  const active = await activeOperationGoal(worktree)
+async function ulmOperationContext(worktree: string, sessionID: SessionID | undefined) {
+  if (!sessionID) return undefined
+  const active = await operationForSession(worktree, sessionID)
   if (!active) return undefined
   const goal = active.goal
   const config = await readULMConfig({ directory: worktree, worktree })
@@ -139,15 +141,21 @@ async function ulmOperationContext(worktree: string) {
       ? `runtime_system: kind=${inventory.system.runtimeKind ?? "unknown"} distro=${inventory.system.distro ?? "unknown"} package_managers=${inventory.system.packageManagers?.join(",") || "none"} browsers=${inventory.system.browsers?.join(",") || "none"} containers=${inventory.system.containerTools?.join(",") || "none"}`
       : undefined,
     memory ? `operation_memory: ${memory.file}` : "operation_memory: missing; call operation_memory append when important details must survive compaction",
-    "credential_policy: if the operator offers credentials, use operation_credentials create/list/get/materialize_env; never store raw secrets in chat, operation memory, evidence, reports, command text, task metadata, or final deliverables",
-    "planning_gate_policy: for pentest runs of 2h or more, ask scope questions until actionable, write a Discovery Charter for research/recon/questions/time investment, wait for explicit Discovery Charter approval, then write the full duration-aware operation_plan",
+    "kickoff_stage_policy: pentest kickoff is staged: round1 time budget/autonomy first, tiny local/passive context, round2 scope/safety/credential/report questions, credential-vault review, bounded discovery/research, then round3 discovery-informed follow-up questions",
+    "credential_policy: if the operator offers credentials, say the secure vault is opening, call operation_credentials open_vault with only operationID/action, let it show/open the vault and wait for Submit to agent, then use review_status/list/get/materialize_env credential records only after submit; never store raw secrets in chat, operation memory, evidence, reports, command text, task metadata, or final deliverables",
+    "kickoff_autonomy_policy: treat autonomous as after kickoff questions, credential handoff, Discovery Charter approval, and execution plan unless the operator explicitly says they are walking away immediately; do not skip initial waits because the final run is autonomous",
+    "question_option_policy: kickoff questions should contain answerable choices only; do not include Pause/abort or Pause/clarify as routine choices because unanswered prompts already fall back conservatively",
+    "planning_gate_policy: for pentest runs of 2h or more, ask scope questions until actionable, write a Discovery Charter for research/recon/questions/time investment, record approval, then write the full duration-aware operation_plan",
+    "plan_visibility_policy: Discovery Charter and full-plan approval questions must summarize the current plan, include the rendered plan preview from operation_plan output when available, and include the markdown artifact path; after approval, durable planningApproval must be approved before resume/supervise/broad execution",
+    "operation_binding_policy: ULM operation context is scoped to the session that created or explicitly read the operation. New sessions must not inherit active operations from the same worktree.",
+    "operation_resume_policy: when the operator names an existing operation and asks to continue, resume, or recover it, call operation_resume for that exact operationID before glob/grep/raw artifact reads; after that, read only paths recommended by the resume brief; recovered running tasks get one bounded task_status wait=true poll, then block/skip if no fresh lane-owned artifacts exist",
     "discovery_charter_policy: the Discovery Charter is not the final execution plan; it is the strategy for learning where to invest time, what to ask, what to recon, and whether enough safe deep work exists to fill the budget",
     "full_plan_confidence_policy: do not write the actual full operation_plan for 2h+ runs until duration-fit confidence is duration_sized with evidence and an overflow backlog",
     "budget_sized_work_policy: the full plan must allocate enough safe primary, fallback, retry, reporting, and follow-up-question work for the requested duration; completion is coverage-based, not clock-burning",
     "coverage_contract_policy: final stop and handoff require coverage contract release, report gates, runtime summary, and supervisor release_handoff; compact is maintenance only and never counts as progress",
     "skip_policy: skip or block ambiguous work only with a durable reason plus alternate safe work or an operator question; skipped/blocked coverage lanes do not silently satisfy handoff",
     "foreground_command_policy: commands expected over 2 minutes must use command_supervise, task background=true, runtime_scheduler, or runtime_daemon instead of foreground waiting",
-    "operator_availability_policy: assume the operator is unavailable after execution starts; do not wait for new operator input, honor the original authorized scope, work around ambiguity with conservative skip/decline defaults, and write durable notes",
+    "operator_availability_policy: assume the operator is available for initial kickoff/planning unless they explicitly say otherwise; after execution starts, do not wait for new operator input, honor the original authorized scope, work around ambiguity with conservative skip/decline defaults, and write durable notes",
     operatorTimeoutMillis === undefined
       ? "unattended_operator_policy: operator timeout disabled by ULMconfig.toml; wait indefinitely for permission/question prompts"
       : `unattended_operator_policy: after ${Math.round(operatorTimeoutMillis / 1000)}s, permission/question prompts default safely; do not block waiting for operator`,
@@ -185,7 +193,7 @@ export function provider(model: Provider.Model) {
 }
 
 export interface Interface {
-  readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
+  readonly environment: (model: Provider.Model, input?: { sessionID?: SessionID }) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
@@ -197,9 +205,11 @@ export const layer = Layer.effect(
     const skill = yield* Skill.Service
 
     return Service.of({
-      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
+      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model, input?: { sessionID?: SessionID }) {
         const ctx = yield* InstanceState.context
-        const operationContext = yield* Effect.promise(async () => (await ulmOperationContext(ctx.worktree)) ?? (await ulmOperationContext(ctx.directory)))
+        const operationContext = yield* Effect.promise(async () =>
+          (await ulmOperationContext(ctx.worktree, input?.sessionID)) ?? (await ulmOperationContext(ctx.directory, input?.sessionID)),
+        )
         return [
           [
             `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,

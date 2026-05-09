@@ -5,9 +5,10 @@ import { Instance } from "@/project/instance"
 import { formatOperationRun, runOperationStep } from "@/ulm/operation-run"
 import { BackgroundJob } from "@/background/job"
 import { TaskTool } from "./task"
+import { activeOperationForContext } from "@/ulm/operation-context"
 
 export const Parameters = Schema.Struct({
-  operationID: Schema.String,
+  operationID: Schema.optional(Schema.String),
   mode: Schema.optional(Schema.Literals(["advance", "complete_lane", "skip_lane", "block_lane", "fail_lane"])),
   laneID: Schema.optional(Schema.String),
   jobID: Schema.optional(Schema.String),
@@ -36,8 +37,20 @@ export const OperationRunTool = Tool.define(
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx) =>
         Effect.gen(function* () {
           const backgroundJobs = yield* jobs.list()
+          const operationID =
+            params.operationID?.trim() ||
+            (yield* Effect.tryPromise(() =>
+              activeOperationForContext({
+                worktree: Instance.worktree,
+                directory: Instance.directory,
+                sessionID: ctx.sessionID,
+              }),
+            ).pipe(Effect.orDie))?.operationID
+          if (!operationID) {
+            throw new Error("operationID is required unless this session is bound to an active ULM operation")
+          }
           const result = yield* Effect.tryPromise(() =>
-            runOperationStep(Instance.worktree, { ...params, backgroundJobs }),
+            runOperationStep(Instance.worktree, { ...params, operationID, backgroundJobs, controller: "tool" }),
           ).pipe(Effect.orDie)
           const launched =
             params.launchModelLane === true && result.taskParams

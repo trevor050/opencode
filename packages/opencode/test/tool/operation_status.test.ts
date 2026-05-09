@@ -8,6 +8,8 @@ import { MessageID } from "@/session/schema"
 import { OperationStatusTool } from "@/tool/operation_status"
 import { Truncate } from "@/tool/truncate"
 import { writeOperationCheckpoint } from "@/ulm/artifact"
+import { createOperationGoal } from "@/ulm/operation-goal"
+import { operationForSession } from "@/ulm/operation-context"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
@@ -20,6 +22,12 @@ describe("tool.operation_status", () => {
       fn: () =>
         Effect.runPromise(
           Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              createOperationGoal(Instance.worktree, {
+                operationID: "school",
+                objective: "Authorized school assessment",
+              }),
+            )
             yield* Effect.promise(() =>
               writeOperationCheckpoint(Instance.worktree, {
                 operationID: "school",
@@ -50,6 +58,7 @@ describe("tool.operation_status", () => {
             expect(result.output).toContain("risk: high")
             expect(result.output).toContain("<operation_status_json>")
             expect(result.output).toContain("\"operationID\": \"school\"")
+            expect((yield* Effect.promise(() => operationForSession(dir.path, "session-1" as any)))?.operationID).toBe("school")
           }).pipe(Effect.provide(layer)),
         ),
     })

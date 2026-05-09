@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_goal.txt"
 import { Instance } from "@/project/instance"
 import { completeOperationGoal, createOperationGoal, readOperationGoal } from "@/ulm/operation-goal"
+import { bindOperationSession } from "@/ulm/operation-context"
 
 const CompletionPolicy = Schema.Struct({
   requiresOperationAudit: Schema.optional(Schema.Boolean),
@@ -45,12 +46,22 @@ type Metadata = {
   }
 }
 
+function normalizeContinuation(input: Schema.Schema.Type<typeof Parameters>["continuation"]) {
+  if (!input) return undefined
+  const timeout = input.operatorFallbackTimeoutSeconds
+  if (timeout === undefined || timeout === 0 || timeout >= 300) return input
+  return {
+    ...input,
+    operatorFallbackTimeoutSeconds: 300,
+  }
+}
+
 export const OperationGoalTool = Tool.define<typeof Parameters, Metadata, never>(
   "operation_goal",
   Effect.succeed({
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         if (params.action === "create") {
           if (!params.objective?.trim()) throw new Error("objective is required when action is create")
@@ -60,9 +71,16 @@ export const OperationGoalTool = Tool.define<typeof Parameters, Metadata, never>
               objective: params.objective!,
               targetDurationHours: params.targetDurationHours,
               completionPolicy: params.completionPolicy,
-              continuation: params.continuation,
+              continuation: normalizeContinuation(params.continuation),
             }),
           ).pipe(Effect.orDie)
+          yield* Effect.promise(() =>
+            bindOperationSession(Instance.worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: result.created ? "operation_goal.create" : "operation_goal.create.existing",
+            }),
+          )
           return {
             title: result.created ? `Created operation goal for ${result.operationID}` : `Read active operation goal for ${result.operationID}`,
             output: [
@@ -120,6 +138,15 @@ export const OperationGoalTool = Tool.define<typeof Parameters, Metadata, never>
         if (!params.operationID?.trim()) throw new Error("operationID is required when action is read")
         const operationID = params.operationID
         const result = yield* Effect.tryPromise(() => readOperationGoal(Instance.worktree, operationID)).pipe(Effect.orDie)
+        if (result.goal) {
+          yield* Effect.promise(() =>
+            bindOperationSession(Instance.worktree, {
+              sessionID: ctx.sessionID,
+              operationID: result.operationID,
+              source: "operation_goal.read",
+            }),
+          )
+        }
         return {
           title: result.goal ? `Read operation goal for ${result.operationID}` : `No operation goal for ${result.operationID}`,
           output: [

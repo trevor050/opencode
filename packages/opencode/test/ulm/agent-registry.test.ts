@@ -26,12 +26,23 @@ describe("ULM native surface", () => {
   it.instance("allows only bounded nested ULM subagents", () =>
     Effect.gen(function* () {
       const agent = yield* Agent.Service
+      const recon = yield* agent.get("recon")
+      const personRecon = yield* agent.get("person-recon")
       const attackMap = yield* agent.get("attack-map")
+      const validator = yield* agent.get("validator")
       const reportWriter = yield* agent.get("report-writer")
+
+      expect(Permission.evaluate("task", "evidence", recon?.permission ?? []).action).toBe("allow")
+      expect(Permission.evaluate("task", "general", recon?.permission ?? []).action).toBe("deny")
+      expect(Permission.evaluate("task", "evidence", personRecon?.permission ?? []).action).toBe("allow")
+      expect(Permission.evaluate("task", "general", personRecon?.permission ?? []).action).toBe("deny")
 
       expect(Permission.evaluate("task", "validator", attackMap?.permission ?? []).action).toBe("allow")
       expect(Permission.evaluate("task", "evidence", attackMap?.permission ?? []).action).toBe("allow")
       expect(Permission.evaluate("task", "recon", attackMap?.permission ?? []).action).toBe("deny")
+
+      expect(Permission.evaluate("task", "evidence", validator?.permission ?? []).action).toBe("allow")
+      expect(Permission.evaluate("task", "general", validator?.permission ?? []).action).toBe("deny")
 
       expect(Permission.evaluate("task", "evidence", reportWriter?.permission ?? []).action).toBe("allow")
       expect(Permission.evaluate("task", "report-reviewer", reportWriter?.permission ?? []).action).toBe("allow")
