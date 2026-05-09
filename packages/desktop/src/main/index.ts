@@ -20,20 +20,10 @@ try {
 
 process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
-const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
-}
-const APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
-}
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
-const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+const appId = app.isPackaged ? getDesktopAppId(CHANNEL) : getDesktopAppId("dev")
 const onboardingTestRoot = setupOnboardingTestEnv()
-app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+app.setName(app.isPackaged ? getDesktopAppName(CHANNEL) : getDesktopAppName("dev"))
 app.setAppUserModelId(appId)
 app.setPath("userData", onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId))
 if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
@@ -42,6 +32,13 @@ const { autoUpdater } = pkg
 
 import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
+import {
+  DESKTOP_PROTOCOLS,
+  getDesktopAppId,
+  getDesktopAppName,
+  getUlmOperationsDirectory,
+  isDesktopDeepLink,
+} from "./branding"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { initLogging } from "./logging"
@@ -75,7 +72,7 @@ useSystemCertificates()
 function setupOnboardingTestEnv() {
   if (!TEST_ONBOARDING) return
 
-  const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
+  const root = join(tmpdir(), `ulmcode-onboarding-${randomUUID()}`)
   rmSync(root, { recursive: true, force: true })
   ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
     mkdirSync(join(root, dir), { recursive: true }),
@@ -108,7 +105,7 @@ function setupApp() {
   }
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
+    const urls = argv.filter(isDesktopDeepLink)
     if (urls.length) {
       logger.log("deep link received via second-instance", { urls })
       emitDeepLinks(urls)
@@ -139,7 +136,9 @@ function setupApp() {
 
   void app.whenReady().then(async () => {
     if (!TEST_ONBOARDING) migrate()
-    app.setAsDefaultProtocolClient("opencode")
+    for (const protocol of DESKTOP_PROTOCOLS) {
+      app.setAsDefaultProtocolClient(protocol)
+    }
     registerRendererProtocol()
     setDockIcon()
     setupAutoUpdater()
@@ -255,7 +254,7 @@ async function initialize() {
   setInitStep({ phase: "done" })
 
   if (overlay) {
-    await loadingComplete.promise
+    await Promise.race([loadingComplete.promise, delay(3_000)])
   }
 
   mainWindow = createMainWindow()
@@ -299,6 +298,11 @@ registerIpcHandlers({
   consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),
+  getUlmOperationsDirectory: () => {
+    const directory = getUlmOperationsDirectory(homedir(), process.env, existsSync)
+    mkdirSync(directory, { recursive: true })
+    return directory
+  },
   getWslConfig: () => Promise.resolve(getWslConfig()),
   setWslConfig: (config: WslConfig) => setWslConfig(config),
   getDisplayBackend: async () => null,
@@ -368,7 +372,10 @@ function sqliteFileExists() {
 
   const xdg = process.env.XDG_DATA_HOME
   const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".local", "share")
-  return existsSync(join(base, "opencode", "opencode.db"))
+  const configured = process.env.OPENCODE_DB ?? "opencode-local.db"
+  return [join(base, "ulmcode", configured), join(base, configured), join(base, "ulmcode", "opencode.db")].some((candidate) =>
+    existsSync(candidate),
+  )
 }
 
 function setupAutoUpdater() {

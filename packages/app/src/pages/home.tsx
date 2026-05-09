@@ -1,34 +1,22 @@
-import { createMemo, For, Match, Switch } from "solid-js"
 import { Button } from "@opencode-ai/ui/button"
-import { Logo } from "@opencode-ai/ui/logo"
-import { useLayout } from "@/context/layout"
-import { useNavigate } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/core/util/encode"
-import { Icon } from "@opencode-ai/ui/icon"
-import { usePlatform } from "@/context/platform"
-import { DateTime } from "luxon"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { DialogSelectDirectory } from "@/components/dialog-select-directory"
+import { useNavigate } from "@solidjs/router"
+import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import { DialogSelectServer } from "@/components/dialog-select-server"
-import { useServer } from "@/context/server"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useGlobalSync } from "@/context/global-sync"
-import { useLanguage } from "@/context/language"
+import { useLayout } from "@/context/layout"
+import { useServer } from "@/context/server"
+import { sortedRootSessions } from "./layout/helpers"
 
 export default function Home() {
+  const navigate = useNavigate()
+  const dialog = useDialog()
   const sync = useGlobalSync()
   const layout = useLayout()
-  const platform = usePlatform()
-  const dialog = useDialog()
-  const navigate = useNavigate()
   const server = useServer()
-  const language = useLanguage()
-  const homedir = createMemo(() => sync.data.path.home)
-  const recent = createMemo(() => {
-    return sync.data.project
-      .slice()
-      .sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
-      .slice(0, 5)
-  })
+  const [opening, setOpening] = createSignal(false)
+  const [error, setError] = createSignal<string | undefined>()
 
   const serverDotClass = createMemo(() => {
     const healthy = server.healthy()
@@ -37,103 +25,85 @@ export default function Home() {
     return "bg-border-weak-base"
   })
 
-  function openProject(directory: string) {
-    layout.projects.open(directory)
-    server.projects.touch(directory)
-    navigate(`/${base64Encode(directory)}`)
+  async function resolveOperationsDirectory() {
+    const desktopDirectory = await window.api?.getUlmOperationsDirectory?.().catch(() => undefined)
+    if (desktopDirectory) return desktopDirectory
+
+    const ulmDirectory = sync.data.project.find((project) => project.worktree.includes("/ULMcode/opencode"))?.worktree
+    if (ulmDirectory) return ulmDirectory
+
+    const lastDirectory = server.projects.last()
+    if (lastDirectory) return lastDirectory
+
+    return sync.data.path.home
   }
 
-  async function chooseProject() {
-    function resolve(result: string | string[] | null) {
-      if (Array.isArray(result)) {
-        for (const directory of result) {
-          openProject(directory)
-        }
-      } else if (result) {
-        openProject(result)
-      }
-    }
+  async function openRecentChat() {
+    if (opening()) return
+    setOpening(true)
+    setError(undefined)
 
-    if (platform.openDirectoryPickerDialog && server.isLocal()) {
-      const result = await platform.openDirectoryPickerDialog?.({
-        title: language.t("command.project.open"),
-        multiple: true,
-      })
-      resolve(result)
-    } else {
-      dialog.show(
-        () => <DialogSelectDirectory multiple={true} onSelect={resolve} />,
-        () => resolve(null),
-      )
+    try {
+      const directory = await resolveOperationsDirectory()
+      layout.projects.open(directory)
+      layout.sidebar.open()
+      server.projects.touch(directory)
+      await sync.project.loadSessions(directory)
+
+      const [store] = sync.child(directory, { bootstrap: false })
+      const latest = sortedRootSessions(store, Date.now())[0]
+      const slug = base64Encode(directory)
+      navigate(latest ? `/${slug}/session/${latest.id}` : `/${slug}/session`, { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to open recent chats")
+      setOpening(false)
     }
   }
+
+  createEffect(() => {
+    if (opening()) return
+    void openRecentChat()
+  })
 
   return (
-    <div class="mx-auto mt-55 w-full md:w-auto px-4">
-      <Logo class="md:w-xl opacity-12" />
-      <Button
-        size="large"
-        variant="ghost"
-        class="mt-4 mx-auto text-14-regular text-text-weak"
-        onClick={() => dialog.show(() => <DialogSelectServer />)}
-      >
-        <div
-          classList={{
-            "size-2 rounded-full": true,
-            [serverDotClass()]: true,
-          }}
-        />
-        {server.name}
-      </Button>
-      <Switch>
-        <Match when={sync.data.project.length > 0}>
-          <div class="mt-20 w-full flex flex-col gap-4">
-            <div class="flex gap-2 items-center justify-between pl-3">
-              <div class="text-14-medium text-text-strong">{language.t("home.recentProjects")}</div>
-              <Button icon="folder-add-left" size="normal" class="pl-2 pr-3" onClick={chooseProject}>
-                {language.t("command.project.open")}
-              </Button>
+    <div class="min-h-full px-6 py-10 flex items-center justify-center">
+      <div class="w-full max-w-160 flex flex-col gap-8">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col gap-1">
+            <div class="text-24-medium text-text-strong">ULMCode Desktop</div>
+            <div class="text-13-regular text-text-weak">Opening recent chats</div>
+          </div>
+          <Button
+            size="normal"
+            variant="ghost"
+            class="px-3 text-text-weak"
+            onClick={() => dialog.show(() => <DialogSelectServer />)}
+          >
+            <div
+              classList={{
+                "size-2 rounded-full": true,
+                [serverDotClass()]: true,
+              }}
+            />
+            {server.name}
+          </Button>
+        </div>
+
+        <div class="border border-border-weaker-base rounded-lg bg-surface-base px-5 py-5 flex items-center justify-between gap-4">
+          <div class="flex flex-col gap-1">
+            <div class="text-14-medium text-text-strong">Chats drive operations</div>
+            <div class="text-12-regular text-text-weak">
+              ULMCode starts in the latest conversation, with operation status attached.
             </div>
-            <ul class="flex flex-col gap-2">
-              <For each={recent()}>
-                {(project) => (
-                  <Button
-                    size="large"
-                    variant="ghost"
-                    class="text-14-mono text-left justify-between px-3"
-                    onClick={() => openProject(project.worktree)}
-                  >
-                    {project.worktree.replace(homedir(), "~")}
-                    <div class="text-14-regular text-text-weak">
-                      {DateTime.fromMillis(project.time.updated ?? project.time.created).toRelative()}
-                    </div>
-                  </Button>
-                )}
-              </For>
-            </ul>
+            <Show when={error()}>
+              {(message) => <div class="text-12-regular text-text-danger-base mt-2">{message()}</div>}
+            </Show>
           </div>
-        </Match>
-        <Match when={!sync.ready}>
-          <div class="mt-30 mx-auto flex flex-col items-center gap-3">
-            <div class="text-12-regular text-text-weak">{language.t("common.loading")}</div>
-            <Button class="px-3" onClick={chooseProject}>
-              {language.t("command.project.open")}
-            </Button>
-          </div>
-        </Match>
-        <Match when={true}>
-          <div class="mt-30 mx-auto flex flex-col items-center gap-3">
-            <Icon name="folder-add-left" size="large" />
-            <div class="flex flex-col gap-1 items-center justify-center">
-              <div class="text-14-medium text-text-strong">{language.t("home.empty.title")}</div>
-              <div class="text-12-regular text-text-weak">{language.t("home.empty.description")}</div>
-            </div>
-            <Button class="px-3 mt-1" onClick={chooseProject}>
-              {language.t("command.project.open")}
-            </Button>
-          </div>
-        </Match>
-      </Switch>
+          <Button size="large" class="px-4 shrink-0" onClick={openRecentChat}>
+            {opening() ? "Opening" : "Open chats"}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

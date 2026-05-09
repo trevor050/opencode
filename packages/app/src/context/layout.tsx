@@ -15,7 +15,8 @@ import { createPathHelpers } from "./file/path"
 
 const AVATAR_COLOR_KEYS = ["pink", "mint", "orange", "purple", "cyan", "lime"] as const
 const DEFAULT_SIDEBAR_WIDTH = 344
-const DEFAULT_FILE_TREE_WIDTH = 200
+const DEFAULT_FILE_TREE_WIDTH = 240
+const MIN_FILE_TREE_WIDTH = 180
 const DEFAULT_SESSION_WIDTH = 600
 const DEFAULT_TERMINAL_HEIGHT = 280
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
@@ -619,7 +620,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       },
       fileTree: {
         opened: createMemo(() => store.fileTree?.opened ?? true),
-        width: createMemo(() => store.fileTree?.width ?? DEFAULT_FILE_TREE_WIDTH),
+        width: createMemo(() => Math.max(MIN_FILE_TREE_WIDTH, store.fileTree?.width ?? DEFAULT_FILE_TREE_WIDTH)),
         tab: createMemo(() => store.fileTree?.tab ?? "changes"),
         setTab(tab: "changes" | "all") {
           if (!store.fileTree) {
@@ -633,6 +634,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             setStore("fileTree", { opened: true, width: DEFAULT_FILE_TREE_WIDTH, tab: "changes" })
             return
           }
+          if ((store.fileTree.width ?? 0) < MIN_FILE_TREE_WIDTH) setStore("fileTree", "width", DEFAULT_FILE_TREE_WIDTH)
           setStore("fileTree", "opened", true)
         },
         close() {
@@ -651,10 +653,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         resize(width: number) {
           if (!store.fileTree) {
-            setStore("fileTree", { opened: true, width, tab: "changes" })
+            setStore("fileTree", { opened: true, width: Math.max(MIN_FILE_TREE_WIDTH, width), tab: "changes" })
             return
           }
-          setStore("fileTree", "width", width)
+          setStore("fileTree", "width", Math.max(MIN_FILE_TREE_WIDTH, width))
         },
       },
       session: {

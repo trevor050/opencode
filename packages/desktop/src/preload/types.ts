@@ -19,6 +19,15 @@ export type WindowConfig = {
   updaterEnabled: boolean
 }
 
+export type UlmArtifactFile = {
+  file: string
+  kind: "pdf" | "html" | "json" | "markdown" | "text" | "unknown"
+  exists: boolean
+  path: string
+  size?: number
+  updatedAt?: string
+}
+
 export type ElectronAPI = {
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
@@ -27,6 +36,9 @@ export type ElectronAPI = {
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
+  getUlmOperationsDirectory: () => Promise<string>
+  listUlmArtifacts: (operationRoot: string) => Promise<UlmArtifactFile[]>
+  readUlmTextArtifact: (path: string) => Promise<string>
   getWslConfig: () => Promise<WslConfig>
   setWslConfig: (config: WslConfig) => Promise<void>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>

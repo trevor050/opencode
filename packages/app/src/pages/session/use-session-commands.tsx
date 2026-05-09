@@ -19,6 +19,7 @@ import { createSessionTabs } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -50,6 +51,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const layout = useLayout()
   const navigate = useNavigate()
   const { params, tabs, view } = useSessionLayout()
+  const ulmWorkspace = () => isUlmDirectory(sdk.directory)
 
   const info = () => {
     const id = params.id
@@ -459,17 +461,21 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       slash: "terminal",
       onSelect: () => view().terminal.toggle(),
     }),
-    viewCommand({
-      id: "review.toggle",
-      title: language.t("command.review.toggle"),
-      keybind: "mod+shift+r",
-      onSelect: () => view().reviewPanel.toggle(),
-    }),
+    ...(!ulmWorkspace()
+      ? [
+          viewCommand({
+            id: "review.toggle",
+            title: language.t("command.review.toggle"),
+            keybind: "mod+shift+r",
+            onSelect: () => view().reviewPanel.toggle(),
+          }),
+        ]
+      : []),
     ...(shown()
       ? [
           viewCommand({
             id: "fileTree.toggle",
-            title: language.t("command.fileTree.toggle"),
+            title: ulmWorkspace() ? "Toggle engagement workspace" : language.t("command.fileTree.toggle"),
             keybind: "mod+\\",
             onSelect: () => layout.fileTree.toggle(),
           }),

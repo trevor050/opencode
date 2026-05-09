@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
 import type { Configuration } from "electron-builder"
+import {
+  APP_IDS,
+  APP_NAMES,
+  DESKTOP_PROTOCOLS,
+  resolveDesktopChannel,
+} from "./src/main/branding"
 
 const execFileAsync = promisify(execFile)
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -21,13 +27,11 @@ async function signWindows(configuration: { path: string }) {
 }
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
+  return resolveDesktopChannel(process.env.OPENCODE_CHANNEL)
 })()
 
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: "ulmcode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -54,8 +58,8 @@ const getBase = (): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
-    schemes: ["opencode"],
+    name: "ULMCode",
+    schemes: DESKTOP_PROTOCOLS,
   },
   win: {
     icon: `resources/icons/icon.ico`,
@@ -85,29 +89,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
+        appId: APP_IDS.dev,
+        productName: APP_NAMES.dev,
+        rpm: { packageName: "ulmcode-dev" },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
+        appId: APP_IDS.beta,
+        productName: APP_NAMES.beta,
+        protocols: { name: APP_NAMES.beta, schemes: DESKTOP_PROTOCOLS },
         publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
+        rpm: { packageName: "ulmcode-beta" },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
+        appId: APP_IDS.prod,
+        productName: APP_NAMES.prod,
+        protocols: { name: APP_NAMES.prod, schemes: DESKTOP_PROTOCOLS },
         publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
+        rpm: { packageName: "ulmcode" },
       }
     }
   }

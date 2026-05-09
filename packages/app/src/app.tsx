@@ -9,7 +9,7 @@ import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
-import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
+import { type BaseRouterProps, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { Effect } from "effect"
 import {
@@ -48,6 +48,8 @@ import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
+const Operations = lazy(() => import("@/pages/operations"))
+const Deliverables = lazy(() => import("@/pages/deliverables"))
 const loadSession = () => import("@/pages/session")
 const Session = lazy(loadSession)
 const Loading = () => <div class="size-full" />
@@ -62,7 +64,8 @@ const SessionRoute = () => (
   </SessionProviders>
 )
 
-const SessionIndexRoute = () => <Navigate href="session" />
+const OperationsRoute = () => <Operations />
+const DeliverablesRoute = () => <Deliverables />
 
 function UiI18nBridge(props: ParentProps) {
   const language = useLanguage()
@@ -78,6 +81,18 @@ declare global {
     }
     api?: {
       setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
+      getUlmOperationsDirectory?: () => Promise<string>
+      listUlmArtifacts?: (operationRoot: string) => Promise<
+        Array<{
+          file: string
+          kind: "pdf" | "html" | "json" | "markdown" | "text" | "unknown"
+          exists: boolean
+          path: string
+          size?: number
+          updatedAt?: string
+        }>
+      >
+      readUlmTextArtifact?: (path: string) => Promise<string>
     }
   }
 }
@@ -316,7 +331,9 @@ export function AppInterface(props: {
                 >
                   <Route path="/" component={HomeRoute} />
                   <Route path="/:dir" component={DirectoryLayout}>
-                    <Route path="/" component={SessionIndexRoute} />
+                    <Route path="/" component={OperationsRoute} />
+                    <Route path="/operations/:operationID?" component={OperationsRoute} />
+                    <Route path="/deliverables" component={DeliverablesRoute} />
                     <Route path="/session/:id?" component={SessionRoute} />
                   </Route>
                 </Dynamic>

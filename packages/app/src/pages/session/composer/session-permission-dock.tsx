@@ -1,9 +1,12 @@
-import { For, Show } from "solid-js"
+import { For, Show, createSignal, onMount } from "solid-js"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { Button } from "@opencode-ai/ui/button"
 import { DockPrompt } from "@opencode-ai/ui/dock-prompt"
 import { Icon } from "@opencode-ai/ui/icon"
+import { makeEventListener } from "@solid-primitives/event-listener"
 import { useLanguage } from "@/context/language"
+import { useSDK } from "@/context/sdk"
+import { OperatorAutoResume } from "./operator-auto-resume"
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
@@ -11,6 +14,29 @@ export function SessionPermissionDock(props: {
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
   const language = useLanguage()
+  const sdk = useSDK()
+  const [pausedUntil, setPausedUntil] = createSignal(0)
+  let root: HTMLDivElement | undefined
+  let lastTouch = 0
+
+  const touchOperatorPrompt = () => {
+    if (!props.request.timeoutAt) return
+    const now = Date.now()
+    setPausedUntil(now + 30_000)
+    if (now - lastTouch < 5_000) return
+    lastTouch = now
+    void sdk.client.permission.touch({
+      requestID: props.request.id,
+      holdMillis: 30_000,
+    })
+  }
+
+  onMount(() => {
+    if (!root) return
+    makeEventListener(root, "pointerdown", touchOperatorPrompt, { passive: true, capture: true })
+    makeEventListener(root, "focusin", touchOperatorPrompt, { capture: true })
+    makeEventListener(root, "keydown", touchOperatorPrompt, { capture: true })
+  })
 
   const toolDescription = () => {
     const key = `settings.permissions.tool.${props.request.permission}.description`
@@ -22,6 +48,7 @@ export function SessionPermissionDock(props: {
   return (
     <DockPrompt
       kind="permission"
+      ref={(el) => (root = el)}
       header={
         <div data-slot="permission-row" data-variant="header">
           <span data-slot="permission-icon">
@@ -34,6 +61,11 @@ export function SessionPermissionDock(props: {
         <>
           <div />
           <div data-slot="permission-footer-actions">
+            <OperatorAutoResume
+              timeoutAt={props.request.timeoutAt}
+              holdUntil={props.request.holdUntil}
+              pausedUntil={pausedUntil()}
+            />
             <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
               {language.t("ui.permission.deny")}
             </Button>

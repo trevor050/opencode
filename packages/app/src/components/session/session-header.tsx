@@ -24,6 +24,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { messageAgentColor } from "@/utils/agent"
 import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 import { StatusPopover } from "../status-popover"
 
 const OPEN_APPS = [
@@ -141,6 +142,7 @@ export function SessionHeader() {
   const { params, view } = useSessionLayout()
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
+  const ulmWorkspace = createMemo(() => isUlmDirectory(projectDirectory()))
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return
@@ -278,7 +280,7 @@ export function SessionHeader() {
 
   return (
     <>
-      <Show when={search() && centerMount()}>
+      <Show when={search() && !ulmWorkspace() && centerMount()}>
         {(mount) => (
           <Portal mount={mount()}>
             <Button
@@ -312,7 +314,7 @@ export function SessionHeader() {
         {(mount) => (
           <Portal mount={mount()}>
             <div class="flex items-center gap-2">
-              <Show when={projectDirectory()}>
+              <Show when={projectDirectory() && !ulmWorkspace()}>
                 <div class="hidden xl:flex items-center">
                   <Show
                     when={canOpen()}
@@ -450,23 +452,25 @@ export function SessionHeader() {
                 </Show>
 
                 <div class="hidden md:flex items-center gap-1 shrink-0">
-                  <TooltipKeybind
-                    title={language.t("command.review.toggle")}
-                    keybind={command.keybind("review.toggle")}
-                  >
-                    <Button
-                      variant="ghost"
-                      class="group/review-toggle titlebar-icon w-8 h-6 p-0 box-border"
-                      onClick={() => view().reviewPanel.toggle()}
-                      aria-label={language.t("command.review.toggle")}
-                      aria-expanded={view().reviewPanel.opened()}
-                      aria-controls="review-panel"
+                  <Show when={!ulmWorkspace()}>
+                    <TooltipKeybind
+                      title={language.t("command.review.toggle")}
+                      keybind={command.keybind("review.toggle")}
                     >
-                      <Icon size="small" name={view().reviewPanel.opened() ? "review-active" : "review"} />
-                    </Button>
-                  </TooltipKeybind>
+                      <Button
+                        variant="ghost"
+                        class="group/review-toggle titlebar-icon w-8 h-6 p-0 box-border"
+                        onClick={() => view().reviewPanel.toggle()}
+                        aria-label={language.t("command.review.toggle")}
+                        aria-expanded={view().reviewPanel.opened()}
+                        aria-controls="review-panel"
+                      >
+                        <Icon size="small" name={view().reviewPanel.opened() ? "review-active" : "review"} />
+                      </Button>
+                    </TooltipKeybind>
+                  </Show>
 
-                  <Show when={tree()}>
+                  <Show when={tree() && !ulmWorkspace()}>
                     <TooltipKeybind
                       title={language.t("command.fileTree.toggle")}
                       keybind={command.keybind("fileTree.toggle")}

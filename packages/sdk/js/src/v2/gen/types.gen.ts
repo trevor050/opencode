@@ -1861,6 +1861,26 @@ export type UlmOperationStatusSummary = {
   lastEvents: Array<unknown>
 }
 
+export type UlmTemplateStartResult = {
+  operationID: string
+  template:
+    | "single-url-web"
+    | "external-k12-district"
+    | "authenticated-webapp"
+    | "internal-network"
+    | "cloud-posture"
+    | "code-audit"
+    | "report-only"
+    | "benchmark-suite"
+  files: {
+    goal: string
+    plan: string
+    graph: string
+    outline: string
+    memory: string
+  }
+}
+
 export type UlmOperationCheckpointBrief = {
   objective: string
   stage: "intake" | "recon" | "mapping" | "validation" | "reporting" | "handoff"
@@ -1934,6 +1954,79 @@ export type UlmOperationAuditResult = {
   blockers: Array<string>
   recommendedTools: Array<string>
   files: UlmAuditFiles
+}
+
+export type UlmRecoverResult = {
+  operationID: string
+  action: "recover"
+  mode: "planned"
+  supported: boolean
+  dryRun: boolean
+  command: string
+  reason: string
+  restartableJobs: number
+  skipped: number
+}
+
+export type UlmDaemonMetadata = {
+  running: boolean
+  pid?: number
+  updatedAt?: string
+  stopped?: boolean
+  reason?: string
+  lockPath: string
+  heartbeatPath: string
+  logPath: string
+  heartbeat?: {
+    [key: string]: unknown
+  }
+  lock?: {
+    [key: string]: unknown
+  }
+}
+
+export type UlmDaemonActionResult = {
+  operationID: string
+  action: "start" | "stop" | "status"
+  mode: "planned" | "metadata"
+  supported: boolean
+  command: string
+  reason: string
+  daemon: UlmDaemonMetadata
+}
+
+export type UlmFinalArtifact = {
+  id: string
+  file: string
+  kind: "pdf" | "html" | "json" | "markdown" | "text" | "unknown"
+  exists: boolean
+  path: string
+  size?: number
+  updatedAt?: string
+  fetchPath: string
+  openPath: string
+}
+
+export type UlmFinalArtifactList = {
+  operationID: string
+  finalDir: string
+  artifacts: Array<UlmFinalArtifact>
+}
+
+export type UlmFinalArtifactMetadata = {
+  operationID: string
+  finalDir: string
+  artifact: UlmFinalArtifact
+}
+
+export type UlmFinalArtifactOpenResult = {
+  operationID: string
+  artifactID: string
+  mode: "planned"
+  supported: boolean
+  command: string
+  reason: string
+  artifact: UlmFinalArtifact
 }
 
 export type UlmCredentialRecord = {
@@ -7039,6 +7132,42 @@ export type UlmOperationListResponses = {
 
 export type UlmOperationListResponse = UlmOperationListResponses[keyof UlmOperationListResponses]
 
+export type UlmOperationTemplateStartData = {
+  body?: {
+    operationID?: string
+    template:
+      | "single-url-web"
+      | "external-k12-district"
+      | "authenticated-webapp"
+      | "internal-network"
+      | "cloud-posture"
+      | "code-audit"
+      | "report-only"
+      | "benchmark-suite"
+    objective: string
+    targetDurationHours?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    trustLevel?: "guided" | "moderate" | "unattended" | "lab_full"
+    scanProfile?: "paranoid" | "stealth" | "balanced" | "aggressive" | "lab-insane"
+    budgetUSD?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/template"
+}
+
+export type UlmOperationTemplateStartResponses = {
+  /**
+   * ULMCode template operation start
+   */
+  200: UlmTemplateStartResult
+}
+
+export type UlmOperationTemplateStartResponse =
+  UlmOperationTemplateStartResponses[keyof UlmOperationTemplateStartResponses]
+
 export type UlmOperationStatusData = {
   body?: never
   path: {
@@ -7112,6 +7241,209 @@ export type UlmOperationAuditResponses = {
 }
 
 export type UlmOperationAuditResponse = UlmOperationAuditResponses[keyof UlmOperationAuditResponses]
+
+export type UlmOperationAuditWriteData = {
+  body?: {
+    eventLimit?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    staleAfterMinutes?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    minWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    requireOutlineBudget?: boolean
+    minOutlineWordsPerPage?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    requireFindingSections?: boolean
+    minFindingWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    finalHandoff?: boolean
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/audit"
+}
+
+export type UlmOperationAuditWriteResponses = {
+  /**
+   * ULMCode operation audit
+   */
+  200: UlmOperationAuditResult
+}
+
+export type UlmOperationAuditWriteResponse = UlmOperationAuditWriteResponses[keyof UlmOperationAuditWriteResponses]
+
+export type UlmOperationRecoverData = {
+  body?: {
+    dryRun?: boolean
+    maxTasks?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/recover"
+}
+
+export type UlmOperationRecoverResponses = {
+  /**
+   * ULMCode operation recovery metadata
+   */
+  200: UlmRecoverResult
+}
+
+export type UlmOperationRecoverResponse = UlmOperationRecoverResponses[keyof UlmOperationRecoverResponses]
+
+export type UlmOperationDaemonStartData = {
+  body?: {
+    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/daemon/start"
+}
+
+export type UlmOperationDaemonStartResponses = {
+  /**
+   * ULMCode daemon start metadata
+   */
+  200: UlmDaemonActionResult
+}
+
+export type UlmOperationDaemonStartResponse = UlmOperationDaemonStartResponses[keyof UlmOperationDaemonStartResponses]
+
+export type UlmOperationDaemonStopData = {
+  body?: {
+    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/daemon/stop"
+}
+
+export type UlmOperationDaemonStopResponses = {
+  /**
+   * ULMCode daemon stop metadata
+   */
+  200: UlmDaemonActionResult
+}
+
+export type UlmOperationDaemonStopResponse = UlmOperationDaemonStopResponses[keyof UlmOperationDaemonStopResponses]
+
+export type UlmOperationDaemonStatusData = {
+  body?: {
+    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/daemon/status"
+}
+
+export type UlmOperationDaemonStatusResponses = {
+  /**
+   * ULMCode daemon status metadata
+   */
+  200: UlmDaemonActionResult
+}
+
+export type UlmOperationDaemonStatusResponse =
+  UlmOperationDaemonStatusResponses[keyof UlmOperationDaemonStatusResponses]
+
+export type UlmOperationFinalArtifactsData = {
+  body?: never
+  path: {
+    operationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/final-artifacts"
+}
+
+export type UlmOperationFinalArtifactsResponses = {
+  /**
+   * ULMCode final artifact metadata
+   */
+  200: UlmFinalArtifactList
+}
+
+export type UlmOperationFinalArtifactsResponse =
+  UlmOperationFinalArtifactsResponses[keyof UlmOperationFinalArtifactsResponses]
+
+export type UlmOperationFinalArtifactData = {
+  body?: never
+  path: {
+    operationID: string
+    artifactID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}"
+}
+
+export type UlmOperationFinalArtifactResponses = {
+  /**
+   * ULMCode final artifact metadata
+   */
+  200: UlmFinalArtifactMetadata
+}
+
+export type UlmOperationFinalArtifactResponse =
+  UlmOperationFinalArtifactResponses[keyof UlmOperationFinalArtifactResponses]
+
+export type UlmOperationFinalArtifactOpenData = {
+  body?: {
+    [key: string]: unknown
+  }
+  path: {
+    operationID: string
+    artifactID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}/open"
+}
+
+export type UlmOperationFinalArtifactOpenResponses = {
+  /**
+   * ULMCode final artifact open metadata
+   */
+  200: UlmFinalArtifactOpenResult
+}
+
+export type UlmOperationFinalArtifactOpenResponse =
+  UlmOperationFinalArtifactOpenResponses[keyof UlmOperationFinalArtifactOpenResponses]
 
 export type UlmOperationCredentialsData = {
   body?: never

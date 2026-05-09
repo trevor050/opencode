@@ -3,6 +3,7 @@ import log from "electron-log/main.js"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { APP_IDS, SETTINGS_STORE } from "./branding"
 import { CHANNEL } from "./constants"
 import { getStore } from "./store"
 
@@ -21,18 +22,12 @@ function tauriDir(id: string) {
   }
 }
 
-// The Tauri app identifier changes between dev/beta/prod builds.
-const TAURI_APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
-}
 function tauriAppId() {
-  return app.isPackaged ? TAURI_APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  return app.isPackaged ? APP_IDS[CHANNEL] : APP_IDS.dev
 }
 
 // Migrate a single Tauri .dat file into the corresponding electron-store.
-// `opencode.settings.dat` is special: it maps to the `opencode.settings` store
+// `opencode.settings.dat` is special: it maps to the ULMCode settings store
 // (the electron-store name without the `.dat` extension). All other .dat files
 // keep their full filename as the electron-store name so they match what the
 // renderer already passes via IPC (e.g. `"default.dat"`, `"opencode.global.dat"`).
@@ -45,10 +40,10 @@ function migrateFile(datPath: string, filename: string) {
     return
   }
 
-  // opencode.settings.dat → the electron settings store ("opencode.settings").
+  // opencode.settings.dat -> the electron settings store.
   // All other .dat files keep their full filename as the store name so they match
   // what the renderer passes via IPC (e.g. "default.dat", "opencode.global.dat").
-  const storeName = filename === "opencode.settings.dat" ? "opencode.settings" : filename
+  const storeName = filename === "opencode.settings.dat" ? SETTINGS_STORE : filename
   const target = getStore(storeName)
   const migrated: string[] = []
   const skipped: string[] = []

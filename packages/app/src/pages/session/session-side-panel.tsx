@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Tabs } from "@opencode-ai/ui/tabs"
@@ -11,6 +11,7 @@ import type { DragEvent } from "@thisbeyond/solid-dnd"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useNavigate, useParams } from "@solidjs/router"
 
 import FileTree from "@/components/file-tree"
 import { SessionContextUsage } from "@/components/session-context-usage"
@@ -19,14 +20,167 @@ import { useCommand } from "@/context/command"
 import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
-import { usePlatform } from "@/context/platform"
+import { usePlatform, type UlmArtifactFile } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
+import { useSDK } from "@/context/sdk"
+import { useUlm } from "@/context/ulm"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import { artifactGroups, currentOperationFilesPath } from "@/utils/ulm-operation-ui"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
+
+type WorkspaceTone = "ready" | "attention" | "blocked" | "neutral"
+
+function workspaceToneClass(tone: WorkspaceTone) {
+  if (tone === "ready")
+    return "border-[color-mix(in_srgb,var(--border-weak-base)_78%,#14b86a)] bg-[color-mix(in_srgb,var(--background-base)_92%,#14b86a)]"
+  if (tone === "blocked")
+    return "border-[color-mix(in_srgb,var(--border-weak-base)_68%,#d84f45)] bg-[color-mix(in_srgb,var(--background-base)_90%,#d84f45)]"
+  if (tone === "attention")
+    return "border-[color-mix(in_srgb,var(--border-weak-base)_70%,#d89b1d)] bg-[color-mix(in_srgb,var(--background-base)_90%,#d89b1d)]"
+  return "border-border-weaker-base bg-surface-base"
+}
+
+function statusTone(status: string | undefined): WorkspaceTone {
+  if (status === "complete") return "ready"
+  if (status === "blocked") return "blocked"
+  if (status === "paused") return "attention"
+  if (status === "running") return "attention"
+  return "neutral"
+}
+
+function operationTitle(item: ReturnType<typeof useUlm>["store"]["operations"][number] | undefined) {
+  return item?.operation?.objective || item?.goal?.objective || item?.operationID || "No active operation"
+}
+
+function EngagementWorkspacePanel() {
+  const ulm = useUlm()
+  const navigate = useNavigate()
+  const params = useParams()
+  const platform = usePlatform()
+  const [artifacts, setArtifacts] = createSignal<UlmArtifactFile[]>([])
+  const [preview, setPreview] = createSignal<{ file: string; content: string }>()
+  const operations = createMemo(() => ulm.store.operations)
+  const active = createMemo(
+    () =>
+      operations().find((item) => item.operation?.status === "running") ??
+      operations().find((item) => item.operation?.status !== "complete") ??
+      operations()[0],
+  )
+  const groups = createMemo(() => artifactGroups(artifacts()))
+  const base = createMemo(() => `/${params.dir}`)
+  const previewable = (item: UlmArtifactFile) =>
+    item.kind === "markdown" || item.kind === "json" || item.kind === "text" || item.kind === "html"
+  const openFile = async (item: UlmArtifactFile) => {
+    if (previewable(item) && platform.readTextFile) {
+      const content = await platform.readTextFile(item.path)
+      setPreview({ file: item.file, content })
+      return
+    }
+    if (platform.openPath) await platform.openPath(item.path)
+  }
+
+  createEffect(() => {
+    const root = currentOperationFilesPath(active())
+    if (!root || !platform.listUlmArtifacts) {
+      setArtifacts([])
+      return
+    }
+    void platform.listUlmArtifacts(root).then(setArtifacts).catch(() => setArtifacts([]))
+  })
+
+  return (
+    <div class="h-full overflow-y-auto bg-background-stronger px-3 py-3">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-11-medium uppercase tracking-normal text-text-weak">Operation files</div>
+          <div class="mt-1 truncate text-13-medium text-text-strong">{operationTitle(active())}</div>
+        </div>
+        <Show when={active()}>
+          {(item) => (
+            <button
+              type="button"
+              class="shrink-0 rounded-[6px] border border-border-weaker-base px-2 py-1 text-11-medium text-text-base transition-colors hover:border-border-weak-base hover:bg-surface-base-hover"
+              onClick={() => navigate(`${base()}/operations/${item().operationID}`)}
+            >
+              Details
+            </button>
+          )}
+        </Show>
+      </div>
+
+      <Show
+        when={active()}
+        fallback={
+          <div class="rounded-[8px] border border-border-weaker-base bg-surface-base p-4 text-12-regular text-text-weak">
+            No engagement artifacts found yet. Start a scoped pentest lane to create the operation workspace.
+          </div>
+        }
+      >
+        {(item) => (
+          <div class="flex flex-col gap-3">
+            <div class={`rounded-[8px] border p-3 ${workspaceToneClass(statusTone(item().operation?.status))}`}>
+              <div class="text-12-medium text-text-strong">{item().operation?.status ?? "untracked"}</div>
+              <div class="mt-1 text-12-regular text-text-weak">
+                {item().findings.total} findings / {item().evidence.total} evidence / {artifacts().length} files
+              </div>
+            </div>
+
+            <Show
+              when={groups().length > 0}
+              fallback={
+                <div class="rounded-[8px] border border-border-weaker-base bg-surface-base p-4 text-12-regular text-text-weak">
+                  No operation files found yet.
+                </div>
+              }
+            >
+              <For each={groups()}>
+                {(group) => (
+                  <section class="rounded-[8px] border border-border-weaker-base bg-surface-base p-2">
+                    <div class="px-1 pb-1 text-11-medium uppercase tracking-normal text-text-weak">{group.label}</div>
+                    <div class="flex flex-col gap-1">
+                      <For each={group.items as UlmArtifactFile[]}>
+                        {(artifact) => (
+                          <button
+                            type="button"
+                            class="rounded-[6px] px-2 py-1.5 text-left text-12-regular text-text-base hover:bg-background-base"
+                            onClick={() => void openFile(artifact)}
+                          >
+                            <div class="truncate">{artifact.file}</div>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </section>
+                )}
+              </For>
+            </Show>
+
+            <Show when={preview()}>
+              {(item) => (
+                <section class="rounded-[8px] border border-border-weaker-base bg-surface-base">
+                  <div class="flex items-center justify-between gap-2 border-b border-border-weaker-base px-3 py-2">
+                    <div class="truncate text-12-medium text-text-strong">{item().file}</div>
+                    <button type="button" class="text-12-medium text-text-weak hover:text-text-base" onClick={() => setPreview()}>
+                      Close
+                    </button>
+                  </div>
+                  <pre class="max-h-80 overflow-auto whitespace-pre-wrap px-3 py-3 text-11-regular leading-4 text-text-base">
+                    {item().content}
+                  </pre>
+                </section>
+              )}
+            </Show>
+          </div>
+        )}
+      </Show>
+    </div>
+  )
+}
 
 export function SessionSidePanel(props: {
   canReview: () => boolean
@@ -45,6 +199,7 @@ export function SessionSidePanel(props: {
   const platform = usePlatform()
   const settings = useSettings()
   const sync = useSync()
+  const sdk = useSDK()
   const file = useFile()
   const language = useLanguage()
   const command = useCommand()
@@ -61,14 +216,24 @@ export function SessionSidePanel(props: {
 
   const reviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const fileOpen = createMemo(() => isDesktop() && shown() && layout.fileTree.opened())
+  const ulmWorkspace = createMemo(() => isUlmDirectory(sdk.directory))
   const open = createMemo(() => reviewOpen() || fileOpen())
   const reviewTab = createMemo(() => isDesktop())
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
     if (reviewOpen()) return `calc(100% - ${layout.session.width()}px)`
-    return `${layout.fileTree.width()}px`
+    return `${ulmWorkspace() ? Math.max(320, layout.fileTree.width()) : layout.fileTree.width()}px`
   })
-  const treeWidth = createMemo(() => (fileOpen() ? `${layout.fileTree.width()}px` : "0px"))
+  const treeWidth = createMemo(() =>
+    fileOpen() ? `${ulmWorkspace() ? Math.max(320, layout.fileTree.width()) : layout.fileTree.width()}px` : "0px",
+  )
+
+  createEffect(() => {
+    if (!ulmWorkspace()) return
+    if (!fileOpen()) return
+    if (layout.fileTree.width() >= 320) return
+    layout.fileTree.resize(320)
+  })
 
   const diffFiles = createMemo(() => props.diffs().map((d) => d.file))
   const kinds = createMemo(() => {
@@ -203,7 +368,7 @@ export function SessionSidePanel(props: {
     <Show when={isDesktop()}>
       <aside
         id="review-panel"
-        aria-label={language.t("session.panel.reviewAndFiles")}
+        aria-label={ulmWorkspace() ? "Review and engagement workspace" : language.t("session.panel.reviewAndFiles")}
         aria-hidden={!open()}
         inert={!open()}
         class="relative min-w-0 h-full flex shrink-0 overflow-hidden bg-background-base"
@@ -355,7 +520,7 @@ export function SessionSidePanel(props: {
 
           <Show when={shown()}>
             <div
-              id="file-tree-panel"
+              id={ulmWorkspace() ? "engagement-workspace-panel" : "file-tree-panel"}
               aria-hidden={!fileOpen()}
               inert={!fileOpen()}
               class="relative min-w-0 h-full shrink-0 overflow-hidden"
@@ -377,56 +542,65 @@ export function SessionSidePanel(props: {
                   class="h-full"
                   data-scope="filetree"
                 >
-                  <Tabs.List>
-                    <Tabs.Trigger value="changes" class="flex-1" classes={{ button: "w-full" }}>
-                      {props.reviewCount()}{" "}
-                      {language.t(
-                        props.reviewCount() === 1 ? "session.review.change.one" : "session.review.change.other",
-                      )}
-                    </Tabs.Trigger>
-                    <Tabs.Trigger value="all" class="flex-1" classes={{ button: "w-full" }}>
-                      {language.t("session.files.all")}
-                    </Tabs.Trigger>
-                  </Tabs.List>
-                  <Tabs.Content value="changes" class="bg-background-stronger px-3 py-0">
-                    <Switch>
-                      <Match when={props.hasReview() || !props.diffsReady()}>
-                        <Show
-                          when={props.diffsReady()}
-                          fallback={
-                            <div class="px-2 py-2 text-12-regular text-text-weak">
-                              {language.t("common.loading")}
-                              {language.t("common.loading.ellipsis")}
-                            </div>
-                          }
-                        >
-                          <FileTree
-                            path=""
-                            class="pt-3"
-                            allowed={diffFiles()}
-                            kinds={kinds()}
-                            draggable={false}
-                            active={props.activeDiff}
-                            onFileClick={(node) => props.focusReviewDiff(node.path)}
-                          />
-                        </Show>
-                      </Match>
-                    </Switch>
-                  </Tabs.Content>
-                  <Tabs.Content value="all" class="bg-background-stronger px-3 py-0">
-                    <Switch>
-                      <Match when={nofiles()}>{empty(language.t("session.files.empty"))}</Match>
-                      <Match when={true}>
-                        <FileTree
-                          path=""
-                          class="pt-3"
-                          modified={diffFiles()}
-                          kinds={kinds()}
-                          onFileClick={(node) => openTab(file.tab(node.path))}
-                        />
-                      </Match>
-                    </Switch>
-                  </Tabs.Content>
+                  <Show
+                    when={ulmWorkspace()}
+                    fallback={
+                      <>
+                        <Tabs.List>
+                          <Tabs.Trigger value="changes" class="flex-1" classes={{ button: "w-full" }}>
+                            {props.reviewCount()}{" "}
+                            {language.t(
+                              props.reviewCount() === 1 ? "session.review.change.one" : "session.review.change.other",
+                            )}
+                          </Tabs.Trigger>
+                          <Tabs.Trigger value="all" class="flex-1" classes={{ button: "w-full" }}>
+                            {language.t("session.files.all")}
+                          </Tabs.Trigger>
+                        </Tabs.List>
+                        <Tabs.Content value="changes" class="bg-background-stronger px-3 py-0">
+                          <Switch>
+                            <Match when={props.hasReview() || !props.diffsReady()}>
+                              <Show
+                                when={props.diffsReady()}
+                                fallback={
+                                  <div class="px-2 py-2 text-12-regular text-text-weak">
+                                    {language.t("common.loading")}
+                                    {language.t("common.loading.ellipsis")}
+                                  </div>
+                                }
+                              >
+                                <FileTree
+                                  path=""
+                                  class="pt-3"
+                                  allowed={diffFiles()}
+                                  kinds={kinds()}
+                                  draggable={false}
+                                  active={props.activeDiff}
+                                  onFileClick={(node) => props.focusReviewDiff(node.path)}
+                                />
+                              </Show>
+                            </Match>
+                          </Switch>
+                        </Tabs.Content>
+                        <Tabs.Content value="all" class="bg-background-stronger px-3 py-0">
+                          <Switch>
+                            <Match when={nofiles()}>{empty(language.t("session.files.empty"))}</Match>
+                            <Match when={true}>
+                              <FileTree
+                                path=""
+                                class="pt-3"
+                                modified={diffFiles()}
+                                kinds={kinds()}
+                                onFileClick={(node) => openTab(file.tab(node.path))}
+                              />
+                            </Match>
+                          </Switch>
+                        </Tabs.Content>
+                      </>
+                    }
+                  >
+                    <EngagementWorkspacePanel />
+                  </Show>
                 </Tabs>
               </div>
               <Show when={fileOpen()}>
@@ -435,11 +609,11 @@ export function SessionSidePanel(props: {
                     direction="horizontal"
                     edge="start"
                     size={layout.fileTree.width()}
-                    min={200}
-                    max={480}
+                    min={ulmWorkspace() ? 320 : 200}
+                    max={ulmWorkspace() ? 560 : 480}
                     onResize={(width) => {
                       props.size.touch()
-                      layout.fileTree.resize(width)
+                      layout.fileTree.resize(ulmWorkspace() ? Math.max(320, width) : width)
                     }}
                   />
                 </div>

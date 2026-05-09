@@ -5,6 +5,7 @@ import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { PromptInput } from "@/components/prompt-input"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
+import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionKey } from "@/pages/session/session-layout"
@@ -16,6 +17,7 @@ import type { SessionComposerState } from "@/pages/session/composer/session-comp
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
 import type { FollowupDraft } from "@/components/prompt-input/submit"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 export function SessionComposerRegion(props: {
   state: SessionComposerState
@@ -50,12 +52,14 @@ export function SessionComposerRegion(props: {
   const language = useLanguage()
   const route = useSessionKey()
   const sync = useSync()
+  const sdk = useSDK()
 
   const handoffPrompt = createMemo(() => getSessionHandoff(route.sessionKey())?.prompt)
   const info = createMemo(() => (route.params.id ? sync.session.get(route.params.id) : undefined))
   const parentID = createMemo(() => info()?.parentID)
   const child = createMemo(() => !!parentID())
   const showComposer = createMemo(() => !props.state.blocked() || child())
+  const operatorHome = createMemo(() => !route.params.id && isUlmDirectory(sdk.directory))
 
   const previewPrompt = () =>
     prompt
@@ -252,6 +256,7 @@ export function SessionComposerRegion(props: {
                   <Show when={!props.state.blocked()}>
                     <PromptInput
                       ref={props.inputRef}
+                      compact={operatorHome()}
                       newSessionWorktree={props.newSessionWorktree}
                       onNewSessionWorktreeReset={props.onNewSessionWorktreeReset}
                       edit={props.followup?.edit}

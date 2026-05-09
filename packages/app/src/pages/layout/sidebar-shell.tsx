@@ -25,6 +25,7 @@ export const SidebarContent = (props: {
   openProjectKeybind: Accessor<string | undefined>
   onOpenProject: () => void
   renderProjectOverlay: () => JSX.Element
+  renderRailNav?: () => JSX.Element
   settingsLabel: Accessor<string>
   settingsKeybind: Accessor<string | undefined>
   onOpenSettings: () => void
@@ -54,40 +55,47 @@ export const SidebarContent = (props: {
         onMouseMove={props.aimMove}
       >
         <div class="flex-1 min-h-0 w-full">
-          <DragDropProvider
-            onDragStart={props.handleDragStart}
-            onDragEnd={props.handleDragEnd}
-            onDragOver={props.handleDragOver}
-            collisionDetector={closestCenter}
-          >
-            <DragDropSensors />
-            <ConstrainDragXAxis />
-            <div class="h-full w-full flex flex-col items-center gap-3 px-3 py-3 overflow-y-auto no-scrollbar">
-              <SortableProvider ids={props.projects().map((p) => p.worktree)}>
-                <For each={props.projects()}>{(project) => props.renderProject(project)}</For>
-              </SortableProvider>
-              <Tooltip
-                placement={placement()}
-                value={
-                  <div class="flex items-center gap-2">
-                    <span>{props.openProjectLabel}</span>
-                    <Show when={!props.mobile && !!props.openProjectKeybind()}>
-                      <span class="text-icon-base text-12-medium">{props.openProjectKeybind()}</span>
-                    </Show>
-                  </div>
-                }
+          <Show
+            when={props.renderRailNav}
+            fallback={
+              <DragDropProvider
+                onDragStart={props.handleDragStart}
+                onDragEnd={props.handleDragEnd}
+                onDragOver={props.handleDragOver}
+                collisionDetector={closestCenter}
               >
-                <IconButton
-                  icon="plus"
-                  variant="ghost"
-                  size="large"
-                  onClick={props.onOpenProject}
-                  aria-label={typeof props.openProjectLabel === "string" ? props.openProjectLabel : undefined}
-                />
-              </Tooltip>
-            </div>
-            <DragOverlay>{props.renderProjectOverlay()}</DragOverlay>
-          </DragDropProvider>
+                <DragDropSensors />
+                <ConstrainDragXAxis />
+                <div class="h-full w-full flex flex-col items-center gap-3 px-3 py-3 overflow-y-auto no-scrollbar">
+                  <SortableProvider ids={props.projects().map((p) => p.worktree)}>
+                    <For each={props.projects()}>{(project) => props.renderProject(project)}</For>
+                  </SortableProvider>
+                  <Tooltip
+                    placement={placement()}
+                    value={
+                      <div class="flex items-center gap-2">
+                        <span>{props.openProjectLabel}</span>
+                        <Show when={!props.mobile && !!props.openProjectKeybind()}>
+                          <span class="text-icon-base text-12-medium">{props.openProjectKeybind()}</span>
+                        </Show>
+                      </div>
+                    }
+                  >
+                    <IconButton
+                      icon="plus"
+                      variant="ghost"
+                      size="large"
+                      onClick={props.onOpenProject}
+                      aria-label={typeof props.openProjectLabel === "string" ? props.openProjectLabel : undefined}
+                    />
+                  </Tooltip>
+                </div>
+                <DragOverlay>{props.renderProjectOverlay()}</DragOverlay>
+              </DragDropProvider>
+            }
+          >
+            {(renderRailNav) => <>{renderRailNav()()}</>}
+          </Show>
         </div>
         <div class="shrink-0 w-full pt-3 pb-6 flex flex-col items-center gap-2">
           <TooltipKeybind placement={placement()} title={props.settingsLabel()} keybind={props.settingsKeybind() ?? ""}>

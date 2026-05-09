@@ -8,6 +8,14 @@ type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
 type OpenFilePickerOptions = { title?: string; multiple?: boolean; accept?: string[]; extensions?: string[] }
 type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type UpdateInfo = { updateAvailable: boolean; version?: string }
+export type UlmArtifactFile = {
+  file: string
+  kind: "pdf" | "html" | "json" | "markdown" | "text" | "unknown"
+  exists: boolean
+  path: string
+  size?: number
+  updatedAt?: string
+}
 
 export type Platform = {
   /** Platform discriminator */
@@ -24,6 +32,12 @@ export type Platform = {
 
   /** Open a local path in a local app (desktop only) */
   openPath?(path: string, app?: string): Promise<void>
+
+  /** List scoped ULM operation files for in-app browsing (desktop only) */
+  listUlmArtifacts?(operationRoot: string): Promise<UlmArtifactFile[]>
+
+  /** Read a scoped local text file for in-app preview (desktop only) */
+  readTextFile?(path: string): Promise<string>
 
   /** Restart the app  */
   restart(): Promise<void>

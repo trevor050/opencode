@@ -1,4 +1,4 @@
-import { For, Show, createMemo, onCleanup, onMount, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
@@ -10,6 +10,7 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
+import { OperatorAutoResume } from "./operator-auto-resume"
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
 
@@ -80,6 +81,8 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   let optsRef: HTMLButtonElement[] = []
   let replied = false
   let focusFrame: number | undefined
+  let lastTouch = 0
+  const [pausedUntil, setPausedUntil] = createSignal(0)
 
   const question = createMemo(() => questions()[store.tab])
   const options = createMemo(() => question()?.options ?? [])
@@ -97,6 +100,18 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const customPlaceholder = () => language.t("ui.question.custom.placeholder")
 
   const last = createMemo(() => store.tab >= total() - 1)
+
+  const touchOperatorPrompt = () => {
+    if (!props.request.timeoutAt) return
+    const now = Date.now()
+    setPausedUntil(now + 30_000)
+    if (now - lastTouch < 5_000) return
+    lastTouch = now
+    void sdk.client.question.touch({
+      requestID: props.request.id,
+      holdMillis: 30_000,
+    })
+  }
 
   const customUpdate = (value: string, selected: boolean = on()) => {
     const prev = input().trim()
@@ -180,6 +195,10 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     const dock = root?.closest('[data-component="session-prompt-dock"]')
     const scroller = document.querySelector(".scroll-view__viewport")
     createResizeObserver([dock, scroller], update)
+    if (root) {
+      makeEventListener(root, "pointerdown", touchOperatorPrompt, { passive: true, capture: true })
+      makeEventListener(root, "focusin", touchOperatorPrompt, { capture: true })
+    }
 
     onCleanup(() => {
       if (raf !== undefined) cancelAnimationFrame(raf)
@@ -303,6 +322,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
   const nav = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return
+    touchOperatorPrompt()
 
     if (event.key === "Escape") {
       event.preventDefault()
@@ -451,6 +471,11 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
             {language.t("ui.common.dismiss")}
           </Button>
           <div data-slot="question-footer-actions">
+            <OperatorAutoResume
+              timeoutAt={props.request.timeoutAt}
+              holdUntil={props.request.holdUntil}
+              pausedUntil={pausedUntil()}
+            />
             <Show when={store.tab > 0}>
               <Button variant="secondary" size="large" disabled={sending()} onClick={back}>
                 {language.t("ui.common.back")}

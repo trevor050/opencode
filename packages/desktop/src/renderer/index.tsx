@@ -177,6 +177,12 @@ const createPlatform = (): Platform => {
       }
       return window.api.openPath(path, app)
     },
+    listUlmArtifacts(operationRoot: string) {
+      return window.api.listUlmArtifacts(operationRoot)
+    },
+    readTextFile(path: string) {
+      return window.api.readUlmTextArtifact(path)
+    },
 
     back() {
       window.history.back()

@@ -3,6 +3,7 @@ import {
   createEffect,
   createMemo,
   createResource,
+  createSignal,
   For,
   on,
   onCleanup,
@@ -13,7 +14,7 @@ import {
   type Accessor,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { useLocation, useNavigate, useParams } from "@solidjs/router"
+import { A, useLocation, useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { Persist, persisted } from "@/utils/persist"
@@ -21,6 +22,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { decode64 } from "@/utils/base64"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Button } from "@opencode-ai/ui/button"
+import { Icon, type IconProps } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
@@ -55,6 +57,7 @@ import { createAim } from "@/utils/aim"
 import { setNavigate } from "@/utils/notification-click"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { setSessionHandoff } from "@/pages/session/handoff"
+import { isUlmDirectory, isUlmOperationsDirectory } from "@/utils/ulm-workspace"
 
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
@@ -149,6 +152,7 @@ export default function Layout(props: ParentProps) {
   }
   const colorSchemeLabel = (scheme: ColorScheme) => language.t(colorSchemeKey[scheme])
   const currentDir = createMemo(() => route().dir)
+  const [ulmOperationsDirectory, setUlmOperationsDirectory] = createSignal<string | undefined>()
 
   const [state, setState] = createStore({
     autoselect: !initialDirectory,
@@ -652,6 +656,36 @@ export default function Layout(props: ParentProps) {
       if (project.vcs === "git" && layout.sidebar.workspaces(project.worktree)()) continue
       setStore("workspaceExpanded", directory, false)
     }
+  })
+
+  createEffect(() => {
+    if (!pageReady()) return
+    if (!layoutReady()) return
+    if (!window.api?.getUlmOperationsDirectory) return
+
+    void window.api
+      .getUlmOperationsDirectory()
+      .then((directory) => {
+        if (!directory) return
+        setUlmOperationsDirectory(directory)
+        layout.projects.open(directory)
+        server.projects.touch(directory)
+        void globalSync.project.loadSessions(directory)
+      })
+      .catch(() => undefined)
+  })
+
+  createEffect(() => {
+    if (!pageReady()) return
+    if (!layoutReady()) return
+    const dir = currentDir()
+    if (!isUlmDirectory(dir)) return
+    if (dir.endsWith("/opencode") || dir.endsWith("/packages/opencode")) return
+    const preferred = ulmOperationsDirectory()
+    if (!preferred) return
+
+    if (pathKey(preferred) === pathKey(dir)) return
+    navigate(`/${base64Encode(preferred)}/session`, { replace: true })
   })
 
   const currentSessions = createMemo(() => {
@@ -1273,6 +1307,10 @@ export default function Layout(props: ParentProps) {
     if (!directory) return
     const root = projectRoot(directory)
     server.projects.touch(root)
+    if (isUlmDirectory(directory)) {
+      navigateWithSidebarReset(`/${base64Encode(directory)}/session`)
+      return
+    }
     const project = layout.projects.list().find((item) => item.worktree === root)
     let dirs = project
       ? effectiveWorkspaceOrder(root, [root, ...(project.sandboxes ?? [])], store.workspaceOrder[root])
@@ -2028,10 +2066,15 @@ export default function Layout(props: ParentProps) {
     const projectName = createMemo(() => {
       const item = project()
       if (!item) return ""
+      if (isUlmDirectory(item.worktree)) return "Operations"
       return item.name || getFilename(item.worktree)
     })
     const projectId = createMemo(() => project()?.id ?? "")
     const worktree = createMemo(() => project()?.worktree ?? "")
+    const ulmWorkspace = createMemo(() => {
+      const dir = worktree()
+      return isUlmDirectory(dir)
+    })
     const slug = createMemo(() => {
       const dir = worktree()
       if (!dir) return ""
@@ -2102,18 +2145,23 @@ export default function Layout(props: ParentProps) {
               <div class="shrink-0 pl-1 py-1">
                 <div class="group/project flex items-start justify-between gap-2 py-2 pl-2 pr-0">
                   <div class="flex flex-col min-w-0">
-                    <InlineEditor
-                      id={`project:${projectId()}`}
-                      value={projectName}
-                      onSave={(next) => {
-                        const item = project()
-                        if (!item) return
-                        void renameProject(item, next)
-                      }}
-                      class="text-14-medium text-text-strong truncate"
-                      displayClass="text-14-medium text-text-strong truncate"
-                      stopPropagation
-                    />
+                    <Show
+                      when={!ulmWorkspace()}
+                      fallback={<div class="text-14-medium text-text-strong truncate">{projectName()}</div>}
+                    >
+                      <InlineEditor
+                        id={`project:${projectId()}`}
+                        value={projectName}
+                        onSave={(next) => {
+                          const item = project()
+                          if (!item) return
+                          void renameProject(item, next)
+                        }}
+                        class="text-14-medium text-text-strong truncate"
+                        displayClass="text-14-medium text-text-strong truncate"
+                        stopPropagation
+                      />
+                    </Show>
 
                     <Tooltip
                       placement="bottom"
@@ -2126,78 +2174,80 @@ export default function Layout(props: ParentProps) {
                       }}
                     >
                       <span class="text-12-regular text-text-base truncate select-text">
-                        {worktree().replace(homedir(), "~")}
+                        {ulmWorkspace() ? "Chats, files, and reports" : worktree().replace(homedir(), "~")}
                       </span>
                     </Tooltip>
                   </div>
 
-                  <DropdownMenu modal={!sidebarHovering()}>
-                    <DropdownMenu.Trigger
-                      as={IconButton}
-                      icon="dot-grid"
-                      variant="ghost"
-                      data-action="project-menu"
-                      data-project={slug()}
-                      class="shrink-0 size-6 rounded-md transition-opacity data-[expanded]:bg-surface-base-active"
-                      classList={{
-                        "opacity-100": panelProps.mobile || merged(),
-                        "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[expanded]:opacity-100":
-                          !panelProps.mobile && !merged(),
-                      }}
-                      aria-label={language.t("common.moreOptions")}
-                    />
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content class="mt-1">
-                        <DropdownMenu.Item
-                          onSelect={() => {
-                            const item = project()
-                            if (!item) return
-                            showEditProjectDialog(item)
-                          }}
-                        >
-                          <DropdownMenu.ItemLabel>{language.t("common.edit")}</DropdownMenu.ItemLabel>
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Item
-                          data-action="project-workspaces-toggle"
-                          data-project={slug()}
-                          disabled={!canToggle()}
-                          onSelect={() => {
-                            const item = project()
-                            if (!item) return
-                            toggleProjectWorkspaces(item)
-                          }}
-                        >
-                          <DropdownMenu.ItemLabel>
-                            {workspacesEnabled()
-                              ? language.t("sidebar.workspaces.disable")
-                              : language.t("sidebar.workspaces.enable")}
-                          </DropdownMenu.ItemLabel>
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Item
-                          data-action="project-clear-notifications"
-                          data-project={slug()}
-                          disabled={unseenCount() === 0}
-                          onSelect={clearNotifications}
-                        >
-                          <DropdownMenu.ItemLabel>
-                            {language.t("sidebar.project.clearNotifications")}
-                          </DropdownMenu.ItemLabel>
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Separator />
-                        <DropdownMenu.Item
-                          data-action="project-close-menu"
-                          data-project={slug()}
-                          onSelect={() => {
-                            const dir = worktree()
-                            if (!dir) return
-                            closeProject(dir)
-                          }}
-                        >
-                          <DropdownMenu.ItemLabel>{language.t("common.close")}</DropdownMenu.ItemLabel>
-                        </DropdownMenu.Item>
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu>
+                  <Show when={!ulmWorkspace()}>
+                    <DropdownMenu modal={!sidebarHovering()}>
+                      <DropdownMenu.Trigger
+                        as={IconButton}
+                        icon="dot-grid"
+                        variant="ghost"
+                        data-action="project-menu"
+                        data-project={slug()}
+                        class="shrink-0 size-6 rounded-md transition-opacity data-[expanded]:bg-surface-base-active"
+                        classList={{
+                          "opacity-100": panelProps.mobile || merged(),
+                          "opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[expanded]:opacity-100":
+                            !panelProps.mobile && !merged(),
+                        }}
+                        aria-label={language.t("common.moreOptions")}
+                      />
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content class="mt-1">
+                          <DropdownMenu.Item
+                            onSelect={() => {
+                              const item = project()
+                              if (!item) return
+                              showEditProjectDialog(item)
+                            }}
+                          >
+                            <DropdownMenu.ItemLabel>{language.t("common.edit")}</DropdownMenu.ItemLabel>
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            data-action="project-workspaces-toggle"
+                            data-project={slug()}
+                            disabled={!canToggle()}
+                            onSelect={() => {
+                              const item = project()
+                              if (!item) return
+                              toggleProjectWorkspaces(item)
+                            }}
+                          >
+                            <DropdownMenu.ItemLabel>
+                              {workspacesEnabled()
+                                ? language.t("sidebar.workspaces.disable")
+                                : language.t("sidebar.workspaces.enable")}
+                            </DropdownMenu.ItemLabel>
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            data-action="project-clear-notifications"
+                            data-project={slug()}
+                            disabled={unseenCount() === 0}
+                            onSelect={clearNotifications}
+                          >
+                            <DropdownMenu.ItemLabel>
+                              {language.t("sidebar.project.clearNotifications")}
+                            </DropdownMenu.ItemLabel>
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Separator />
+                          <DropdownMenu.Item
+                            data-action="project-close-menu"
+                            data-project={slug()}
+                            onSelect={() => {
+                              const dir = worktree()
+                              if (!dir) return
+                              closeProject(dir)
+                            }}
+                          >
+                            <DropdownMenu.ItemLabel>{language.t("common.close")}</DropdownMenu.ItemLabel>
+                          </DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu>
+                  </Show>
                 </div>
               </div>
 
@@ -2206,7 +2256,7 @@ export default function Layout(props: ParentProps) {
                   when={workspacesEnabled()}
                   fallback={
                     <>
-                      <div class="shrink-0 py-4">
+                      <div class="shrink-0 py-4 flex flex-col gap-2">
                         <Button
                           size="large"
                           icon="new-session"
@@ -2217,9 +2267,30 @@ export default function Layout(props: ParentProps) {
                             navigateWithSidebarReset(`/${base64Encode(dir)}/session`)
                           }}
                         >
-                          {language.t("command.session.new")}
+                          {ulmWorkspace() ? "New pentest" : language.t("command.session.new")}
                         </Button>
+                        <Show when={ulmWorkspace()}>
+                          <Button
+                            size="large"
+                            icon="status"
+                            variant="ghost"
+                            class="w-full"
+                            onClick={() => {
+                              const dir = worktree()
+                              if (!dir) return
+                              navigateWithSidebarReset(`/${base64Encode(dir)}/operations`)
+                            }}
+                          >
+                            Operations board
+                          </Button>
+                        </Show>
                       </div>
+                      <Show when={ulmWorkspace()}>
+                        <div class="px-2 pb-1">
+                          <div class="text-11-medium uppercase text-text-weak">assessment lanes</div>
+                          <div class="mt-0.5 text-12-regular text-text-weaker">Recent scoped runs and handoffs</div>
+                        </div>
+                      </Show>
                       <div class="flex-1 min-h-0">
                         <LocalWorkspace
                           ctx={workspaceSidebarCtx}
@@ -2325,6 +2396,161 @@ export default function Layout(props: ParentProps) {
 
   const projects = () => layout.projects.list()
   const projectOverlay = () => <ProjectDragOverlay projects={projects} activeProject={() => store.activeProject} />
+  const ulmRailNav = createMemo(() => {
+    const list = projects().filter((project) => isUlmDirectory(project.worktree))
+    if (!list.length) return undefined
+    const operationDir =
+      ulmOperationsDirectory() ??
+      list.find((project) => isUlmOperationsDirectory(project.worktree))?.worktree ??
+      (isUlmOperationsDirectory(currentDir()) ? currentDir() : undefined) ??
+      list[0]?.worktree
+    const active = currentDir() || operationDir || ""
+    const chatDir = operationDir || active
+    const operationFilesDir = createMemo(() => {
+      const match = location.pathname.match(/\/operations\/([^/]+)/)
+      if (match?.[1] && operationDir) {
+        const root =
+          operationDir.endsWith("/.ulmcode/operations") || operationDir.endsWith("/operations")
+            ? operationDir
+            : operationDir.endsWith("/packages/opencode")
+              ? `${operationDir.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
+              : operationDir.endsWith("/opencode")
+                ? `${operationDir}/.ulmcode/operations`
+                : operationDir
+        return `${root}/${decodeURIComponent(match[1])}`
+      }
+      const dir = operationDir
+      if (!dir) return undefined
+      if (dir.endsWith("/packages/opencode")) return `${dir.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
+      if (dir.endsWith("/opencode")) return `${dir}/.ulmcode/operations`
+      if (isUlmOperationsDirectory(dir)) return `${dir}/.ulmcode/operations`
+      return dir
+    })
+    const railClass =
+      "flex size-11 items-center justify-center rounded-[9px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+    const selectedClass = "border-icon-strong-base bg-surface-base-active text-text-strong"
+    const idleClass =
+      "border-border-weaker-base bg-background-base text-text-base hover:border-border-weak-base hover:bg-surface-base-hover"
+    const navItem = (
+      href: string,
+      icon: IconProps["name"],
+      activeIcon: IconProps["name"],
+      title: string,
+      selected: boolean,
+    ) => (
+      <Tooltip placement="right" value={title}>
+        <button
+          type="button"
+          aria-label={title}
+          class={railClass}
+          classList={{
+            [selectedClass]: selected,
+            [idleClass]: !selected,
+          }}
+          onClick={() => navigateWithSidebarReset(href)}
+        >
+          <Icon name={selected ? activeIcon : icon} />
+        </button>
+      </Tooltip>
+    )
+    const actionItem = (
+      icon: IconProps["name"],
+      activeIcon: IconProps["name"],
+      title: string,
+      onClick: () => void,
+      selected = false,
+      disabled = false,
+    ) => (
+      <Tooltip placement="right" value={title}>
+        <button
+          type="button"
+          aria-label={title}
+          class={railClass}
+          classList={{
+            [selectedClass]: selected,
+            [idleClass]: !selected,
+          }}
+          disabled={disabled}
+          onClick={onClick}
+        >
+          <Icon name={selected ? activeIcon : icon} />
+        </button>
+      </Tooltip>
+    )
+    const openDirectory = (directory: string | undefined, label: string) => {
+      if (!directory || !platform.openPath) return
+      platform
+        .openPath(directory)
+        .then(() => undefined)
+        .catch((err: unknown) =>
+          showToast({
+            variant: "error",
+            title: `Couldn't open ${label}`,
+            description: errorMessage(err, "Open request failed"),
+          }),
+        )
+    }
+    const showTree = () => layout.fileTree.opened()
+    return () => (
+      <div class="h-full w-full overflow-y-auto px-2 py-3">
+        <div class="flex flex-col items-center gap-2">
+          {navItem(
+            `/${base64Encode(chatDir)}/session`,
+            "speech-bubble",
+            "speech-bubble",
+            "Chat workspace",
+            location.pathname.includes("/session"),
+          )}
+          {navItem(
+            `/${base64Encode(chatDir)}/operations`,
+            "status",
+            "status-active",
+            "Operation control",
+            location.pathname.includes("/operations"),
+          )}
+          {actionItem(
+            "file-tree",
+            "file-tree-active",
+            showTree() ? "Hide engagement workspace" : "Show engagement workspace",
+            () => {
+              if (showTree()) {
+                layout.fileTree.close()
+                return
+              }
+              settings.general.setShowFileTree(true)
+              layout.fileTree.open()
+              if (!location.pathname.includes("/session")) navigateWithSidebarReset(`/${base64Encode(chatDir)}/session`)
+            },
+            showTree(),
+          )}
+          <div class="my-1 h-px w-8 bg-border-weaker-base" />
+          {actionItem(
+            "folder",
+            "folder",
+            "Open operation files",
+            () => openDirectory(operationFilesDir(), "Operation files"),
+            false,
+            !operationFilesDir() || !platform.openPath,
+          )}
+          {navItem(
+            `/${base64Encode(chatDir)}/deliverables`,
+            "archive",
+            "archive",
+            "Reports",
+            location.pathname.includes("/deliverables"),
+          )}
+        </div>
+      </div>
+    )
+  })
+  const openNewChatFromSidebar = () => {
+    const directory = currentDir() || currentProject()?.worktree || projects()[0]?.worktree
+    if (!directory) {
+      void chooseProject()
+      return
+    }
+    navigateWithSidebarReset(`/${base64Encode(directory)}/session`)
+  }
   const sidebarContent = (mobile?: boolean) => (
     <SidebarContent
       mobile={mobile}
@@ -2337,10 +2563,11 @@ export default function Layout(props: ParentProps) {
       handleDragStart={handleDragStart}
       handleDragEnd={handleDragEnd}
       handleDragOver={handleDragOver}
-      openProjectLabel={language.t("command.project.open")}
-      openProjectKeybind={() => command.keybind("project.open")}
-      onOpenProject={chooseProject}
+      openProjectLabel="New chat"
+      openProjectKeybind={() => command.keybind("session.new")}
+      onOpenProject={openNewChatFromSidebar}
       renderProjectOverlay={projectOverlay}
+      renderRailNav={ulmRailNav()}
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={openSettings}
@@ -2497,7 +2724,7 @@ export default function Layout(props: ParentProps) {
             </div>
           </div>
         </div>
-        {import.meta.env.DEV && <DebugBar />}
+        {import.meta.env.DEV && platform.platform !== "desktop" && <DebugBar />}
       </div>
       <Toast.Region />
     </div>

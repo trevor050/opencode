@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process"
+import { readdir, readFile, stat } from "node:fs/promises"
+import nodePath from "node:path"
 import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 
@@ -18,6 +20,46 @@ const pickerFilters = (ext?: string[]) => {
   return [{ name: "Files", extensions: ext }]
 }
 
+async function resolveUlmOperationsRoot(directory: string) {
+  let current = nodePath.resolve(directory)
+  while (true) {
+    const candidate = nodePath.join(current, ".ulmcode", "operations")
+    try {
+      const info = await stat(candidate)
+      if (info.isDirectory()) return candidate
+    } catch {
+      // Keep walking upward until the workspace root is found or the filesystem root is reached.
+    }
+    const parent = nodePath.dirname(current)
+    if (parent === current) return nodePath.resolve(directory)
+    current = parent
+  }
+}
+
+function artifactKind(file: string) {
+  const ext = nodePath.extname(file).toLowerCase()
+  if (ext === ".pdf") return "pdf" as const
+  if (ext === ".html" || ext === ".htm") return "html" as const
+  if (ext === ".json" || ext === ".jsonl") return "json" as const
+  if (ext === ".md" || ext === ".markdown") return "markdown" as const
+  if (ext === ".txt" || ext === ".log" || ext === ".csv") return "text" as const
+  return "unknown" as const
+}
+
+async function listArtifactFiles(root: string, dir = root, depth = 0): Promise<string[]> {
+  if (depth > 5) return []
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const absolute = nodePath.join(dir, entry.name)
+      if (entry.isDirectory()) return listArtifactFiles(root, absolute, depth + 1)
+      if (!entry.isFile()) return []
+      return [nodePath.relative(root, absolute)]
+    }),
+  )
+  return files.flat()
+}
+
 type Deps = {
   killSidecar: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
@@ -25,6 +67,7 @@ type Deps = {
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
+  getUlmOperationsDirectory: () => Promise<string> | string
   getWslConfig: () => Promise<WslConfig>
   setWslConfig: (config: WslConfig) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
@@ -52,6 +95,47 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
+  ipcMain.handle("get-ulm-operations-directory", () => deps.getUlmOperationsDirectory())
+  ipcMain.handle("list-ulm-artifacts", async (_event: IpcMainInvokeEvent, operationRoot: string) => {
+    const operationsDir = await resolveUlmOperationsRoot(await deps.getUlmOperationsDirectory())
+    const resolvedRoot = nodePath.resolve(operationRoot)
+    if (!resolvedRoot.startsWith(`${operationsDir}${nodePath.sep}`)) {
+      throw new Error("Operation root is outside the ULM operations directory")
+    }
+    const files = await listArtifactFiles(resolvedRoot)
+    const artifacts = await Promise.all(
+      files
+        .filter((file) => !file.includes(`${nodePath.sep}.`))
+        .map(async (file) => {
+          const path = nodePath.join(resolvedRoot, file)
+          const info = await stat(path)
+          return {
+            file,
+            kind: artifactKind(file),
+            exists: true,
+            path,
+            size: info.size,
+            updatedAt: info.mtime.toISOString(),
+          }
+        }),
+    )
+    return artifacts.sort((a, b) => a.file.localeCompare(b.file))
+  })
+  ipcMain.handle("read-ulm-text-artifact", async (_event: IpcMainInvokeEvent, filePath: string) => {
+    const operationsDir = await resolveUlmOperationsRoot(await deps.getUlmOperationsDirectory())
+    const resolved = nodePath.resolve(filePath)
+    if (!resolved.startsWith(`${operationsDir}${nodePath.sep}`)) {
+      throw new Error("Artifact is outside the ULM operations directory")
+    }
+    const ext = nodePath.extname(resolved).toLowerCase()
+    if (![".html", ".json", ".md", ".txt"].includes(ext)) {
+      throw new Error("Artifact type is not previewable as text")
+    }
+    const info = await stat(resolved)
+    if (!info.isFile()) throw new Error("Artifact is not a file")
+    if (info.size > 5 * 1024 * 1024) throw new Error("Artifact is too large to preview")
+    return readFile(resolved, "utf8")
+  })
   ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
   ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())

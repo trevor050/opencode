@@ -5,7 +5,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { A, useParams } from "@solidjs/router"
+import { A, useNavigate, useParams } from "@solidjs/router"
 import { type Accessor, createMemo, For, type JSX, Match, Show, Switch } from "solid-js"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
@@ -14,10 +14,21 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionTitle } from "@/utils/session-title"
+import { isUlmDirectory, ulmWorkspaceLabel } from "@/utils/ulm-workspace"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { childSessionOnPath, hasProjectPermissions } from "./helpers"
+import { childSessionOnPath, hasProjectPermissions, sessionHref } from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
+
+function timeAgo(value: number | undefined) {
+  if (!value) return "unknown"
+  const minutes = Math.max(0, Math.floor((Date.now() - value) / 60_000))
+  if (minutes < 1) return "now"
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
+}
 
 export function getProjectAvatarSource(id?: string, icon?: { color?: string; url?: string; override?: string }) {
   if (id === OPENCODE_PROJECT_ID) return "https://opencode.ai/favicon.svg"
@@ -43,18 +54,32 @@ export const ProjectIcon = (props: { project: LocalProject; class?: string; noti
   )
   const notify = createMemo(() => props.notify && (hasPermissions() || unseenCount() > 0))
   const name = createMemo(() => props.project.name || getFilename(props.project.worktree))
+  const ulmProject = createMemo(() => isUlmDirectory(props.project.worktree))
+  const ulmLabel = createMemo(() => ulmWorkspaceLabel(props.project.worktree) ?? "ULM")
 
   return (
     <div class={`relative size-8 shrink-0 rounded ${props.class ?? ""}`}>
-      <div class="size-full rounded overflow-clip">
-        <Avatar
-          fallback={name()}
-          src={getProjectAvatarSource(props.project.id, props.project.icon)}
-          {...getAvatarColors(props.project.icon?.color)}
-          class="size-full rounded"
+      <Show
+        when={ulmProject()}
+        fallback={
+          <div class="size-full rounded overflow-clip">
+            <Avatar
+              fallback={name()}
+              src={getProjectAvatarSource(props.project.id, props.project.icon)}
+              {...getAvatarColors(props.project.icon?.color)}
+              class="size-full rounded"
+              classList={{ "badge-mask": notify() }}
+            />
+          </div>
+        }
+      >
+        <div
+          class="flex size-full items-center justify-center rounded-[7px] border border-border-weak-base bg-background-stronger text-[10px] font-semibold tracking-normal text-text-strong"
           classList={{ "badge-mask": notify() }}
-        />
-      </div>
+        >
+          {ulmLabel()}
+        </div>
+      </Show>
       <Show when={notify()}>
         <div
           classList={{
@@ -100,42 +125,101 @@ const SessionRow = (props: {
   warmPress: () => void
   warmFocus: () => void
 }): JSX.Element => {
-  const title = () => sessionTitle(props.session.title)
+  const navigate = useNavigate()
+  const title = () => sessionTitle(props.session.title) ?? "Untitled session"
+  const ulmSession = createMemo(() => isUlmDirectory(props.session.directory))
+  const href = createMemo(() => sessionHref(props.session, props.slug))
+  const age = createMemo(() => timeAgo(props.session.time.updated ?? props.session.time.created))
+  const state = createMemo(() => {
+    if (props.hasPermissions()) return "gate"
+    if (props.hasError()) return "error"
+    if (props.isWorking()) return "running"
+    if (props.unseenCount() > 0) return "new"
+    return "lane"
+  })
+  const meta = createMemo(() => {
+    if (props.hasPermissions()) return `approval gate · ${age()}`
+    if (props.hasError()) return `error · ${age()}`
+    if (props.isWorking()) return `running · ${age()}`
+    if (props.unseenCount() > 0) return `new activity · ${age()}`
+    return undefined
+  })
 
   return (
-    <A
-      href={`/${props.slug}/session/${props.session.id}`}
-      class={`flex items-center gap-2 min-w-0 w-full text-left focus:outline-none ${props.dense ? "py-0.5" : "py-1"}`}
+    <button
+      type="button"
+      class={`min-w-0 w-full text-left focus:outline-none ${
+        ulmSession()
+          ? "rounded-[7px] border border-transparent px-2 py-2 transition-colors hover:border-border-weaker-base hover:bg-surface-raised-base-hover focus-visible:border-border-weak-base"
+          : `flex items-center gap-2 ${props.dense ? "py-0.5" : "py-1"}`
+      }`}
       onPointerDown={props.warmPress}
       onFocus={props.warmFocus}
       onClick={() => {
+        navigate(href())
         if (props.sidebarOpened()) return
         props.clearHoverProjectSoon()
       }}
     >
-      <Show when={props.isWorking() || props.hasPermissions() || props.hasError() || props.unseenCount() > 0}>
-        <div
-          class="shrink-0 size-6 flex items-center justify-center"
-          style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
-        >
-          <Switch>
-            <Match when={props.isWorking()}>
-              <Spinner class="size-[15px]" />
-            </Match>
-            <Match when={props.hasPermissions()}>
-              <div class="size-1.5 rounded-full bg-surface-warning-strong" />
-            </Match>
-            <Match when={props.hasError()}>
-              <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
-            </Match>
-            <Match when={props.unseenCount() > 0}>
-              <div class="size-1.5 rounded-full bg-text-interactive-base" />
-            </Match>
-          </Switch>
-        </div>
+      <Show
+        when={ulmSession()}
+        fallback={
+          <>
+            <Show when={props.isWorking() || props.hasPermissions() || props.hasError() || props.unseenCount() > 0}>
+              <div
+                class="shrink-0 size-6 flex items-center justify-center"
+                style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
+              >
+                <Switch>
+                  <Match when={props.isWorking()}>
+                    <Spinner class="size-[15px]" />
+                  </Match>
+                  <Match when={props.hasPermissions()}>
+                    <div class="size-1.5 rounded-full bg-surface-warning-strong" />
+                  </Match>
+                  <Match when={props.hasError()}>
+                    <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
+                  </Match>
+                  <Match when={props.unseenCount() > 0}>
+                    <div class="size-1.5 rounded-full bg-text-interactive-base" />
+                  </Match>
+                </Switch>
+              </div>
+            </Show>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-14-regular text-text-strong">{title()}</span>
+            </span>
+          </>
+        }
+      >
+        <span class="block min-w-0">
+          <span class="flex min-w-0 items-start justify-between gap-2">
+            <span class="min-w-0 truncate text-13-medium leading-5 text-text-strong">{title()}</span>
+            <span class="shrink-0 text-10-medium text-text-disabled">{age()}</span>
+          </span>
+          <span class="mt-1 flex min-w-0 items-center gap-1.5">
+            <Show when={state() !== "lane"}>
+              <span
+                class="rounded-[4px] border border-border-weaker-base px-1 text-10-medium uppercase text-text-weak"
+                classList={{
+                  "border-[color-mix(in_srgb,var(--border-weak-base)_70%,#d89b1d)] text-text-strong":
+                    state() === "gate",
+                  "border-[color-mix(in_srgb,var(--border-weak-base)_68%,#d84f45)] text-text-strong":
+                    state() === "error",
+                  "border-[color-mix(in_srgb,var(--border-weak-base)_75%,#3882d8)] text-text-strong":
+                    state() === "running",
+                }}
+              >
+                {state()}
+              </span>
+            </Show>
+            <Show when={meta()}>
+              {(value) => <span class="min-w-0 truncate text-11-regular text-text-weak">{value()}</span>}
+            </Show>
+          </span>
+        </span>
       </Show>
-      <span class="text-14-regular text-text-strong min-w-0 flex-1 truncate">{title()}</span>
-    </A>
+    </button>
   )
 }
 

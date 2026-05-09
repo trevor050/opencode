@@ -1,6 +1,7 @@
 import { createMemo, For, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { A } from "@solidjs/router"
 import { Button } from "@opencode-ai/ui/button"
 import { ContextMenu } from "@opencode-ai/ui/context-menu"
 import { HoverCard } from "@opencode-ai/ui/hover-card"
@@ -12,6 +13,7 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { ProjectIcon, SessionItem, type SessionItemProps } from "./sidebar-items"
 import { displayName, sortedRootSessions } from "./helpers"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 export type ProjectSidebarContext = {
   currentDir: Accessor<string>
@@ -83,6 +85,56 @@ const ProjectTile = (props: {
       .dirs()
       .filter((directory) => notification.project.unseenCount(directory) > 0)
       .forEach((directory) => notification.project.markViewed(directory))
+  const selectUlmProject = (event: Pick<MouseEvent | PointerEvent, "button" | "ctrlKey" | "preventDefault" | "stopPropagation">) => {
+    if (event.button !== 0 || event.ctrlKey) return false
+    if (!isUlmDirectory(props.project.worktree)) return false
+    props.setOpen(false)
+    props.setSuppressHover(true)
+    event.preventDefault()
+    event.stopPropagation()
+    if (props.selected()) {
+      layout.sidebar.toggle()
+      return true
+    }
+    props.navigateToProject(props.project.worktree)
+    return true
+  }
+  const tileClass = createMemo(() => ({
+    "flex items-center justify-center size-10 p-1 rounded-lg overflow-hidden transition-colors cursor-default": true,
+    "bg-transparent border-2 border-icon-strong-base hover:bg-surface-base-hover": props.selected(),
+    "bg-transparent border border-transparent hover:bg-surface-base-hover hover:border-border-weak-base":
+      !props.selected() && !props.active(),
+    "bg-surface-base-hover border border-border-weak-base": !props.selected() && props.active(),
+  }))
+
+  if (isUlmDirectory(props.project.worktree)) {
+    return (
+      <A
+        href={`/${base64Encode(props.project.worktree)}/session`}
+        aria-label={displayName(props.project)}
+        data-action="project-switch"
+        data-project={base64Encode(props.project.worktree)}
+        classList={tileClass()}
+        onMouseEnter={(event: MouseEvent) => {
+          if (!props.overlay()) return
+          if (props.suppressHover()) return
+          props.onProjectMouseEnter(props.project.worktree, event)
+        }}
+        onMouseLeave={() => {
+          if (props.suppressHover()) props.setSuppressHover(false)
+          if (!props.overlay()) return
+          props.onProjectMouseLeave(props.project.worktree)
+        }}
+        onFocus={() => {
+          if (!props.overlay()) return
+          if (props.suppressHover()) return
+          props.onProjectFocus(props.project.worktree)
+        }}
+      >
+        <ProjectIcon project={props.project} notify />
+      </A>
+    )
+  }
 
   return (
     <ContextMenu
@@ -99,13 +151,7 @@ const ProjectTile = (props: {
         aria-label={displayName(props.project)}
         data-action="project-switch"
         data-project={base64Encode(props.project.worktree)}
-        classList={{
-          "flex items-center justify-center size-10 p-1 rounded-lg overflow-hidden transition-colors cursor-default": true,
-          "bg-transparent border-2 border-icon-strong-base hover:bg-surface-base-hover": props.selected(),
-          "bg-transparent border border-transparent hover:bg-surface-base-hover hover:border-border-weak-base":
-            !props.selected() && !props.active(),
-          "bg-surface-base-hover border border-border-weak-base": !props.selected() && props.active(),
-        }}
+        classList={tileClass()}
         onPointerDown={(event) => {
           if (event.button === 0 && !event.ctrlKey) {
             props.setOpen(false)
@@ -117,6 +163,12 @@ const ProjectTile = (props: {
           props.setOpen(false)
           props.setSuppressHover(true)
           event.preventDefault()
+        }}
+        onPointerUp={(event: PointerEvent) => {
+          selectUlmProject(event)
+        }}
+        onMouseUp={(event: MouseEvent) => {
+          selectUlmProject(event)
         }}
         onMouseEnter={(event: MouseEvent) => {
           if (!props.overlay()) return
@@ -330,6 +382,10 @@ export const SortableProject = (props: {
       language={language}
     />
   )
+
+  if (isUlmDirectory(props.project.worktree)) {
+    return <div>{tile()}</div>
+  }
 
   return (
     // @ts-ignore

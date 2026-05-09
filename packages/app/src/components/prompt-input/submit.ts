@@ -14,6 +14,7 @@ import { type ContextItem, type ImageAttachmentPart, type Prompt, usePrompt } fr
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
@@ -22,6 +23,67 @@ import { formatServerError } from "@/utils/server-errors"
 type PendingPrompt = {
   abort: AbortController
   cleanup: VoidFunction
+}
+
+const ULM_AUTOMATION_TOOLS = [
+  "attack_chain",
+  "browser_evidence",
+  "command_supervise",
+  "district_profile",
+  "evidence_normalize",
+  "evidence_record",
+  "finding_record",
+  "identity_graph",
+  "operation_alert",
+  "operation_audit",
+  "operation_checkpoint",
+  "operation_credentials",
+  "operation_goal",
+  "operation_governor",
+  "operation_memory",
+  "operation_next",
+  "operation_plan",
+  "operation_queue",
+  "operation_queue_next",
+  "operation_recover",
+  "operation_resume",
+  "operation_run",
+  "operation_schedule",
+  "operation_stage_gate",
+  "operation_status",
+  "operation_supervise",
+  "operation_template",
+  "person_profile",
+  "report_lint",
+  "report_outline",
+  "report_render",
+  "runtime_daemon",
+  "runtime_scheduler",
+  "runtime_summary",
+  "skill",
+  "task",
+  "task_list",
+  "task_restart",
+  "task_status",
+  "tool_acquire",
+  "tool_inventory",
+] as const
+
+export function ulmAutomationToolOverrides(directory: string, agent: string) {
+  if (!isUlmDirectory(directory)) return undefined
+  if (agent === "pentest") return Object.fromEntries(ULM_AUTOMATION_TOOLS.map((tool) => [tool, true]))
+  if (agent === "action") return { "*": false }
+  return undefined
+}
+
+export function ulmActionSystemOverride(directory: string, agent: string) {
+  if (!isUlmDirectory(directory) || agent !== "action") return undefined
+  return [
+    "ULMCode Action chat override:",
+    "- This is plain operator chat, not durable pentest automation.",
+    "- Do not call, print, simulate, or request ULM operation tools, supervisor tools, skills, shell commands, file tools, or XML-like tool tags.",
+    "- Answer only the user's requested message unless they explicitly choose a pentest operation command.",
+  ].join("\n")
 }
 
 const pending = new Map<string, PendingPrompt>()
@@ -34,6 +96,8 @@ export type FollowupDraft = {
   agent: string
   model: { providerID: string; modelID: string }
   variant?: string
+  tools?: Record<string, boolean>
+  system?: string
 }
 
 type FollowupSendInput = {
@@ -159,6 +223,8 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       messageID,
       parts: requestParts,
       variant: input.draft.variant,
+      tools: input.draft.tools,
+      system: input.draft.system,
     })
     return true
   } catch (err) {
@@ -229,6 +295,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     globalSync.todo.set(sessionID, [])
     const [, setStore] = globalSync.child(sdk.directory)
     setStore("todo", sessionID, [])
+    const setIdle = () => setStore("session_status", sessionID, { type: "idle" })
 
     input.onAbort?.()
 
@@ -237,6 +304,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       queued.abort.abort()
       queued.cleanup()
       pending.delete(sessionID)
+      setIdle()
       return Promise.resolve()
     }
     return sdk.client.session
@@ -244,6 +312,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         sessionID,
       })
       .catch(() => {})
+      .finally(setIdle)
   }
 
   const restoreCommentItems = (items: CommentItem[]) => {
@@ -403,6 +472,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
+      tools: ulmAutomationToolOverrides(sessionDirectory, agent),
+      system: ulmActionSystemOverride(sessionDirectory, agent),
     }
 
     const clearInput = () => {

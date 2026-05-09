@@ -7,6 +7,7 @@ import { useLanguage } from "@/context/language"
 import { LocalProvider } from "@/context/local"
 import { SDKProvider } from "@/context/sdk"
 import { SyncProvider, useSync } from "@/context/sync"
+import { UlmProvider } from "@/context/ulm"
 import { decode64 } from "@/utils/base64"
 
 function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
@@ -73,7 +74,9 @@ export default function Layout(props: ParentProps) {
       {(resolved) => (
         <SDKProvider directory={() => resolved}>
           <SyncProvider>
-            <DirectoryDataProvider directory={resolved}>{props.children}</DirectoryDataProvider>
+            <UlmProvider>
+              <DirectoryDataProvider directory={resolved}>{props.children}</DirectoryDataProvider>
+            </UlmProvider>
           </SyncProvider>
         </SDKProvider>
       )}

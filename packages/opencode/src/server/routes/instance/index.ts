@@ -38,6 +38,7 @@ import { PtyPaths } from "./httpapi/groups/pty"
 import { SessionPaths } from "./httpapi/groups/session"
 import { SyncPaths } from "./httpapi/groups/sync"
 import { TuiPaths } from "./httpapi/groups/tui"
+import { UlmPaths } from "./httpapi/groups/ulm"
 import { WorkspacePaths } from "./httpapi/groups/workspace"
 import type { CorsOptions } from "@/server/cors"
 import { credentialVaultHtml } from "@/server/shared/ulm-credential-vault"
@@ -158,7 +159,42 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket, opts?: CorsOptions): H
     app.get(WorkspacePaths.status, (c) => handler(c.req.raw, context))
     app.delete(WorkspacePaths.remove, (c) => handler(c.req.raw, context))
     app.post(WorkspacePaths.warp, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.list, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.template, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.status, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.resume, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.audit, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.audit, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.recover, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.daemonStart, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.daemonStop, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.daemonStatus, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.finalArtifacts, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.finalArtifact, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.finalArtifactOpen, (c) => handler(c.req.raw, context))
+    app.get(UlmPaths.credentials, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.credentials, (c) => handler(c.req.raw, context))
+    app.delete(UlmPaths.credential, (c) => handler(c.req.raw, context))
+    app.post(UlmPaths.materializeCredentials, (c) => handler(c.req.raw, context))
   }
+
+  app.get(UlmPaths.list, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.template, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.status, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.resume, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.audit, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.audit, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.recover, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.daemonStart, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.daemonStop, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.daemonStatus, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.finalArtifacts, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.finalArtifact, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.finalArtifactOpen, (c) => handler(c.req.raw, context))
+  app.get(UlmPaths.credentials, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.credentials, (c) => handler(c.req.raw, context))
+  app.delete(UlmPaths.credential, (c) => handler(c.req.raw, context))
+  app.post(UlmPaths.materializeCredentials, (c) => handler(c.req.raw, context))
 
   return app
     .get("/ulm/credentials", (c) => c.html(credentialVaultHtml()))

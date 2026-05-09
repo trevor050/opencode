@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { Prompt } from "@/context/prompt"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
+let ulmAutomationToolOverrides: typeof import("./submit").ulmAutomationToolOverrides
 
 const createdClients: string[] = []
 const createdSessions: string[] = []
@@ -19,13 +20,18 @@ const optimisticSeeded: boolean[] = []
 const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentShell: string[] = []
+const sentPrompts: Array<{ directory: string; tools?: Record<string, boolean>; system?: string }> = []
 const syncedDirectories: string[] = []
+const statusWrites: Array<{ directory: string; sessionID: string; status: string }> = []
 
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
 let variant: string | undefined
+let agentName = "agent"
+let ulmDirectory = false
 
 const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
+const waitForPromptSend = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 const clientFor = (directory: string) => {
   createdClients.push(directory)
@@ -45,7 +51,10 @@ const clientFor = (directory: string) => {
         return { data: undefined }
       },
       prompt: async () => ({ data: undefined }),
-      promptAsync: async () => ({ data: undefined }),
+      promptAsync: async (input?: { tools?: Record<string, boolean>; system?: string }) => {
+        sentPrompts.push({ directory, tools: input?.tools, system: input?.system })
+        return { data: undefined }
+      },
       command: async () => ({ data: undefined }),
       abort: async () => ({ data: undefined }),
     },
@@ -85,7 +94,7 @@ beforeAll(async () => {
         variant: { current: () => variant },
       },
       agent: {
-        current: () => ({ name: "agent" }),
+        current: () => ({ name: agentName }),
       },
       session: {
         promote(directory: string, sessionID: string) {
@@ -164,12 +173,21 @@ beforeAll(async () => {
 
   mock.module("@/context/global-sync", () => ({
     useGlobalSync: () => ({
+      todo: { set: () => undefined },
       child: (directory: string) => {
         syncedDirectories.push(directory)
         storedSessions[directory] ??= []
         return [
           { session: storedSessions[directory] },
           (...args: unknown[]) => {
+            if (args[0] === "session_status") {
+              statusWrites.push({
+                directory,
+                sessionID: String(args[1]),
+                status: String((args[2] as { type?: string })?.type),
+              })
+              return
+            }
             if (args[0] !== "session") return
             const next = args[1]
             if (typeof next === "function") {
@@ -191,6 +209,10 @@ beforeAll(async () => {
     }),
   }))
 
+  mock.module("@/utils/ulm-workspace", () => ({
+    isUlmDirectory: (directory: string) => ulmDirectory || directory.includes("/ULMcode/"),
+  }))
+
   mock.module("@/context/language", () => ({
     useLanguage: () => ({
       t: (key: string) => key,
@@ -199,6 +221,7 @@ beforeAll(async () => {
 
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
+  ulmAutomationToolOverrides = mod.ulmAutomationToolOverrides
 })
 
 beforeEach(() => {
@@ -210,9 +233,13 @@ beforeEach(() => {
   promoted.length = 0
   params = {}
   sentShell.length = 0
+  sentPrompts.length = 0
   syncedDirectories.length = 0
+  statusWrites.length = 0
   selected = "/repo/worktree-a"
   variant = undefined
+  agentName = "agent"
+  ulmDirectory = false
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
 
@@ -341,5 +368,98 @@ describe("prompt submit worktree selection", () => {
 
     expect(storedSessions["/repo/worktree-a"]).toEqual([{ id: "session-1", title: "New session 1" }])
     expect(optimisticSeeded).toEqual([true])
+  })
+
+  test("marks the session idle after aborting a running prompt", async () => {
+    params = { id: "session-1" }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.abort()
+
+    expect(statusWrites).toContainEqual({ directory: "/repo/main", sessionID: "session-1", status: "idle" })
+  })
+
+  test("disables ULM automation tools for action prompts", async () => {
+    params = { id: "session-1" }
+    agentName = "action"
+    ulmDirectory = true
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await waitForPromptSend()
+
+    expect(sentPrompts[0]?.tools).toEqual({ "*": false })
+    expect(sentPrompts[0]?.system).toContain("plain operator chat")
+    expect(sentPrompts[0]?.system).toContain("Do not call, print, simulate, or request ULM operation tools")
+  })
+
+  test("allows ULM automation tools for pentest prompts", async () => {
+    params = { id: "session-1" }
+    agentName = "pentest"
+    ulmDirectory = true
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await waitForPromptSend()
+
+    expect(sentPrompts[0]?.tools?.operation_run).toBe(true)
+    expect(sentPrompts[0]?.tools?.operation_status).toBe(true)
+    expect(sentPrompts[0]?.tools?.skill).toBe(true)
+    expect(sentPrompts[0]?.tools?.task_status).toBe(true)
+  })
+})
+
+describe("ulmAutomationToolOverrides", () => {
+  test("leaves non-ULM directories alone", () => {
+    ulmDirectory = false
+    expect(ulmAutomationToolOverrides("/repo/main", "action")).toBeUndefined()
   })
 })

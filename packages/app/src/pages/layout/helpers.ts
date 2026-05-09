@@ -1,6 +1,7 @@
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import { pathKey } from "@/utils/path-key"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 type SessionStore = {
   session?: Session[]
@@ -51,6 +52,9 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
     id = session.parentID
   }
 }
+
+export const sessionHref = (session: Pick<Session, "directory" | "id">, slug: string) =>
+  `/${slug}/session/${session.id}`
 
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree)

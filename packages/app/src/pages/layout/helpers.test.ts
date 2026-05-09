@@ -14,6 +14,7 @@ import {
   errorMessage,
   hasProjectPermissions,
   latestRootSession,
+  sessionHref,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
 
@@ -99,6 +100,18 @@ describe("layout deep links", () => {
 
     expect(drainPendingDeepLinks(target)).toEqual(["opencode://open-project?directory=/a"])
     expect(drainPendingDeepLinks(target)).toEqual([])
+  })
+})
+
+describe("sessionHref", () => {
+  test("routes ULM sessions to their chat", () => {
+    expect(
+      sessionHref(session({ id: "ses_1", directory: "/Users/trevorrosato/codeprojects/ULMcode/opencode" }), "abc"),
+    ).toBe("/abc/session/ses_1")
+  })
+
+  test("routes normal sessions to chat", () => {
+    expect(sessionHref(session({ id: "ses_1", directory: "/tmp/project" }), "abc")).toBe("/abc/session/ses_1")
   })
 })
 

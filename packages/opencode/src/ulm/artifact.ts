@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { existsSync } from "fs"
 import path from "path"
 import { Bus } from "@/bus"
 import { OperationEvent } from "./event"
@@ -21,6 +22,7 @@ export const FINAL_PACKAGE_FILES = [
   "executive-summary.md",
   "technical-appendix.md",
   "runtime-summary.md",
+  "README.md",
   "manifest.json",
 ] as const
 
@@ -745,7 +747,15 @@ export function slug(input: string, fallback: string) {
 }
 
 export function operationsRoot(worktree: string) {
-  return path.join(worktree, ".ulmcode", "operations")
+  let current = path.resolve(worktree)
+  while (true) {
+    const candidate = path.join(current, ".ulmcode", "operations")
+    if (existsSync(candidate)) return candidate
+
+    const parent = path.dirname(current)
+    if (parent === current) return path.join(path.resolve(worktree), ".ulmcode", "operations")
+    current = parent
+  }
 }
 
 export function operationPath(worktree: string, operationID: string) {
@@ -3251,6 +3261,43 @@ export async function listOperationStatuses(
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b))
   return Promise.all(operationIDs.map((operationID) => readOperationStatus(worktree, operationID, options)))
+}
+
+export async function closeOperationStatuses(worktree: string, input: { operationIDs?: readonly string[] } = {}) {
+  const operations = await listOperationStatuses(worktree, { eventLimit: 0 })
+  const allowed = input.operationIDs ? new Set(input.operationIDs.map((id) => slug(id, "operation"))) : undefined
+  const targets = operations.filter(
+    (item) => item.operation && item.operation.status !== "complete" && (!allowed || allowed.has(item.operationID)),
+  )
+  const now = new Date().toISOString()
+  await Promise.all(
+    targets.map(async (item) => {
+      const root = operationPath(worktree, item.operationID)
+      const record: OperationRecord = {
+        ...item.operation!,
+        status: "complete",
+        activeTasks: [],
+        blockers: [],
+        summary: item.operation!.summary || "Closed from ULMCode Desktop.",
+        time: {
+          created: item.operation!.time.created,
+          updated: now,
+        },
+      }
+      await writeJson(path.join(root, "operation.json"), record)
+      await appendJsonl(path.join(root, "events.jsonl"), { type: "desktop_close", ...record })
+      await fs.writeFile(path.join(root, "status.md"), statusMarkdown(record))
+      await publishOperationUpdated(worktree, {
+        operationID: item.operationID,
+        artifact: "checkpoint",
+        path: path.join(root, "operation.json"),
+      })
+    }),
+  )
+  return {
+    closed: targets.map((item) => item.operationID),
+    remaining: operations.length - targets.length,
+  }
 }
 
 export async function writeRuntimeSummary(worktree: string, input: RuntimeSummaryInput): Promise<RuntimeSummaryResult> {

@@ -60,6 +60,37 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM") {}
 
+const PLAIN_NO_TOOL_SYSTEM =
+  "Plain chat mode: tools are disabled for this turn. Answer only the user's current message directly. Do not infer or continue background tasks, supervisor instructions, tool workflows, or operation state."
+
+export function usesPlainNoToolSystem(input: { userTools?: Record<string, boolean>; userSystem?: string }) {
+  return input.userTools?.["*"] === false
+}
+
+export function buildSystemPrompts(input: {
+  agentPrompt?: string
+  providerPrompt: string[]
+  system: string[]
+  userSystem?: string
+  userTools?: Record<string, boolean>
+}) {
+  if (usesPlainNoToolSystem({ userTools: input.userTools, userSystem: input.userSystem })) {
+    return [input.userSystem || PLAIN_NO_TOOL_SYSTEM]
+  }
+  return [
+    [
+      // use agent prompt otherwise provider prompt
+      ...(input.agentPrompt ? [input.agentPrompt] : input.providerPrompt),
+      // any custom prompt passed into this call
+      ...input.system,
+      // any custom prompt from last user message
+      ...(input.userSystem ? [input.userSystem] : []),
+    ]
+      .filter((x) => x)
+      .join("\n"),
+  ]
+}
+
 const live: Layer.Layer<
   Service,
   never,
@@ -100,26 +131,23 @@ const live: Layer.Layer<
       // TODO: move this to a proper hook
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
-      const system: string[] = []
-      system.push(
-        [
-          // use agent prompt otherwise provider prompt
-          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-          // any custom prompt passed into this call
-          ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
-        ]
-          .filter((x) => x)
-          .join("\n"),
-      )
+      const plainNoToolSystem = usesPlainNoToolSystem({ userTools: input.user.tools, userSystem: input.user.system })
+      const system = buildSystemPrompts({
+        agentPrompt: input.agent.prompt,
+        providerPrompt: SystemPrompt.provider(input.model),
+        system: input.system,
+        userSystem: input.user.system,
+        userTools: input.user.tools,
+      })
 
       const header = system[0]
-      yield* plugin.trigger(
-        "experimental.chat.system.transform",
-        { sessionID: input.sessionID, model: input.model },
-        { system },
-      )
+      if (!plainNoToolSystem) {
+        yield* plugin.trigger(
+          "experimental.chat.system.transform",
+          { sessionID: input.sessionID, model: input.model },
+          { system },
+        )
+      }
       // rejoin to maintain 2-part structure for caching if header unchanged
       if (system.length > 2 && system[0] === header) {
         const rest = system.slice(1)
@@ -481,12 +509,19 @@ export function repairToolCallFailure<T extends { toolName: string; input?: stri
   } as T
 }
 
-function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+export function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
   const disabled = Permission.disabled(
     Object.keys(input.tools),
     Permission.merge(input.agent.permission, input.permission ?? []),
   )
-  return Record.filter(input.tools, (_, k) => input.user.tools?.[k] !== false && !disabled.has(k))
+  const userToolOverrides = input.user.tools ?? {}
+  const defaultAllowed = userToolOverrides["*"] !== false
+  return Record.filter(input.tools, (_, k) => {
+    const userOverride = userToolOverrides[k]
+    if (userOverride === false) return false
+    if (userOverride !== true && !defaultAllowed) return false
+    return !disabled.has(k)
+  })
 }
 
 // Check if messages contain any tool-call content

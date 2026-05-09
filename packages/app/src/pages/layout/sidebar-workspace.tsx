@@ -17,6 +17,7 @@ import { type LocalProject } from "@/context/layout"
 import { loadSessionsQueryKey, useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { pathKey } from "@/utils/path-key"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { sortedRootSessions } from "./helpers"
 import { useIsFetching } from "@tanstack/solid-query"
@@ -243,6 +244,7 @@ const WorkspaceSessionList = (props: {
   hasMore: Accessor<boolean>
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
+  ulmWorkspace?: Accessor<boolean>
 }): JSX.Element => (
   <nav class="flex flex-col gap-1">
     <Show when={props.showNew()}>
@@ -273,19 +275,41 @@ const WorkspaceSessionList = (props: {
       )}
     </For>
     <Show when={props.hasMore()}>
-      <div class="relative w-full py-1">
-        <Button
-          variant="ghost"
-          class="flex w-full text-left justify-start text-14-regular text-text-weak pl-2 pr-10"
-          size="large"
-          onClick={(e: MouseEvent) => {
-            void props.loadMore()
-            ;(e.currentTarget as HTMLButtonElement).blur()
-          }}
-        >
-          {props.language.t("common.loadMore")}
-        </Button>
-      </div>
+      <Show
+        when={props.ulmWorkspace?.()}
+        fallback={
+          <div class="relative w-full py-1">
+            <Button
+              variant="ghost"
+              class="flex w-full text-left justify-start text-14-regular text-text-weak pl-2 pr-10"
+              size="large"
+              onClick={(e: MouseEvent) => {
+                void props.loadMore()
+                ;(e.currentTarget as HTMLButtonElement).blur()
+              }}
+            >
+              {props.language.t("common.loadMore")}
+            </Button>
+          </div>
+        }
+      >
+        <div class="px-2 py-2">
+          <button
+            type="button"
+            class="group flex w-full items-center justify-between gap-3 rounded-[7px] border border-border-weaker-base bg-background-base px-3 py-2 text-left text-12-medium text-text-base transition-colors hover:border-border-weak-base hover:bg-surface-raised-base-hover focus:outline-none focus:ring-1 focus:ring-border-strong"
+            onClick={(e: MouseEvent) => {
+              void props.loadMore()
+              ;(e.currentTarget as HTMLButtonElement).blur()
+            }}
+          >
+            <span class="min-w-0">
+              <span class="block truncate text-12-medium text-text-strong">Load older lanes</span>
+              <span class="mt-0.5 block truncate text-11-regular text-text-weak">Extend assessment history</span>
+            </span>
+            <Icon name="chevron-right" size="small" class="shrink-0 text-icon-weak group-hover:text-icon-base" />
+          </button>
+        </div>
+      </Show>
     </Show>
   </nav>
 )
@@ -308,6 +332,7 @@ export const SortableWorkspace = (props: {
     pendingRename: false,
   })
   const slug = createMemo(() => base64Encode(props.directory))
+  const ulmWorkspace = createMemo(() => isUlmDirectory(props.directory))
   const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
   const local = createMemo(() => props.directory === props.project.worktree)
   const active = createMemo(() => pathKey(props.ctx.currentDir()) === pathKey(props.directory))
@@ -432,6 +457,7 @@ export const SortableWorkspace = (props: {
             hasMore={hasMore}
             loadMore={loadMore}
             language={language}
+            ulmWorkspace={ulmWorkspace}
           />
         </Collapsible.Content>
       </Collapsible>
@@ -452,6 +478,7 @@ export const LocalWorkspace = (props: {
     return { store, setStore }
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
+  const ulmWorkspace = createMemo(() => isUlmDirectory(props.project.worktree))
   const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
   const fetching = useIsFetching(() => ({ queryKey: loadSessionsQueryKey(props.project.worktree) }))
@@ -477,6 +504,7 @@ export const LocalWorkspace = (props: {
         hasMore={hasMore}
         loadMore={loadMore}
         language={language}
+        ulmWorkspace={ulmWorkspace}
       />
     </div>
   )

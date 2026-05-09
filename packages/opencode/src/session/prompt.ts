@@ -1448,6 +1448,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return count
     }
 
+    function stripULMOperationContext(input: string) {
+      return input
+        .replace(/\n?<ulm_operation_context>[\s\S]*?<\/ulm_operation_context>\n?/g, "\n")
+        .replace(/\n?<ulm_operation_plan[\s\S]*?<\/ulm_operation_plan>\n?/g, "\n")
+        .replace(/\n?<ulm_operation_memory[\s\S]*?<\/ulm_operation_memory>\n?/g, "\n")
+    }
+
     const maybeInjectTurnEndContinuation = Effect.fn("SessionPrompt.turnEndSupervisor")(function* (input: {
       sessionID: SessionID
       session: Session.Info
@@ -1455,12 +1462,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       lastAssistantMsg?: MessageV2.WithParts
       messages: MessageV2.WithParts[]
     }) {
+      const freshSession = yield* sessions.get(input.sessionID).pipe(Effect.orElseSucceed(() => input.session))
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext(ctx))
       if (!operation) return false
+      if (input.lastUser.agent === "action") return false
       const continuation = effectiveULMContinuation(operation.goal, yield* Effect.promise(() => readULMConfig(ctx)))
       if (!continuation.turnEndReview) return false
       if (!continuation.enabled) return false
+      if (
+        input.lastUser.tools?.["*"] === false ||
+        freshSession.permission?.some((rule) => rule.permission === "*" && rule.action === "deny")
+      ) {
+        return false
+      }
 
       const review = yield* Effect.tryPromise(() =>
         superviseOperation(operation.worktree, {
@@ -1516,9 +1531,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const slog = elog.with({ sessionID })
         let structured: unknown
         let step = 0
-        const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
+          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
           yield* status.set(sessionID, { type: "busy" })
           yield* slog.info("loop", { step })
 
@@ -1620,6 +1635,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
           msgs = yield* insertReminders({ messages: msgs, agent, session })
+          const sessionDeniesAllTools = session.permission?.some(
+            (rule) => rule.permission === "*" && rule.action === "deny",
+          )
+          const activeULMActionPlainChat =
+            agent.name === "action" && !!(yield* Effect.promise(() => activeOperationForContext(ctx)))
+          const toolDeniedUser: MessageV2.User =
+            lastUser.tools?.["*"] === false || sessionDeniesAllTools || activeULMActionPlainChat
+              ? { ...lastUser, tools: { ...(lastUser.tools ?? {}), "*": false } }
+              : lastUser
 
           const msg: MessageV2.Assistant = {
             id: MessageID.ascending(),
@@ -1651,7 +1675,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agent,
               session,
               model,
-              tools: lastUser.tools,
+              tools: toolDeniedUser.tools,
               processor: handle,
               bypassAgentCheck,
               messages: msgs,
@@ -1693,26 +1717,29 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               model,
               messages: msgs,
             }
-            const preChat = yield* plugin.trigger("pre_chat.messages.transform", transformInput, {
-              messages: structuredClone(msgs),
-            })
-            msgs = preChat.messages
-            const legacyChat = yield* plugin.trigger("experimental.chat.messages.transform", transformInput, {
-              messages: msgs,
-            })
-            msgs = legacyChat.messages
+            if (!LLM.usesPlainNoToolSystem({ userTools: toolDeniedUser.tools, userSystem: toolDeniedUser.system })) {
+              const preChat = yield* plugin.trigger("pre_chat.messages.transform", transformInput, {
+                messages: structuredClone(msgs),
+              })
+              msgs = preChat.messages
+              const legacyChat = yield* plugin.trigger("experimental.chat.messages.transform", transformInput, {
+                messages: msgs,
+              })
+              msgs = legacyChat.messages
+            }
 
-            const [skills, env, instructions, modelMsgs] = yield* Effect.all([
+            const [skills, rawEnv, instructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
+            const env = toolDeniedUser.tools?.["*"] === false ? rawEnv.map(stripULMOperationContext) : rawEnv
             const system = [...env, ...instructions, ...(skills ? [skills] : [])]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
-              user: lastUser,
+              user: toolDeniedUser,
               agent,
               permission: session.permission,
               sessionID,
@@ -1723,6 +1750,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+
+            if (toolDeniedUser.tools?.["*"] === false) {
+              handle.message.finish = handle.message.finish ?? "stop"
+              yield* sessions.updateMessage(handle.message)
+              return "break" as const
+            }
 
             if (structured !== undefined) {
               handle.message.structured = structured

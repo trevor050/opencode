@@ -14,6 +14,7 @@ import {
   onMount,
   untrack,
   createResource,
+  For,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -29,7 +30,7 @@ import { previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@opencode-ai/ui/toast"
 import { checksum } from "@opencode-ai/core/util/encode"
-import { useSearchParams } from "@solidjs/router"
+import { useNavigate, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
@@ -41,6 +42,7 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
+import { useUlm } from "@/context/ulm"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
 import {
@@ -64,6 +66,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { same } from "@/utils/same"
 import { formatServerError } from "@/utils/server-errors"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 const emptyUserMessages: UserMessage[] = []
 type FollowupItem = FollowupDraft & { id: string }
@@ -318,6 +321,101 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
   }
 }
 
+function UlmChatContextBar(props: { onOpenOperations: () => void }) {
+  const ulm = useUlm()
+  const operation = createMemo(() => {
+    const operations = ulm.store.operations
+    return (
+      operations.find((item) => {
+        const status = item.operation?.status
+        return status === "blocked" || status === "running" || status === "planned" || status === "paused"
+      }) ?? operations[0]
+    )
+  })
+  const confidence = createMemo(() => {
+    const item = operation()
+    return item ? ulm.confidence(item) : undefined
+  })
+  const tone = createMemo(() => {
+    const level = confidence()?.level
+    if (level === "blocked") return "border-border-strong bg-surface-raised-base-active text-text-strong"
+    if (level === "attention") return "border-border-weak-base bg-surface-base-active text-text-strong"
+    return "border-border-weak-base bg-surface-panel text-text-base"
+  })
+  const riskTextTone = createMemo(() => {
+    const risk = operation()?.operation?.riskLevel
+    if (risk === "critical" || risk === "high") return "text-text-strong"
+    if (risk === "medium") return "text-text-warning"
+    if (risk === "low") return "text-text-success"
+    return "text-text-weak"
+  })
+  const operationReadout = createMemo(() => {
+    const item = operation()
+    if (!item) return []
+    return [
+      item.operation?.stage ?? "intake",
+      `risk ${item.operation?.riskLevel ?? "unknown"}`,
+      confidence()?.label ?? "status attached",
+      `${item.findings.total} findings`,
+      `${item.evidence.total} evidence`,
+    ]
+  })
+
+  return (
+    <div class="shrink-0 px-4 md:px-6 pt-3">
+      <div class="flex min-h-12 items-center gap-3 rounded-[8px] border border-border-weak-base bg-surface-panel px-3 py-2">
+        <Show
+          when={operation()}
+          fallback={
+            <div class="flex min-w-0 flex-1 items-center gap-2">
+              <div class="text-12-medium text-text-strong">No operation attached yet</div>
+              <div class="text-12-regular text-text-weak truncate">
+                Start from chat, then operation state will track here.
+              </div>
+            </div>
+          }
+        >
+          {(item) => (
+            <>
+              <div class="min-w-0 flex-1">
+                <div class="flex min-w-0 items-center gap-2">
+                  <div class="min-w-0 flex-1 truncate text-12-medium text-text-strong">
+                    {item().operation?.objective || item().goal?.objective || item().operationID}
+                  </div>
+                  <div class={`shrink-0 rounded-[6px] border px-1.5 py-0.5 text-11-medium uppercase ${tone()}`}>
+                    {item().operation?.status ?? item().goal?.status ?? "operation"}
+                  </div>
+                </div>
+                <div class="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-11-regular text-text-weak">
+                  <For each={operationReadout()}>
+                    {(value, index) => (
+                      <>
+                        <span
+                          class={`shrink-0 truncate ${
+                            index() === 1 ? riskTextTone() : index() === 2 ? "text-text-strong" : "text-text-weak"
+                          }`}
+                        >
+                          {value}
+                        </span>
+                        <Show when={index() < operationReadout().length - 1}>
+                          <span class="shrink-0 text-text-disabled">/</span>
+                        </Show>
+                      </>
+                    )}
+                  </For>
+                </div>
+              </div>
+              <Button icon="status" size="small" variant="ghost" onClick={props.onOpenOperations}>
+                Operations
+              </Button>
+            </>
+          )}
+        </Show>
+      </div>
+    </div>
+  )
+}
+
 export default function Page() {
   const globalSync = useGlobalSync()
   const layout = useLayout()
@@ -332,8 +430,10 @@ export default function Page() {
   const prompt = usePrompt()
   const comments = useComments()
   const terminal = useTerminal()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams<{ prompt?: string }>()
   const { params, sessionKey, tabs, view } = useSessionLayout()
+  const ulmWorkspace = createMemo(() => isUlmDirectory(sdk.directory))
 
   createEffect(() => {
     if (!prompt.ready()) return
@@ -400,7 +500,7 @@ export default function Page() {
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const size = createSizing()
-  const desktopReviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
+  const desktopReviewOpen = createMemo(() => !ulmWorkspace() && isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
   const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
   const sessionPanelWidth = createMemo(() => {
@@ -409,6 +509,11 @@ export default function Page() {
     return `calc(100% - ${layout.fileTree.width()}px)`
   })
   const centered = createMemo(() => isDesktop() && !desktopReviewOpen())
+
+  createEffect(() => {
+    if (!ulmWorkspace()) return
+    if (view().reviewPanel.opened()) view().reviewPanel.close()
+  })
 
   function normalizeTab(tab: string) {
     if (!tab.startsWith("file://")) return tab
@@ -428,13 +533,14 @@ export default function Page() {
   }
 
   const openReviewPanel = () => {
+    if (ulmWorkspace()) return
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const isChildSession = createMemo(() => !!info()?.parentID)
   const diffs = createMemo(() => (params.id ? list(sync.data.session_diff[params.id]) : []))
-  const canReview = createMemo(() => !!sync.project)
+  const canReview = createMemo(() => !ulmWorkspace() && !!sync.project)
   const reviewTab = createMemo(() => isDesktop())
   const tabState = createSessionTabs({
     tabs,
@@ -1833,6 +1939,15 @@ export default function Page() {
             width: sessionPanelWidth(),
           }}
         >
+          <Show when={ulmWorkspace() && params.id}>
+            <UlmChatContextBar
+              onOpenOperations={() => {
+                if (!params.dir) return
+                navigate(`/${params.dir}/operations`)
+              }}
+            />
+          </Show>
+
           <div class="flex-1 min-h-0 overflow-hidden">
             <Switch>
               <Match when={params.id}>

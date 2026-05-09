@@ -201,13 +201,22 @@ import type {
   TuiShowToastResponses,
   TuiSubmitPromptResponses,
   UlmOperationAuditResponses,
+  UlmOperationAuditWriteResponses,
   UlmOperationCredentialCreateResponses,
   UlmOperationCredentialDeleteResponses,
   UlmOperationCredentialMaterializeEnvResponses,
   UlmOperationCredentialsResponses,
+  UlmOperationDaemonStartResponses,
+  UlmOperationDaemonStatusResponses,
+  UlmOperationDaemonStopResponses,
+  UlmOperationFinalArtifactOpenResponses,
+  UlmOperationFinalArtifactResponses,
+  UlmOperationFinalArtifactsResponses,
   UlmOperationListResponses,
+  UlmOperationRecoverResponses,
   UlmOperationResumeResponses,
   UlmOperationStatusResponses,
+  UlmOperationTemplateStartResponses,
   V2ModelListResponses,
   V2SessionCompactResponses,
   V2SessionContextResponses,
@@ -4821,6 +4830,302 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Template extends HeyApiClient {
+  /**
+   * Start ULM operation from template
+   *
+   * Create the minimal durable artifacts for a new template-backed ULMCode operation.
+   */
+  public start<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      operationID?: string
+      template?:
+        | "single-url-web"
+        | "external-k12-district"
+        | "authenticated-webapp"
+        | "internal-network"
+        | "cloud-posture"
+        | "code-audit"
+        | "report-only"
+        | "benchmark-suite"
+      objective?: string
+      targetDurationHours?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      trustLevel?: "guided" | "moderate" | "unattended" | "lab_full"
+      scanProfile?: "paranoid" | "stealth" | "balanced" | "aggressive" | "lab-insane"
+      budgetUSD?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "operationID" },
+            { in: "body", key: "template" },
+            { in: "body", key: "objective" },
+            { in: "body", key: "targetDurationHours" },
+            { in: "body", key: "trustLevel" },
+            { in: "body", key: "scanProfile" },
+            { in: "body", key: "budgetUSD" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationTemplateStartResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/template",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Audit extends HeyApiClient {
+  /**
+   * Write ULM operation audit
+   *
+   * Run and persist ULMCode final readiness checks for one operation.
+   */
+  public write<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      eventLimit?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      staleAfterMinutes?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      minWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      requireOutlineBudget?: boolean
+      minOutlineWordsPerPage?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      requireFindingSections?: boolean
+      minFindingWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      finalHandoff?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "eventLimit" },
+            { in: "body", key: "staleAfterMinutes" },
+            { in: "body", key: "minWords" },
+            { in: "body", key: "requireOutlineBudget" },
+            { in: "body", key: "minOutlineWordsPerPage" },
+            { in: "body", key: "requireFindingSections" },
+            { in: "body", key: "minFindingWords" },
+            { in: "body", key: "finalHandoff" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationAuditWriteResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/audit",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Daemon extends HeyApiClient {
+  /**
+   * Plan ULM runtime daemon start
+   *
+   * Return an operator command and current daemon metadata without spawning the runtime daemon from the API route.
+   */
+  public start<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "maxRuntimeSeconds" },
+            { in: "body", key: "cycleIntervalSeconds" },
+            { in: "body", key: "maxCycles" },
+            { in: "body", key: "schedulerCyclesPerTick" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationDaemonStartResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/daemon/start",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Plan ULM runtime daemon stop
+   *
+   * Return an operator stop command and current daemon metadata without killing processes from the API route.
+   */
+  public stop<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "maxRuntimeSeconds" },
+            { in: "body", key: "cycleIntervalSeconds" },
+            { in: "body", key: "maxCycles" },
+            { in: "body", key: "schedulerCyclesPerTick" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationDaemonStopResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/daemon/stop",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Read ULM runtime daemon status
+   *
+   * Read scheduler heartbeat, lock, and log metadata for one ULMCode operation.
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "maxRuntimeSeconds" },
+            { in: "body", key: "cycleIntervalSeconds" },
+            { in: "body", key: "maxCycles" },
+            { in: "body", key: "schedulerCyclesPerTick" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationDaemonStatusResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/daemon/status",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class FinalArtifact extends HeyApiClient {
+  /**
+   * Plan opening a ULM final artifact
+   *
+   * Return a local open command for one final handoff artifact without executing it in the API route.
+   */
+  public open<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      artifactID: string
+      directory?: string
+      workspace?: string
+      body?: {
+        [key: string]: unknown
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "path", key: "artifactID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "body", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationFinalArtifactOpenResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}/open",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Credential extends HeyApiClient {
   /**
    * Create ULM operation credential
@@ -5107,6 +5412,113 @@ export class Operation extends HeyApiClient {
   }
 
   /**
+   * Plan ULM operation recovery
+   *
+   * Return actionable recovery metadata for restartable ULMCode work without launching jobs from the API route.
+   */
+  public recover<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+      dryRun?: boolean
+      maxTasks?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "dryRun" },
+            { in: "body", key: "maxTasks" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<UlmOperationRecoverResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/recover",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * List ULM final artifacts
+   *
+   * List final handoff artifact metadata for one ULMCode operation.
+   */
+  public finalArtifacts<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<UlmOperationFinalArtifactsResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/final-artifacts",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get ULM final artifact metadata
+   *
+   * Fetch metadata for one known final handoff artifact.
+   */
+  public finalArtifact<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationID: string
+      artifactID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationID" },
+            { in: "path", key: "artifactID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<UlmOperationFinalArtifactResponses, unknown, ThrowOnError>({
+      url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * List ULM operation credentials
    *
    * List redacted credential handles for one ULMCode operation.
@@ -5136,6 +5548,26 @@ export class Operation extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  private _template?: Template
+  get template(): Template {
+    return (this._template ??= new Template({ client: this.client }))
+  }
+
+  private _audit?: Audit
+  get audit2(): Audit {
+    return (this._audit ??= new Audit({ client: this.client }))
+  }
+
+  private _daemon?: Daemon
+  get daemon(): Daemon {
+    return (this._daemon ??= new Daemon({ client: this.client }))
+  }
+
+  private _finalArtifact?: FinalArtifact
+  get finalArtifact2(): FinalArtifact {
+    return (this._finalArtifact ??= new FinalArtifact({ client: this.client }))
   }
 
   private _credential?: Credential
