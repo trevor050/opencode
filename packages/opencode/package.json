@@ -26,6 +26,7 @@
     "ulm:tool-preflight": "bun run script/ulm-tool-manifest.ts --preflight --operation-id tool-preflight",
     "ulm:behavior-watch": "bun run script/ulm-behavior-watch.ts",
     "ulm:literal-run-readiness": "bun run script/ulm-literal-run-readiness.ts",
+    "test:httpapi": "bun run script/httpapi-exercise.ts --mode coverage --fail-on-missing --fail-on-skip && bun run script/httpapi-exercise.ts --mode auth --fail-on-missing --fail-on-skip && bun run script/httpapi-exercise.ts --mode effect --fail-on-missing --fail-on-skip",
     "build": "bun run script/build.ts",
     "fix-node-pty": "bun run script/fix-node-pty.ts",
     "upgrade-opentui": "bun run ../../script/upgrade-opentui.ts",
