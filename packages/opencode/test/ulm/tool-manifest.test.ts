@@ -128,4 +128,70 @@ describe("ULM tool manifest command plans", () => {
       }),
     ).rejects.toThrow("unattended command_supervise only allows non_destructive")
   })
+
+  test("keeps repeated profile launches from clobbering command state", async () => {
+    await using dir = await tmpdir({ git: true })
+    const manifestPath = path.join(dir.path, "manifest.json")
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        lastReviewed: "2026-05-05",
+        policy: {
+          defaultSafetyMode: "non_destructive",
+          destructiveSafetyMode: "interactive_destructive",
+          installFailureBehavior: "record_blocker_with_fallback",
+          notes: [],
+        },
+        tools: [
+          {
+            id: "httpx",
+            purpose: "http discovery",
+            safety: "non_destructive",
+            install: [{ platform: "go", command: "go install github.com/projectdiscovery/httpx/cmd/httpx@latest" }],
+            validate: "httpx -version",
+            safeExamples: ["httpx -l hosts.txt"],
+            outputParsers: ["jsonl"],
+            fallbacks: [],
+          },
+        ],
+        commandProfiles: [
+          {
+            id: "http-discovery",
+            tool: "httpx",
+            safety: "non_destructive",
+            template: "httpx -l {inputFile} -json -o {outputPrefix}.jsonl",
+            heartbeatSeconds: 60,
+            idleTimeoutSeconds: 600,
+            hardTimeoutSeconds: 1200,
+            restartable: true,
+            artifacts: ["evidence/raw/httpx.jsonl"],
+          },
+        ],
+      }),
+    )
+
+    const first = await buildCommandPlan({
+      worktree: dir.path,
+      operationID: "School",
+      profileID: "http-discovery",
+      variables: { inputFile: "hosts-a.txt" },
+      outputPrefix: "evidence/raw/http-a",
+      manifestPath,
+    })
+    await writeCommandPlan(first)
+    const second = await buildCommandPlan({
+      worktree: dir.path,
+      operationID: "School",
+      profileID: "http-discovery",
+      variables: { inputFile: "hosts-b.txt" },
+      outputPrefix: "evidence/raw/http-b",
+      manifestPath,
+    })
+    await writeCommandPlan(second)
+
+    expect(path.dirname(first.planPath)).not.toBe(path.dirname(second.planPath))
+    expect(JSON.parse(await fs.readFile(first.planPath, "utf8")).outputPrefix).toBe("evidence/raw/http-a")
+    expect(JSON.parse(await fs.readFile(second.planPath, "utf8")).outputPrefix).toBe("evidence/raw/http-b")
+  })
 })

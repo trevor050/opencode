@@ -104,6 +104,28 @@ function renderedArtifacts(profile: CommandProfile, outputPrefix: string) {
   return [...artifacts]
 }
 
+async function commandRootForPlan(input: { root: string; profileID: string; outputPrefix: string }) {
+  const names = [
+    slug(input.profileID, "command-profile"),
+    slug(`${input.profileID}-${input.outputPrefix}`, "command-profile"),
+  ]
+  for (let index = 0; index < 10; index++) {
+    const name = names[index] ?? slug(`${input.profileID}-${input.outputPrefix}-${Date.now()}-${index}`, "command-profile")
+    const candidate = path.join(input.root, "commands", name)
+    try {
+      await fs.stat(path.join(candidate, "command-plan.json"))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return candidate
+      throw error
+    }
+  }
+  return path.join(
+    input.root,
+    "commands",
+    slug(`${input.profileID}-${input.outputPrefix}-${Date.now()}`, "command-profile"),
+  )
+}
+
 export async function buildCommandPlan(input: CommandPlanInput): Promise<CommandPlan> {
   const manifestPath = input.manifestPath ?? defaultToolManifestPath(input.worktree)
   const manifest = await readToolManifest(manifestPath)
@@ -117,9 +139,9 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
 
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(input.worktree, operationID)
-  const commandRoot = path.join(root, "commands", slug(profile.id, "command-profile"))
   const outputPrefix =
     input.outputPrefix ?? path.join("evidence", "raw", `${slug(profile.id, "command")}-${Date.now()}`)
+  const commandRoot = await commandRootForPlan({ root, profileID: profile.id, outputPrefix })
   const variables = { ...input.variables, outputPrefix }
   const command = renderTemplate(profile.template, variables)
   const artifacts = renderedArtifacts(profile, outputPrefix)
