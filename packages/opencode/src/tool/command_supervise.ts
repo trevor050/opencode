@@ -172,6 +172,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
       execute: (params: Schema.Schema.Type<typeof Parameters>) =>
         Effect.gen(function* () {
           assertLaneToolAllowed("command_supervise")
+          const dryRun = params.dryRun ?? true
           const plan = yield* toolPromise(() =>
             buildCommandPlan({
               worktree: params.worktree ?? Instance.worktree,
@@ -180,11 +181,11 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
               variables: params.variables,
               outputPrefix: params.outputPrefix,
               manifestPath: params.manifestPath,
+              dryRun,
             }),
           ).pipe(Effect.orDie)
           yield* toolPromise(() => writeCommandPlan(plan)).pipe(Effect.orDie)
 
-          const dryRun = params.dryRun ?? true
           let jobID: string | undefined
           if (!dryRun) {
             const job = yield* jobs.start({

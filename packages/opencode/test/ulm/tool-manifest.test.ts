@@ -194,4 +194,69 @@ describe("ULM tool manifest command plans", () => {
     expect(JSON.parse(await fs.readFile(first.planPath, "utf8")).outputPrefix).toBe("evidence/raw/http-a")
     expect(JSON.parse(await fs.readFile(second.planPath, "utf8")).outputPrefix).toBe("evidence/raw/http-b")
   })
+
+  test("upgrades a dry-run command plan to the real launch directory", async () => {
+    await using dir = await tmpdir({ git: true })
+    const manifestPath = path.join(dir.path, "manifest.json")
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        lastReviewed: "2026-05-05",
+        policy: {
+          defaultSafetyMode: "non_destructive",
+          destructiveSafetyMode: "interactive_destructive",
+          installFailureBehavior: "record_blocker_with_fallback",
+          notes: [],
+        },
+        tools: [
+          {
+            id: "nmap",
+            purpose: "host discovery",
+            safety: "non_destructive",
+            install: [{ platform: "darwin", command: "brew install nmap" }],
+            validate: "nmap --version",
+            safeExamples: ["nmap -sn <target>"],
+            outputParsers: ["xml"],
+            fallbacks: [],
+          },
+        ],
+        commandProfiles: [
+          {
+            id: "icmp-sweep",
+            tool: "nmap",
+            safety: "non_destructive",
+            template: "nmap -sn -oA {outputPrefix} {target}",
+            heartbeatSeconds: 60,
+            idleTimeoutSeconds: 600,
+            hardTimeoutSeconds: 1200,
+            restartable: true,
+            artifacts: ["evidence/raw/icmp-sweep.xml"],
+          },
+        ],
+      }),
+    )
+
+    const planned = await buildCommandPlan({
+      worktree: dir.path,
+      operationID: "School",
+      profileID: "icmp-sweep",
+      variables: { target: "10.0.0.0/24" },
+      outputPrefix: "evidence/raw/icmp",
+      manifestPath,
+      dryRun: true,
+    })
+    await writeCommandPlan(planned)
+    const launched = await buildCommandPlan({
+      worktree: dir.path,
+      operationID: "School",
+      profileID: "icmp-sweep",
+      variables: { target: "10.0.0.0/24" },
+      outputPrefix: "evidence/raw/icmp",
+      manifestPath,
+      dryRun: false,
+    })
+
+    expect(path.dirname(launched.planPath)).toBe(path.dirname(planned.planPath))
+  })
 })

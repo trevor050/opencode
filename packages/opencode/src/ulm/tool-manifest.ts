@@ -47,6 +47,7 @@ export type CommandPlanInput = {
   variables?: Record<string, string | undefined>
   outputPrefix?: string
   manifestPath?: string
+  dryRun?: boolean
 }
 
 export type CommandPlan = {
@@ -69,6 +70,7 @@ export type CommandPlan = {
   stdoutPath: string
   stderrPath: string
   heartbeatPath: string
+  dryRun?: boolean
 }
 
 export function defaultToolManifestPath(worktree: string) {
@@ -113,7 +115,14 @@ async function commandRootForPlan(input: { root: string; profileID: string; outp
     const name = names[index] ?? slug(`${input.profileID}-${input.outputPrefix}-${Date.now()}-${index}`, "command-profile")
     const candidate = path.join(input.root, "commands", name)
     try {
-      await fs.stat(path.join(candidate, "command-plan.json"))
+      const existing = JSON.parse(await fs.readFile(path.join(candidate, "command-plan.json"), "utf8")) as {
+        profileID?: string
+        outputPrefix?: string
+        dryRun?: boolean
+      }
+      if (existing.dryRun === true && existing.profileID === input.profileID && existing.outputPrefix === input.outputPrefix) {
+        return candidate
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return candidate
       throw error
@@ -170,6 +179,7 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
     stdoutPath,
     stderrPath,
     heartbeatPath,
+    dryRun: input.dryRun,
   }
 }
 
@@ -199,6 +209,7 @@ export async function writeCommandPlan(plan: CommandPlan) {
         stdoutPath: plan.stdoutPath,
         stderrPath: plan.stderrPath,
         heartbeatPath: plan.heartbeatPath,
+        dryRun: plan.dryRun,
         plannedAt: new Date().toISOString(),
       },
       null,
