@@ -129,6 +129,61 @@ describe("ULM tool manifest command plans", () => {
     ).rejects.toThrow("unattended command_supervise only allows non_destructive")
   })
 
+  test("rejects privileged command profiles for unattended supervision", async () => {
+    await using dir = await tmpdir({ git: true })
+    const manifestPath = path.join(dir.path, "manifest.json")
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        lastReviewed: "2026-05-05",
+        policy: {
+          defaultSafetyMode: "non_destructive",
+          destructiveSafetyMode: "interactive_destructive",
+          installFailureBehavior: "record_blocker_with_fallback",
+          notes: [],
+        },
+        tools: [
+          {
+            id: "nmap",
+            purpose: "UDP service inventory",
+            safety: "non_destructive",
+            install: [{ platform: "darwin", command: "brew install nmap" }],
+            validate: "nmap --version",
+            safeExamples: ["nmap -sU <target>"],
+            outputParsers: ["xml"],
+            fallbacks: ["tcp-service-inventory"],
+          },
+        ],
+        commandProfiles: [
+          {
+            id: "udp-top-ports-sweep",
+            tool: "nmap",
+            safety: "non_destructive",
+            requiresPrivilege: true,
+            privilegeReason: "UDP scans require raw-socket privileges.",
+            template: "nmap -sU --top-ports 50 -oA {outputPrefix} {target}",
+            heartbeatSeconds: 60,
+            idleTimeoutSeconds: 600,
+            hardTimeoutSeconds: 1200,
+            restartable: true,
+            artifacts: ["evidence/raw/udp.xml"],
+          },
+        ],
+      }),
+    )
+
+    await expect(
+      buildCommandPlan({
+        worktree: dir.path,
+        operationID: "School",
+        profileID: "udp-top-ports-sweep",
+        variables: { target: "10.0.0.10" },
+        manifestPath,
+      }),
+    ).rejects.toThrow("requires elevated privileges")
+  })
+
   test("keeps repeated profile launches from clobbering command state", async () => {
     await using dir = await tmpdir({ git: true })
     const manifestPath = path.join(dir.path, "manifest.json")

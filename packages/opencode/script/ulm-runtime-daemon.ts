@@ -8,6 +8,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import type { OperationRunResult } from "../src/ulm/operation-run"
 import type { RuntimeDaemonInput } from "../src/ulm/runtime-daemon"
+import type { BackgroundJob } from "../src/background/job"
 import { buildCommandPlan, writeCommandPlan } from "../src/ulm/tool-manifest"
 import { resolveScriptWorktree } from "./ulm-script-worktree"
 
@@ -309,6 +310,66 @@ function activeCliModelLaunch(laneID: string) {
   }
 }
 
+function cliModelBackgroundJobs(): BackgroundJob.Info[] {
+  const root = operationPath(worktree, operationID)
+  const graphPath = path.join(root, "plans", "operation-graph.json")
+  const launchDir = path.join(root, "scheduler", "cli-launches")
+  try {
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      lanes?: Array<{ id?: string; status?: string }>
+    }
+    const runningLanes = new Set((graph.lanes ?? []).filter((lane) => lane.status === "running" && lane.id).map((lane) => lane.id as string))
+    if (!runningLanes.size) return []
+    const pidRecords = readdirSync(launchDir)
+      .filter((file) => file.includes("-model-pid-") && file.endsWith(".json"))
+      .map((file) => {
+        try {
+          const record = JSON.parse(readFileSync(path.join(launchDir, file), "utf8")) as {
+            laneID?: string
+            agent?: string
+            modelRoute?: string
+            prompt?: string
+            allowedTools?: string
+            pid?: number
+            createdAt?: string
+            jobID?: string
+          }
+          return { ...record, file }
+        } catch {
+          return undefined
+        }
+      })
+      .filter((record): record is NonNullable<typeof record> => !!record && !!record.laneID && runningLanes.has(record.laneID))
+      .toSorted((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+    const latestByLane = new Map<string, (typeof pidRecords)[number]>()
+    for (const record of pidRecords) {
+      if (record.laneID && !latestByLane.has(record.laneID)) latestByLane.set(record.laneID, record)
+    }
+    return [...latestByLane.values()]
+      .filter((record) => !processIsAlive(record.pid))
+      .filter((record) => typeof record.prompt === "string" && typeof record.agent === "string")
+      .map((record) => ({
+        id: record.jobID ?? `cli-model-lane-${record.laneID}`,
+        type: "task",
+        title: `CLI model lane ${record.laneID}`,
+        status: "stale",
+        startedAt: record.createdAt ? Date.parse(record.createdAt) : Date.now(),
+        error: `CLI model lane pid ${record.pid ?? "unknown"} is no longer running`,
+        metadata: {
+          operationID,
+          laneID: record.laneID,
+          prompt: record.prompt,
+          subagent_type: record.agent,
+          modelRoute: record.modelRoute,
+          allowedTools: record.allowedTools,
+          worktree,
+        },
+      }))
+  } catch {
+    return []
+  }
+}
+
 function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) {
   const jobID = `cli-model-lane-${params.laneID}`
   const active = activeCliModelLaunch(params.laneID)
@@ -365,6 +426,30 @@ function launchModelLane(params: NonNullable<OperationRunResult["taskParams"]>) 
   closeSync(outputFD)
   writeLaunchRecord("model-pid", params.laneID, { ...record, pid: child.pid, logPath, outputPath, jobID })
   return Promise.resolve({ jobID })
+}
+
+async function recoverCliModelJob(job: BackgroundJob.Info) {
+  const laneID = typeof job.metadata?.laneID === "string" ? job.metadata.laneID : undefined
+  const prompt = typeof job.metadata?.prompt === "string" ? job.metadata.prompt : undefined
+  const subagentType = typeof job.metadata?.subagent_type === "string" ? job.metadata.subagent_type : undefined
+  if (!laneID || !prompt || !subagentType) return undefined
+  const allowedTools =
+    typeof job.metadata?.allowedTools === "string"
+      ? job.metadata.allowedTools
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : []
+  return launchModelLane({
+    description: `Recover ${laneID}`,
+    prompt,
+    subagent_type: subagentType,
+    operationID,
+    laneID,
+    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "opencode-go/qwen3.6-plus",
+    allowedTools,
+    background: true,
+  })
 }
 
 async function launchCommandWorkUnit(params: Parameters<NonNullable<RuntimeDaemonInput["launchCommandWorkUnit"]>>[0]) {
@@ -430,6 +515,8 @@ try {
     supervisorEnabled: args.supervisorEnabled,
     supervisorIntervalMinutes: args.supervisorIntervalMinutes,
     supervisorReviewKind: args.supervisorReviewKind,
+    backgroundJobProvider: async () => cliModelBackgroundJobs(),
+    recoverBackgroundJob: recoverCliModelJob,
     launchModelLane,
     launchCommandWorkUnit,
     signal: controller.signal,

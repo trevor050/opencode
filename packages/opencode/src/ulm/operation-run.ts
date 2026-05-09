@@ -164,7 +164,7 @@ async function expectedArtifactExists(root: string, expected: string) {
       const entries = await fs.readdir(resolved)
       return entries.length > 0
     }
-    return stat.size > 0
+    return stat.size > 0 || expected.endsWith("/stderr.log")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
     throw error
@@ -363,7 +363,9 @@ function taskParamsForLane(lane: OperationLane) {
       `Allowed tools: ${lane.allowedTools.join(", ")}`,
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
+      "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
+      "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
       ...(specific ? [specific] : []),
       "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
       "Do not call operation_run with mode=advance, runtime_scheduler, runtime_daemon, task, or command_supervise to launch downstream lanes; the parent scheduler owns the next-lane handoff.",

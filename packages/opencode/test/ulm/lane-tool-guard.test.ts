@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { assertLaneToolAllowed, laneToolAllowed } from "@/ulm/lane-tool-guard"
+import { assertLaneToolAllowed, laneToolAllowed, laneToolVisible } from "@/ulm/lane-tool-guard"
 
 const previousAllowedTools = process.env.ULMCODE_LANE_ALLOWED_TOOLS
 const previousLaneID = process.env.ULMCODE_LANE_ID
@@ -24,6 +24,11 @@ describe("ULM lane tool guard", () => {
     expect(laneToolAllowed("runtime_summary")).toBe(true)
     expect(laneToolAllowed("bash")).toBe(false)
     expect(laneToolAllowed("write")).toBe(false)
+    expect(laneToolVisible("read")).toBe(true)
+    expect(laneToolVisible("grep")).toBe(true)
+    expect(laneToolVisible("glob")).toBe(false)
+    expect(laneToolVisible("playwright_browser_wait_for")).toBe(false)
+    expect(laneToolVisible("browser_evidence")).toBe(false)
     expect(() => assertLaneToolAllowed("bash")).toThrow(
       "Tool bash is not allowed for ULM lane operator_summary",
     )

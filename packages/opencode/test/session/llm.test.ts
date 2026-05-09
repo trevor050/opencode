@@ -608,6 +608,113 @@ describe("session.llm.stream", () => {
     })
   })
 
+  test("hides guarded tools outside a ULM lane allowlist from model payloads", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const previousAllowedTools = process.env.ULMCODE_LANE_ALLOWED_TOOLS
+    const previousLaneID = process.env.ULMCODE_LANE_ID
+    process.env.ULMCODE_LANE_ID = "recon"
+    process.env.ULMCODE_LANE_ALLOWED_TOOLS = "operation_checkpoint, command_supervise, evidence_record, write, task, operation_run"
+    try {
+      const providerID = "alibaba"
+      const modelID = "qwen-plus"
+      const fixture = await loadFixture(providerID, modelID)
+      const model = fixture.model
+
+      const request = waitRequest(
+        "/chat/completions",
+        new Response(createChatStream("Hello"), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      )
+
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              enabled_providers: [providerID],
+              provider: {
+                [providerID]: {
+                  options: {
+                    apiKey: "test-key",
+                    baseURL: `${server.url.origin}/v1`,
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await WithInstance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const resolved = await getModel(ProviderID.make(providerID), ModelID.make(model.id))
+          const sessionID = SessionID.make("session-test-lane-tools")
+          const agent = {
+            name: "recon",
+            mode: "primary",
+            options: {},
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          } satisfies Agent.Info
+
+          const user = {
+            id: MessageID.make("user-lane-tools"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderID.make(providerID), modelID: resolved.id },
+          } satisfies MessageV2.User
+
+          const emptyTool = (description: string) =>
+            tool({
+              description,
+              inputSchema: z.object({}),
+              execute: async () => ({ output: "" }),
+            })
+
+          await drain({
+            user,
+            sessionID,
+            model: resolved,
+            agent,
+            system: ["You are a helpful assistant."],
+            messages: [{ role: "user", content: "Hello" }],
+            tools: {
+              read: emptyTool("Read files"),
+              glob: emptyTool("Find files"),
+              command_supervise: emptyTool("Run supervised commands"),
+              playwright_browser_wait_for: emptyTool("Wait in browser"),
+              browser_evidence: emptyTool("Record browser evidence"),
+            },
+          })
+
+          const capture = await request
+          const names = ((capture.body.tools as Array<{ function?: { name?: string } }> | undefined) ?? []).map(
+            (item) => item.function?.name,
+          )
+          expect(names).toContain("read")
+          expect(names).toContain("command_supervise")
+          expect(names).not.toContain("glob")
+          expect(names).not.toContain("playwright_browser_wait_for")
+          expect(names).not.toContain("browser_evidence")
+        },
+      })
+    } finally {
+      if (previousAllowedTools === undefined) delete process.env.ULMCODE_LANE_ALLOWED_TOOLS
+      else process.env.ULMCODE_LANE_ALLOWED_TOOLS = previousAllowedTools
+      if (previousLaneID === undefined) delete process.env.ULMCODE_LANE_ID
+      else process.env.ULMCODE_LANE_ID = previousLaneID
+    }
+  })
+
   test("sends responses API payload for OpenAI models", async () => {
     const server = state.server
     if (!server) {

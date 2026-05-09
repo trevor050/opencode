@@ -32,6 +32,8 @@ export type CommandProfile = {
   id: string
   tool: string
   safety: ToolSafety
+  requiresPrivilege?: boolean
+  privilegeReason?: string
   template: string
   heartbeatSeconds: number
   idleTimeoutSeconds: number
@@ -142,6 +144,12 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
   if (!profile) throw new Error(`unknown command profile: ${input.profileID}`)
   if (profile.safety !== "non_destructive") {
     throw new Error(`command profile ${profile.id} is ${profile.safety}; unattended command_supervise only allows non_destructive`)
+  }
+  if (profile.requiresPrivilege === true) {
+    throw new Error(
+      `command profile ${profile.id} requires elevated privileges; unattended command_supervise cannot launch it` +
+        (profile.privilegeReason ? `: ${profile.privilegeReason}` : ""),
+    )
   }
   const tool = manifest.tools.find((item) => item.id === profile.tool)
   if (!tool) throw new Error(`command profile ${profile.id} references missing tool ${profile.tool}`)

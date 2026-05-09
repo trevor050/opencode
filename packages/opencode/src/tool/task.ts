@@ -16,7 +16,7 @@ import { Instance } from "@/project/instance"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { readULMConfig, type ULMRuntimeConfig } from "@/ulm/config"
-import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
+import { assertLaneToolAllowed, LANE_GUARDED_TOOLS } from "@/ulm/lane-tool-guard"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -113,8 +113,6 @@ function modelFromRoute(route: string | undefined) {
   if (!providerID || !modelID) return undefined
   return { providerID: ProviderID.make(providerID), modelID: ModelID.make(modelID) }
 }
-
-const LANE_GUARDED_TOOLS = ["operation_recover", "runtime_scheduler", "runtime_daemon", "task", "command_supervise", "bash", "write"]
 
 function laneChildToolOverrides(allowedTools: readonly string[] | undefined) {
   if (!allowedTools) return {}

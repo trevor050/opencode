@@ -34,6 +34,10 @@ describe("ULM operation next action", () => {
     expect(result.action.lane.id).toBe("district_profile")
     expect(result.action.prompt).toContain('Run operation lane "district_profile"')
     expect(result.action.prompt).toContain("mode=complete_lane")
+    expect(result.action.prompt).toContain("Use only the allowed tools listed above")
+    expect(result.action.prompt).toContain("Bash, browser, and Playwright tools are unavailable")
+    expect(result.action.prompt).toContain("poll their heartbeat/stdout/stderr artifacts with read/grep")
+    expect(result.action.prompt).toContain("Do not use bash, sleep, cat, tail, or foreground shell commands")
     expect(result.action.recommendedTools).toContain("district_profile")
   })
 

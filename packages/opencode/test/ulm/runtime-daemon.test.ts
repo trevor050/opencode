@@ -654,6 +654,86 @@ describe("ULM runtime daemon", () => {
     expect(records.some((file) => file.includes("model-district_profile") && !file.includes("model-pid"))).toBe(false)
   })
 
+  test("CLI daemon recovers a running lane whose model pid died", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { id: string; status: string }) =>
+      lane.id === "district_profile" ? { ...lane, status: "running" } : lane,
+    )
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+
+    const root = operationPath(dir.path, "School")
+    const launchDir = path.join(root, "scheduler", "cli-launches")
+    await fs.mkdir(launchDir, { recursive: true })
+    await fs.writeFile(
+      path.join(launchDir, "2026-05-05T00-00-00-model-pid-district_profile.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          kind: "model-pid",
+          id: "district_profile",
+          laneID: "district_profile",
+          agent: "recon",
+          modelRoute: "opencode-go/qwen3.6-plus",
+          prompt: "resume district profile",
+          allowedTools: "district_profile, webfetch, websearch, evidence_record, task, operation_run",
+          createdAt: "2026-05-05T00:00:00.000Z",
+          pid: 99999999,
+          jobID: "cli-model-lane-district_profile",
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-seconds",
+        "120",
+        "--interval-seconds",
+        "0",
+        "--max-cycles",
+        "1",
+        "--disable-operation-supervisor",
+        "--json",
+      ],
+      {
+        cwd: dir.path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1" },
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    const result = JSON.parse(stdout)
+    expect(result.recoveredJobs).toEqual(["cli-model-lane-district_profile"])
+    const records = await fs.readdir(launchDir)
+    expect(records.some((file) => file.includes("model-district_profile") && !file.includes("model-pid"))).toBe(true)
+    expect(records.some((file) => file.includes("model-reuse-district_profile"))).toBe(false)
+    const recoveredGraph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    const recoveredLane = recoveredGraph.lanes.find((lane: { id: string }) => lane.id === "district_profile")
+    expect(recoveredLane?.status).toBe("running")
+    expect(recoveredLane?.terminalState).toBeUndefined()
+    expect(recoveredLane?.activeJobs?.[0]?.status).toBe("running")
+  })
+
   test("records scheduler errors, backs off, and stops after the error budget", async () => {
     await using dir = await tmpdir({ git: true })
     const sleeps: number[] = []

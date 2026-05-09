@@ -451,6 +451,65 @@ describe("tool.task", () => {
     },
   )
 
+  it.instance(
+    "execute disables guarded lane tools that are not in the lane allowlist",
+    () =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        let seen: SessionPrompt.PromptInput | undefined
+        const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
+
+        yield* def.execute(
+          {
+            description: "network lane",
+            prompt: "run network discovery",
+            subagent_type: "recon",
+            allowedTools: ["operation_checkpoint", "command_supervise", "evidence_record", "write", "task"],
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(seen?.tools).toMatchObject({
+          operation_recover: false,
+          runtime_scheduler: false,
+          runtime_daemon: false,
+          task: true,
+          command_supervise: true,
+          bash: false,
+          write: true,
+          browser_evidence: false,
+          playwright_browser_wait_for: false,
+          playwright_browser_navigate: false,
+        })
+      }),
+    {
+      config: {
+        agent: {
+          recon: {
+            mode: "subagent",
+            permission: {
+              task: {
+                "*": "deny",
+                evidence: "allow",
+              },
+            },
+          },
+        },
+      },
+    },
+  )
+
   it.instance("can launch a task in the background and poll it with task_status", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()

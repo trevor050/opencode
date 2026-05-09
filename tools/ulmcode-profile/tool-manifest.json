@@ -336,6 +336,8 @@
       "id": "udp-top-ports-sweep",
       "tool": "nmap",
       "safety": "non_destructive",
+      "requiresPrivilege": true,
+      "privilegeReason": "nmap UDP scans (-sU) require elevated raw-socket privileges on common targets; use only in an interactive privileged run or record as a limitation.",
       "template": "nmap -sU --top-ports 50 --version-light -oA {outputPrefix} {target}",
       "heartbeatSeconds": 180,
       "idleTimeoutSeconds": 1800,

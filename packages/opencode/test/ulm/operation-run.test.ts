@@ -23,6 +23,10 @@ describe("ULM operation run controller", () => {
     expect(result.taskParams?.background).toBe(true)
     expect(result.taskParams?.modelRoute).toBe("opencode-go/qwen3.6-plus")
     expect(result.taskParams?.allowedTools).toEqual(["district_profile", "webfetch", "websearch", "evidence_record", "task", "operation_run"])
+    expect(result.taskParams?.prompt).toContain("Use only the allowed tools listed above")
+    expect(result.taskParams?.prompt).toContain("Bash, browser, and Playwright tools are unavailable")
+    expect(result.taskParams?.prompt).toContain("poll their heartbeat/stdout/stderr artifacts with read/grep")
+    expect(result.taskParams?.prompt).toContain("Do not use bash, sleep, cat, tail, or foreground shell commands")
     expect(result.commandProfiles).toEqual([])
     const graph = JSON.parse(await fs.readFile(result.graphPath, "utf8"))
     expect(graph.lanes.find((lane: { id: string }) => lane.id === "district_profile")?.status).toBe("running")
@@ -63,6 +67,40 @@ describe("ULM operation run controller", () => {
     expect(result.laneID).toBe("recon")
     expect(result.taskParams).toBeUndefined()
     expect(result.completedLanes).toContain("recon")
+  })
+
+  test("accepts empty supervised command stderr logs as completion proof", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
+
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "evidence", "raw"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "commands", "service-inventory"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "evidence", "raw", "service-inventory.xml"), "<nmaprun />\n")
+    await fs.writeFile(path.join(operationRoot, "commands", "service-inventory", "stderr.log"), "")
+    await fs.writeFile(path.join(operationRoot, "status.md"), "recon done\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "recon",
+      summary: "Recon finished with clean supervised command stderr.",
+      artifacts: ["evidence/raw/", "commands/service-inventory/stderr.log", "status.md"],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    expect(result.blockers).toEqual([])
+    expect(result.completedLanes).toContain("recon")
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "recon")?.status).toBe("complete")
   })
 
   test("does not complete a pending or unlaunched lane", async () => {

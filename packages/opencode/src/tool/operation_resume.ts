@@ -117,11 +117,12 @@ export const OperationResumeTool = Tool.define(
               restarted: restartable.length,
               skipped,
               checkpointUpdated,
+              worktree: restartable.map((item) => metadataWorktree(item.job)).find(Boolean),
               output: restarted.join("\n\n"),
             }
           })
 
-          const worktree = yield* currentWorktree
+          const worktree = recovery?.worktree ?? (yield* currentWorktree)
           const result = yield* Effect.tryPromise(() =>
             buildOperationResumeBrief(worktree, params.operationID, {
               eventLimit: params.eventLimit,

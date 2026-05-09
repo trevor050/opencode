@@ -164,6 +164,7 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
 
       const backgroundJobs = input.backgroundJobProvider ? await input.backgroundJobProvider() : input.backgroundJobs
       const recoveredThisTick: string[] = []
+      const recoveredJobIDs = new Set<string>()
       if (input.recoverBackgroundJob && backgroundJobs?.length) {
         const restartable = restartableOperationJobs({
           operationID,
@@ -173,18 +174,29 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         for (const job of restartable) {
           const recovered = await input.recoverBackgroundJob(job)
           recoveredThisTick.push(recovered?.jobID ?? job.id)
+          recoveredJobIDs.add(job.id)
         }
         if (restartable.length) {
           recoveredJobs.push(...recoveredThisTick)
           await markRecoveredLanesRunning(worktree, { operationID, jobs: restartable })
         }
       }
+      const schedulerBackgroundJobs = backgroundJobs?.map((job) =>
+        recoveredJobIDs.has(job.id)
+          ? {
+              ...job,
+              status: "running" as const,
+              error: undefined,
+              completedAt: undefined,
+            }
+          : job,
+      )
 
       const scheduler = await runRuntimeScheduler(worktree, {
         operationID,
         maxCycles: schedulerCyclesPerTick,
         leaseSeconds: input.leaseSeconds,
-        backgroundJobs,
+        backgroundJobs: schedulerBackgroundJobs,
         launchModelLane: input.launchModelLane,
         launchCommandWorkUnit: input.launchCommandWorkUnit,
         commandWorkUnitLimit: input.commandWorkUnitLimit,
