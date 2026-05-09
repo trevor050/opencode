@@ -41,6 +41,31 @@ export function isDangerousProcessKillCommand(command: string): boolean {
   return DANGEROUS_PROCESS_KILL_PATTERNS.some((pattern) => pattern.test(command))
 }
 
+const ULM_FOREGROUND_SCAN_PATTERNS = [
+  /\bnmap\b(?!\s+(?:--version|-V|--help|-h)\b)/i,
+  /\b(?:masscan|naabu|rustscan|nuclei|ffuf|feroxbuster|gobuster|nikto)\b/i,
+  /\bhttpx\b.*(?:-l\b|-u\b|https?:\/\/|\{inputFile\})/i,
+  /(?=.*\bping\b)(?=.*(?:192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.))/i,
+]
+
+export function isULMForegroundScanCommand(command: string): boolean {
+  return ULM_FOREGROUND_SCAN_PATTERNS.some((pattern) => pattern.test(command))
+}
+
+const ULM_OPERATION_ARTIFACT_MUTATION_PATTERN =
+  /\b(?:mkdir|cp|mv|rm|touch|install|rsync)\b[\s\S]*(?:\.ulmcode\/operations|\/\.ulmcode\/operations\/)/i
+
+export function isULMOperationArtifactMutation(command: string): boolean {
+  return ULM_OPERATION_ARTIFACT_MUTATION_PATTERN.test(command)
+}
+
+const ULM_OPERATION_ARTIFACT_READ_PATTERN =
+  /\b(?:ls|find|stat|cat|tail|head|grep|rg|wc|du)\b[\s\S]*(?:\.ulmcode\/operations|\/\.ulmcode\/operations\/)/i
+
+export function isULMOperationArtifactShellRead(command: string): boolean {
+  return ULM_OPERATION_ARTIFACT_READ_PATTERN.test(command)
+}
+
 const FILES = new Set([
   ...CWD,
   "rm",
@@ -621,6 +646,21 @@ export const ShellTool = Tool.define(
               if (isDangerousProcessKillCommand(params.command)) {
                 throw new Error(
                   `Command blocked for system safety: "${params.command}". Broadly killing Node.js processes can crash OpenCode. Target a specific PID or use project-scoped commands such as npm stop or pm2 stop <name>.`,
+                )
+              }
+              if (process.env.OPENCODE_APP_NAME === "ulmcode" && isULMForegroundScanCommand(params.command)) {
+                throw new Error(
+                  `ULM foreground scan blocked: "${params.command}". Use command_supervise, task background=true, runtime_scheduler, or runtime_daemon so scans have heartbeat/output artifacts and operation recovery metadata.`,
+                )
+              }
+              if (process.env.OPENCODE_APP_NAME === "ulmcode" && isULMOperationArtifactMutation(params.command)) {
+                throw new Error(
+                  `ULM operation artifact mutation blocked: "${params.command}". Use operation tools such as evidence_record, write, operation_checkpoint, operation_run, or command_supervise instead of raw shell copy/mkdir/move operations under .ulmcode/operations.`,
+                )
+              }
+              if (process.env.OPENCODE_APP_NAME === "ulmcode" && isULMOperationArtifactShellRead(params.command)) {
+                throw new Error(
+                  `ULM operation artifact shell read blocked: "${params.command}". Use operation_status, operation_resume, read, glob, grep, evidence_record, or operation_run instead of raw shell reads under .ulmcode/operations.`,
                 )
               }
               const ps = Shell.ps(shell)

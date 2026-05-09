@@ -188,6 +188,14 @@ function laneRequiresEvidenceRefs(lane: OperationLane) {
   ].includes(lane.id)
 }
 
+const COVERAGE_RANK: Record<OperationLaneCoverageImpact, number> = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  blocks_release: 4,
+}
+
 async function validateLaneCompletionProof(root: string, lane: OperationLane, proof: LaneCompletionProof) {
   const blockers: string[] = []
   if (proof.operationID !== lane.operationID) blockers.push("proof operationID does not match lane")
@@ -260,6 +268,16 @@ async function persistLaneTerminalProof(
   }
   const blockers: string[] = []
   if (!proof.summary) blockers.push(`${lane.id}: ${status} lanes require summary`)
+  if (lane.releaseRequired === true && input.releaseRequired === false) {
+    blockers.push(`${lane.id}: releaseRequired cannot be downgraded by ${status}`)
+  }
+  if (
+    lane.coverageImpact &&
+    input.coverageImpact &&
+    COVERAGE_RANK[input.coverageImpact] < COVERAGE_RANK[lane.coverageImpact]
+  ) {
+    blockers.push(`${lane.id}: coverageImpact cannot be downgraded from ${lane.coverageImpact} to ${input.coverageImpact}`)
+  }
   if (!blockers.length) await persistLaneCompletionProof(root, proof)
   return { proof, blockers }
 }

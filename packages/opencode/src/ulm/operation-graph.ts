@@ -547,9 +547,15 @@ export function buildOperationGraph(input: OperationScheduleInput): OperationGra
 export function validateOperationGraph(graph: OperationGraphRecord) {
   const gaps: string[] = []
   const ids = new Set(graph.lanes.map((lane) => lane.id))
-  const requiredLanes = graph.lanes.some((lane) => lane.id === "network_discovery")
+  const isInternalNetwork = graph.lanes.some((lane) => lane.id === "network_discovery")
+  const requiredLanes = isInternalNetwork
     ? ["network_discovery", "recon", "service_inventory", "finding_validation", "evidence_normalization", "report_writing", "report_review", "operator_summary"]
     : REQUIRED_OPERATION_LANES
+  if (isInternalNetwork) {
+    for (const lane of ["district_profile", "person_recon", "identity_graph", "identity_auth_review", "saas_cloud_review"]) {
+      if (ids.has(lane)) gaps.push(`internal-network graph must not include ${lane}`)
+    }
+  }
   for (const required of requiredLanes) {
     if (!ids.has(required)) gaps.push(`missing required lane: ${required}`)
   }
@@ -630,6 +636,30 @@ function markdown(graph: OperationGraphRecord) {
   ].join("\n")
 }
 
+async function archiveStaleLaneProofs(root: string, laneIDs: Set<string>, now: string) {
+  const completeDir = path.join(root, "lane-complete")
+  const archiveDir = path.join(root, "lane-complete-stale", now.replace(/[:.]/g, "-"))
+  let archived = 0
+  try {
+    const entries = await fs.readdir(completeDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue
+      const laneID = entry.name.slice(0, -".json".length)
+      const proofPath = path.join(completeDir, entry.name)
+      const proof = await Bun.file(proofPath).json().catch(() => undefined)
+      const completedAt = typeof proof?.completedAt === "string" ? Date.parse(proof.completedAt) : Number.NaN
+      const staleByAge = Number.isFinite(completedAt) && completedAt < Date.parse(now)
+      if (laneIDs.has(laneID) && !staleByAge) continue
+      await fs.mkdir(archiveDir, { recursive: true })
+      await fs.rename(proofPath, path.join(archiveDir, entry.name))
+      archived++
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+  return archived
+}
+
 export async function writeOperationGraph(worktree: string, input: OperationScheduleInput) {
   const graph = buildOperationGraph(input)
   const gaps = validateOperationGraph(graph)
@@ -638,7 +668,12 @@ export async function writeOperationGraph(worktree: string, input: OperationSche
   const json = path.join(root, "plans", "operation-graph.json")
   const md = path.join(root, "plans", "operation-graph.md")
   await fs.mkdir(path.dirname(json), { recursive: true })
+  const archivedStaleLaneProofs = await archiveStaleLaneProofs(
+    root,
+    new Set(graph.lanes.map((lane) => lane.id)),
+    graph.createdAt,
+  )
   await fs.writeFile(json, JSON.stringify(graph, null, 2) + "\n")
   await fs.writeFile(md, markdown(graph))
-  return { operationID: graph.operationID, json, markdown: md, lanes: graph.lanes.length }
+  return { operationID: graph.operationID, json, markdown: md, lanes: graph.lanes.length, archivedStaleLaneProofs }
 }

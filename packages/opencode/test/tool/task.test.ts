@@ -16,7 +16,7 @@ import { OperationResumeTool } from "@/tool/operation_resume"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import { TaskListTool } from "@/tool/task_list"
 import { TaskRestartTool } from "@/tool/task_restart"
-import { TaskStatusTool } from "@/tool/task_status"
+import { TaskStatusTool, taskStatusWaitTimeout } from "@/tool/task_status"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
@@ -555,6 +555,24 @@ describe("tool.task", () => {
     }),
   )
 
+  it.effect("caps ULM operation task_status waits", () =>
+    Effect.sync(() => {
+    expect(
+      taskStatusWaitTimeout({
+        wait: true,
+        requestedTimeout: 120_000,
+        job: {
+          id: "task-1",
+          type: "task",
+          status: "running",
+          startedAt: Date.now(),
+          metadata: { operationID: "quick-network-15min" },
+        },
+      }),
+    ).toBe(30_000)
+    }),
+  )
+
   it.instance("background job metadata survives BackgroundJob service reload", () =>
     Effect.gen(function* () {
       const storage = yield* Storage.Service
@@ -901,7 +919,7 @@ describe("tool.task", () => {
           status: "running",
           summary: "Validation lane was running before reload.",
           nextActions: ["Recover stale validation lane"],
-          activeTasks: [schoolTask.id],
+          activeTasks: ["network_discovery", schoolTask.id, "ses_deadactive"],
         }),
       )
       yield* Effect.addFinalizer(() =>
@@ -1157,7 +1175,74 @@ describe("tool.task", () => {
       expect(resumed.school.info?.status).toBe("completed")
       expect(resumed.school.info?.output).toBe("auto-recovered school output")
       expect(resumed.status.operation?.summary).toContain("Recovered 1 background lane during operation resume")
-      expect(resumed.status.operation?.nextActions).toContain("Poll recovered background lanes with task_status")
+      expect(resumed.status.operation?.nextActions).toContain(
+        "Poll recovered background lanes once with task_status wait=true timeout_ms<=30000; if they are still running and no fresh lane-owned artifacts appeared, block the lane instead of waiting in prose",
+      )
+      expect(resumed.status.operation?.activeTasks).toContain(schoolTask.id)
+      expect(resumed.status.operation?.activeTasks).not.toContain("ses_deadactive")
+    }),
+  )
+
+  it.instance("operation_resume does not restart stale tasks for a completed operation", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const sessions = yield* Session.Service
+      const storage = yield* Storage.Service
+      const jobs = yield* BackgroundJob.Service
+      const taskSession = yield* sessions.create({ parentID: chat.id, title: "completed stale lane" })
+      const worktree = (yield* TestInstance).directory
+      yield* Effect.promise(() =>
+        writeOperationCheckpoint(worktree, {
+          operationID: "done-school",
+          objective: "Do not recover completed operation",
+          stage: "handoff",
+          status: "complete",
+          summary: "Already handed off.",
+          nextActions: [],
+          activeTasks: [],
+        }),
+      )
+      yield* Effect.addFinalizer(() => storage.remove(["background_job", taskSession.id]).pipe(Effect.ignore))
+      yield* jobs.start({
+        id: taskSession.id,
+        type: "task",
+        title: "completed stale lane",
+        metadata: {
+          parentSessionID: chat.id,
+          sessionID: taskSession.id,
+          subagent: "validator",
+          subagent_type: "validator",
+          description: "completed stale lane",
+          prompt: "should not restart",
+          operationID: "done-school",
+          worktree,
+        },
+        run: Effect.never,
+      })
+
+      const resumed = yield* Effect.gen(function* () {
+        const resume = yield* OperationResumeTool
+        const resumeDef = yield* resume.init()
+        const result = yield* resumeDef.execute(
+          { operationID: "done-school", recoverStaleTasks: true },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps({ text: "should not run" }) },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        const status = yield* Effect.promise(() => readOperationStatus(worktree, "done-school"))
+        return { result, status }
+      }).pipe(Effect.provide(Layer.fresh(BackgroundJob.layer)))
+
+      expect(resumed.result.metadata.recovery?.restarted).toBe(0)
+      expect(resumed.result.output).toContain("recovery_skipped_reason: operation is already complete")
+      expect(resumed.status.operation?.status).toBe("complete")
     }),
   )
 

@@ -188,6 +188,36 @@ describe("ULM operation run controller", () => {
     expect(proof.status).toBe("skipped")
   })
 
+  test("does not let a tool downgrade release-required lane impact while skipping", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "skip_lane",
+      laneID: "recon",
+      summary: "Trying to make a release-required lane disappear.",
+      coverageImpact: "low",
+      releaseRequired: false,
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const lane = updated.lanes.find((item: { id: string }) => item.id === "recon")
+    expect(result.blockers).toContain("recon: releaseRequired cannot be downgraded by skipped")
+    expect(result.blockers).toContain("recon: coverageImpact cannot be downgraded from blocks_release to low")
+    expect(result.skippedLanes).not.toContain("recon")
+    expect(lane?.status).toBe("ready")
+    await expect(
+      fs.readFile(path.join(dir.path, ".ulmcode", "operations", "school", "lane-complete", "recon.json"), "utf8"),
+    ).rejects.toThrow()
+  })
+
   test("auto-completes running lanes only when lane completion proof references real artifacts", async () => {
     await using dir = await tmpdir({ git: true })
     const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

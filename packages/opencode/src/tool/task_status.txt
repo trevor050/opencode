@@ -1,3 +1,5 @@
 Check the status of a task subagent.
 
 Use this after launching `task` with `background: true`, after interruptions, or when resuming a long operation. Set `wait` to true when you need the result before continuing. A `stale` result means the task was persisted as running, but the process no longer owns the running fiber; when `restart_args` are present, use `task_restart` to continue that lane in the background before trusting the operation state.
+
+For ULMCode recovered lanes, use one bounded `wait: true` poll before deciding. If the task is still running after the bounded poll and the lane has not produced fresh lane-owned artifacts, do not keep waiting in text. Block or skip the lane with the exact recovery problem so the scheduler can make the next decision.

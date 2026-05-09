@@ -28,7 +28,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
-import { allowsULMTurnEndSupervisor, SessionPrompt } from "../../src/session/prompt"
+import { allowsULMTurnEndSupervisor, SessionPrompt, shouldSkipULMTurnEndSupervisorForOperationStatus } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -257,6 +257,13 @@ test("ULM turn-end supervisor auto-continuation is pentest-only", () => {
   expect(allowsULMTurnEndSupervisor("action")).toBe(false)
   expect(allowsULMTurnEndSupervisor("build")).toBe(false)
   expect(allowsULMTurnEndSupervisor(undefined)).toBe(false)
+})
+
+test("ULM turn-end supervisor skips terminal operation statuses", () => {
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("complete")).toBe(true)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("cancelled")).toBe(true)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus("running")).toBe(false)
+  expect(shouldSkipULMTurnEndSupervisorForOperationStatus(undefined)).toBe(false)
 })
 
 function providerCfg(url: string) {

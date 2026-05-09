@@ -72,6 +72,42 @@ describe("ULM operation graph", () => {
     expect(markdown).toContain("report_review")
   })
 
+  test("archives stale lane proofs when rescheduling with a different template", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "Home Network" })
+    const staleProof = `${dir.path}/.ulmcode/operations/home-network/lane-complete/district_profile.json`
+    const sameLaneStaleProof = `${dir.path}/.ulmcode/operations/home-network/lane-complete/recon.json`
+    await fs.mkdir(`${dir.path}/.ulmcode/operations/home-network/lane-complete`, { recursive: true })
+    await fs.writeFile(staleProof, "{}\n")
+    await fs.writeFile(
+      sameLaneStaleProof,
+      JSON.stringify({
+        operationID: "home-network",
+        laneID: "recon",
+        status: "skipped",
+        completedAt: "2026-01-01T00:00:00.000Z",
+        summary: "Old graph proof.",
+        artifacts: [],
+        evidenceRefs: [],
+      }) + "\n",
+    )
+
+    const result = await writeOperationGraph(dir.path, { operationID: "Home Network", template: "internal-network" })
+    const archiveRoot = `${dir.path}/.ulmcode/operations/home-network/lane-complete-stale`
+    const archiveBatches = await fs.readdir(archiveRoot)
+    const archivedProofs = await Promise.all(
+      archiveBatches.flatMap((batch) => [
+        Bun.file(`${archiveRoot}/${batch}/district_profile.json`).exists(),
+        Bun.file(`${archiveRoot}/${batch}/recon.json`).exists(),
+      ]),
+    )
+
+    expect(result.archivedStaleLaneProofs).toBe(2)
+    expect(await Bun.file(staleProof).exists()).toBe(false)
+    expect(await Bun.file(sameLaneStaleProof).exists()).toBe(false)
+    expect(archivedProofs.filter(Boolean)).toHaveLength(2)
+  })
+
   test("builds internal-network lanes without district recon baggage", () => {
     const graph = buildOperationGraph({
       operationID: "Home Network",
@@ -112,5 +148,16 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
     expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)
+  })
+
+  test("rejects stale internal-network graphs that accidentally use district lanes", () => {
+    const graph = buildOperationGraph({ operationID: "Home Network", template: "internal-network" })
+    graph.lanes.push({
+      ...graph.lanes[0]!,
+      id: "district_profile",
+      title: "District profile and public system map",
+    })
+
+    expect(validateOperationGraph(graph)).toContain("internal-network graph must not include district_profile")
   })
 })

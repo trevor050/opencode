@@ -64,6 +64,7 @@ import { SessionTable } from "./session.sql"
 import { activeOperationForContext } from "@/ulm/operation-context"
 import { effectiveULMContinuation, readULMConfig } from "@/ulm/config"
 import { superviseOperation, type OperationSupervisorAction } from "@/ulm/operation-supervisor"
+import { readOperationStatus } from "@/ulm/artifact"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -83,6 +84,10 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 
 export function allowsULMTurnEndSupervisor(agent: string | undefined) {
   return agent === "pentest"
+}
+
+export function shouldSkipULMTurnEndSupervisorForOperationStatus(status: string | undefined) {
+  return status === "complete" || status === "cancelled"
 }
 
 export interface Interface {
@@ -1479,6 +1484,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
       if (!operation) return false
+      const operationStatus = yield* Effect.tryPromise(() =>
+        readOperationStatus(operation.worktree, operation.operationID),
+      ).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      if (shouldSkipULMTurnEndSupervisorForOperationStatus(operationStatus?.operation?.status)) return false
       const continuation = effectiveULMContinuation(operation.goal, yield* Effect.promise(() => readULMConfig(ctx)))
       if (!continuation.turnEndReview) return false
       if (!continuation.enabled) return false
