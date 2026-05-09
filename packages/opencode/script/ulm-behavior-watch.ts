@@ -10,14 +10,26 @@ import {
 } from "../src/ulm/behavior-watch"
 
 const args = process.argv.slice(2)
+const repoRoot = path.resolve(import.meta.dir, "../../..")
 
 function argValue(name: string) {
   const index = args.indexOf(name)
   return index >= 0 ? args[index + 1] : undefined
 }
 
-const repoRoot = path.resolve(import.meta.dir, "../../..")
-const scenarioPath = path.resolve(
+async function resolveInput(value: string) {
+  if (path.isAbsolute(value)) return value
+  const cwdPath = path.resolve(value)
+  if (await Bun.file(cwdPath).exists()) return cwdPath
+  return path.join(repoRoot, value)
+}
+
+function resolveOutput(value: string) {
+  if (path.isAbsolute(value)) return value
+  return path.join(repoRoot, value)
+}
+
+const scenarioPath = await resolveInput(
   argValue("--scenario") ?? path.join(repoRoot, "tools/ulmcode-behavior-scenarios/k12-sso-roster-export-chain.json"),
 )
 const transcriptPath = argValue("--transcript")
@@ -37,13 +49,13 @@ if (!transcriptPath) {
 
 const result = auditBehaviorTranscript({
   scenario,
-  transcript: await Bun.file(path.resolve(transcriptPath)).text(),
+  transcript: await Bun.file(await resolveInput(transcriptPath)).text(),
 })
 const summary = summarizeBehaviorWatch(result)
 const output = outputPrefix
   ? {
-      json: `${path.resolve(outputPrefix)}.json`,
-      markdown: `${path.resolve(outputPrefix)}.md`,
+      json: `${resolveOutput(outputPrefix)}.json`,
+      markdown: `${resolveOutput(outputPrefix)}.md`,
     }
   : undefined
 

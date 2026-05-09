@@ -63,4 +63,52 @@ describe("ULM behavior watch script", () => {
     expect(parsed.output?.markdown).toBe(`${output}.md`)
     expect(await fs.readFile(`${output}.md`, "utf8")).toContain("broad-filesystem-search")
   })
+
+  test("accepts repo-relative scenario, transcript, and output paths from the package cwd", async () => {
+    const transcript = path.join(repoRoot, ".artifacts/ulm-behavior-watch/repo-relative-transcript.txt")
+    await fs.mkdir(path.dirname(transcript), { recursive: true })
+    await fs.writeFile(
+      transcript,
+      [
+        "operation_status reviewed before claims.",
+        "read evidence/raw/ev-sso-config.txt and evidence/raw/ev-sso-exchange.txt.",
+        "read evidence/raw/ev-roster-export.txt, evidence/raw/ev-vendor-sync.txt, and evidence/raw/ev-chain-audit-gap.txt.",
+        "attack_chain explains the SSO admin session to roster export to vendor sync to audit path.",
+        "report_outline covers attack path, evidence map, limitations, and remediation sequencing.",
+        "report_lint passed, report_render passed, operation_audit passed.",
+      ].join("\n"),
+    )
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        "--silent",
+        "script/ulm-behavior-watch.ts",
+        "--scenario",
+        "tools/ulmcode-behavior-scenarios/k12-sso-roster-export-chain.json",
+        "--transcript",
+        ".artifacts/ulm-behavior-watch/repo-relative-transcript.txt",
+        "--output",
+        ".artifacts/ulm-behavior-watch/repo-relative-watch",
+        "--json",
+      ],
+      {
+        cwd: packageRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    const parsed = JSON.parse(stdout) as { ok?: boolean; output?: { markdown?: string } }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.output?.markdown).toBe(path.join(repoRoot, ".artifacts/ulm-behavior-watch/repo-relative-watch.md"))
+  })
 })
