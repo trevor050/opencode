@@ -5,8 +5,13 @@ export const PUBLIC_UI_PATHS = new Set<string>([
   "/site.webmanifest",
   "/web-app-manifest-192x192.png",
   "/web-app-manifest-512x512.png",
+  "/ulm/credentials",
 ])
 
 export function isPublicUIPath(method: string, pathname: string) {
-  return method === "GET" && PUBLIC_UI_PATHS.has(pathname)
+  if (method === "GET" && PUBLIC_UI_PATHS.has(pathname)) return true
+  if (/^\/ulm\/operation\/[^/]+\/credentials$/.test(pathname)) return method === "GET" || method === "POST"
+  if (/^\/ulm\/operation\/[^/]+\/credentials\/submit$/.test(pathname)) return method === "POST"
+  if (/^\/ulm\/operation\/[^/]+\/credentials\/[^/]+$/.test(pathname)) return method === "DELETE"
+  return false
 }

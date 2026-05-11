@@ -2,8 +2,18 @@ Create a durable ULMCode operation graph and lane schedule.
 
 Use this after `operation_plan` and before launching broad execution. It converts the operation into required parallel lanes with dependencies, model routes, budgets, allowed tools, expected artifacts, safety mode, trust level, scan profile, and stale recovery policy. The graph is the resumable work queue for long-running operations; do not rely on prose-only plans for overnight execution.
 
+Call this once at operation start. During an active run, do not call `operation_schedule` again to repair progress, close lanes, or recover stale work; use `operation_run`, `operation_resume`, or `operation_recover`. Rebuilding an existing graph is refused unless `forceReschedule: true` is explicit, and that should be reserved for intentional pre-execution graph replacement because it archives existing lane proofs.
+
 Set `template` whenever the engagement type is known. Internal LAN/home-network operations must use `template: "internal-network"` so the graph starts with `network_discovery` and service-inventory lanes instead of district/person K-12 recon lanes. The default K-12 graph includes district profile, person recon, service/web inventory, identity graph, identity/SaaS review, evidence normalization, finding validation, evidence indexing, report writing, technical review, executive review, final report review, and operator handoff lanes.
+
+Use `template: "benchmark-suite"` for synthetic probe or eval runs that use supplied lab evidence instead of live browser/web-scanner output. Benchmark schedules keep the normal closeout/reporting graph, but the web inventory lane expects a synthetic evidence artifact instead of live `httpx` and screenshot files.
+
+Use `template: "report-only"` for report repair, final package closeout, replay, or synthetic scenarios where evidence/findings already exist and the job is to normalize evidence, validate findings, write/review/render reports, and complete operator handoff. Report-only schedules must not launch district, person, recon, web inventory, identity, or SaaS/cloud discovery lanes.
 
 For long and overnight operations, the schedule must account for both orchestrator and supervisor responsibilities. If the generated graph does not yet have explicit `orchestrator` and `supervisor` lanes, the plan must still name how `operation_supervise` will be invoked on startup, heartbeat, post-compaction, and pre-handoff reviews. A supervisor review can block launch, request recovery, queue validation, or require report/runtime fixes before handoff.
 
+Set `includeSupervisor: true` for any laptop, overnight, 20h+, 48h, unattended, or first-real-test run. The runtime scheduler and supervisor gates expect a durable `supervisor` lane for those operations; without it, scheduler progress can block and ask to regenerate the schedule.
+
 Do not schedule long foreground commands. Command lanes expected to exceed two minutes must be launched through `command_supervise` or background `task` lanes and reconciled through operation metadata.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values.

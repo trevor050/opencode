@@ -9,3 +9,5 @@ files such as `queues/http-discovery-hosts.txt`.
 The queue deduplicates profile/variable combinations and never emits destructive
 profiles. It does not launch commands by itself; use queued unit variables with
 `command_supervise` so approvals, scope, and runtime choices stay explicit.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in leads, variables, wordlists, output prefixes, or queue notes.

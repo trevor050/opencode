@@ -137,6 +137,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   const scenarioPath = path.join(root, "burnin", "burnin-supervisor-scenario.json")
   const scenarioWorktree = path.join(root, "burnin", "scenario-worktree")
   await fs.rm(scenarioWorktree, { recursive: true, force: true })
+  await fs.mkdir(path.join(scenarioWorktree, ".ulmcode", "operations"), { recursive: true })
   const goal = await createOperationGoal(scenarioWorktree, {
     operationID,
     objective: "Accelerated proof for authorized overnight ULM supervisor operation.",
@@ -158,6 +159,56 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   )
   await writeOperationPlan(scenarioWorktree, {
     operationID,
+    planningApproval: {
+      status: targetDurationHours >= 2 ? "approved" : "not_required",
+      discoveryCharterPath: path.join(scenarioRoot, "plans", "discovery-charter.md"),
+      notes: ["Burn-in scenario uses an isolated synthetic approval record."],
+    },
+    discoveryCharter: {
+      purpose: "Size the long-running assessment before unattended execution.",
+      researchQuestions: ["Which discovery lanes should run first?", "Which final-report gates must block handoff?"],
+      reconInvestments: ["Passive inventory", "Credential-safe tool preflight"],
+      operatorQuestions: ["Confirm authorized scope before credentialed testing."],
+      candidateDeepWorkLanes: ["web_inventory", "identity_review", "reporting"],
+      decisionCriteriaForFullPlan: ["Discovery artifacts exist", "Supervisor and final audit gates are active"],
+    },
+    timeBudget: {
+      targetHours: targetDurationHours,
+      finalizationWindowHours: Math.max(1, Math.min(4, Math.round(targetDurationHours * 0.15))),
+      durationFit: {
+        confidence: "duration_sized",
+        evidence: [`Burn-in scenario target is ${targetDurationHours}h.`],
+        overflowBacklog: ["Defer non-critical follow-up questions after the final handoff gate."],
+      },
+      allocations: [
+        {
+          stage: "recon",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.6).toFixed(2))),
+          work: "Bounded inventory and tool readiness.",
+        },
+        {
+          stage: "reporting",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.25).toFixed(2))),
+          work: "Evidence-backed report drafting and review.",
+        },
+        {
+          stage: "handoff",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.15).toFixed(2))),
+          work: "Final audit, runtime summary, and package assembly.",
+        },
+      ],
+    },
+    coverageContract: {
+      status: "met",
+      goals: ["Exercise supervisor recovery and final handoff gates."],
+      minimumEvidence: ["Daemon heartbeats", "Scheduler heartbeats", "Runtime summary", "Final operation audit"],
+      requiredLanes: ["recon", "supervisor", "reporting"],
+      allowedSkippedLanes: ["Credentialed probes when credentials are unavailable."],
+      fallbackRules: ["Record blockers with operator-safe fallback commands."],
+      retryRules: ["Recover stale command lanes before launching replacements."],
+      subagentOpportunities: ["Recon", "supervisor review", "report reviewer"],
+      reportGates: ["report_lint", "report_render", "runtime_summary", "operation_audit"],
+    },
     phases: [
       {
         stage: "recon",

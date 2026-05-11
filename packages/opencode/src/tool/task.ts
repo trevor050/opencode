@@ -14,6 +14,7 @@ import { Cause, Effect, Exit, Option, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { Instance } from "@/project/instance"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
+import { containsRawCredentialSecret } from "@/ulm/credential-safety"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { readULMConfig, type ULMRuntimeConfig } from "@/ulm/config"
 import { assertLaneToolAllowed, LANE_GUARDED_TOOLS } from "@/ulm/lane-tool-guard"
@@ -120,6 +121,18 @@ function laneChildToolOverrides(allowedTools: readonly string[] | undefined) {
   return Object.fromEntries(LANE_GUARDED_TOOLS.map((tool) => [tool, allowed.has(tool)]))
 }
 
+function operationScopedTaskPrompt(params: Schema.Schema.Type<typeof Parameters>) {
+  if (!params.operationID) return params.prompt
+  return [
+    `You are working inside an existing ULMCode operation: ${params.operationID}.`,
+    ...(params.laneID ? [`Operation lane: ${params.laneID}.`] : []),
+    "Do not create, edit, or delete project-level AGENTS.md, agents.md, agent notes, or repo memory files unless the parent prompt explicitly asks for that exact file change.",
+    "For operation continuity, use operation tools and artifacts under .ulmcode/operations/ for this operation.",
+    "",
+    params.prompt,
+  ].join("\n")
+}
+
 function runtimeUsageMessage(message: MessageV2.WithParts): RuntimeUsageMessage {
   return {
     role: message.info.role,
@@ -165,6 +178,16 @@ export const TaskTool = Tool.define(
       ctx: Tool.Context,
     ) {
       assertLaneToolAllowed("task")
+      if (
+        params.operationID &&
+        containsRawCredentialSecret({
+          description: params.description,
+          prompt: params.prompt,
+          command: params.command,
+        })
+      ) {
+        return yield* Effect.fail(new Error("operation-scoped task inputs must not contain raw credential secrets"))
+      }
       const cfg = yield* config.get()
 
       if (!ctx.extra?.bypassAgentCheck) {
@@ -268,7 +291,7 @@ export const TaskTool = Tool.define(
       const ops = ctx.extra?.promptOps as TaskPromptOps
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
-        const parts = yield* ops.resolvePromptParts(params.prompt)
+        const parts = yield* ops.resolvePromptParts(operationScopedTaskPrompt(params))
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
           sessionID: nextSession.id,

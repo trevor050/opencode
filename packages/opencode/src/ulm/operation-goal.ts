@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import { randomInt, randomUUID } from "crypto"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export type OperationGoalStatus = "active" | "complete"
 
@@ -73,6 +74,11 @@ export type OperationGoalCompleteResult = {
   blockers: string[]
   goal?: OperationGoalRecord
   files: OperationGoalFiles
+}
+
+type OperationAuditGate = {
+  ok?: unknown
+  blockers?: unknown
 }
 
 const defaultCompletionPolicy: OperationGoalCompletionPolicy = {
@@ -266,6 +272,7 @@ export async function createOperationGoal(
   input: OperationGoalCreateInput,
   options: { now?: string } = {},
 ): Promise<OperationGoalCreateResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("operation goals must not contain raw credential secrets")
   const operationID = await resolveOperationID(worktree, input.operationID)
   const files = goalFiles(worktree, operationID)
   const existing = await readJson<OperationGoalRecord>(files.json)
@@ -290,8 +297,19 @@ async function completionBlockers(worktree: string, goal: OperationGoalRecord) {
   if (goal.completionPolicy.requiresReportRender && !(await readableJson(path.join(root, "deliverables", "final", "manifest.json")))) {
     blockers.push("deliverables/final/manifest.json is missing or invalid")
   }
-  if (goal.completionPolicy.requiresOperationAudit && !(await readableJson(path.join(root, "deliverables", "operation-audit.json")))) {
-    blockers.push("deliverables/operation-audit.json is missing or invalid")
+  if (goal.completionPolicy.requiresOperationAudit) {
+    const audit = await readJson<OperationAuditGate>(path.join(root, "deliverables", "operation-audit.json"))
+    if (!audit) {
+      blockers.push("deliverables/operation-audit.json is missing or invalid")
+    } else {
+      const auditBlockers = Array.isArray(audit.blockers)
+        ? audit.blockers.filter((blocker): blocker is string => typeof blocker === "string" && blocker.trim().length > 0)
+        : []
+      if (audit.ok !== true) blockers.push("deliverables/operation-audit.json ok is not true")
+      if (auditBlockers.length) {
+        blockers.push(`deliverables/operation-audit.json has unresolved blockers: ${auditBlockers.slice(0, 3).join("; ")}`)
+      }
+    }
   }
   const stage = goal.completionPolicy.requiresStageGate
   if (stage && !(await readableJson(path.join(root, "deliverables", "stage-gates", `${slug(stage, "stage")}.json`)))) {

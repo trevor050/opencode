@@ -13,7 +13,10 @@
     "runtime summary"
   ],
   "requiredTerms": [
-    "operation_resume"
+    "operation_resume",
+    "report_lint",
+    "report_render",
+    "operation_audit"
   ],
   "forbiddenTerms": [
     ".ulmcode/operations/**",

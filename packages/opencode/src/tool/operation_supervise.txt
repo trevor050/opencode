@@ -15,3 +15,5 @@ Use review kinds:
 - `manual`: operator-requested review
 
 The tool writes supervisor artifacts under `.ulmcode/operations/<operation-id>/supervisor/`. Treat these artifacts as durable state. Do not rely on a chat summary as the supervisor record.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in latest assistant messages, operator messages, decisions, prompts, or supervisor artifacts.

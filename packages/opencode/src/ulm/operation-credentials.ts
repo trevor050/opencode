@@ -4,6 +4,7 @@ import path from "path"
 import { Effect } from "effect"
 import { Storage } from "@/storage/storage"
 import { operationPath, slug } from "./artifact"
+import { expectedCredentialServices } from "./credential-safety"
 
 export type OperationCredentialInput = {
   operationID: string
@@ -37,6 +38,7 @@ export type OperationCredentialRecord = {
 export type OperationCredentialReviewSubmission = {
   operationID: string
   submittedAt: string
+  expectedServices: string[]
   credentials: ReturnType<typeof redacted>[]
   file: string
 }
@@ -54,6 +56,23 @@ type CredentialIndex = {
   operationID: string
   updatedAt: string
   credentials: OperationCredentialRecord[]
+}
+
+const indexLocks = new Map<string, Promise<void>>()
+
+async function withIndexLock<T>(key: string, fn: () => Promise<T>) {
+  const previous = indexLocks.get(key) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(fn)
+  const cleanup = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  indexLocks.set(key, cleanup)
+  try {
+    return await next
+  } finally {
+    if (indexLocks.get(key) === cleanup) indexLocks.delete(key)
+  }
 }
 
 function indexPath(worktree: string, operationID: string) {
@@ -100,6 +119,10 @@ async function readPrivateJson<T>(file: string): Promise<T | undefined> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
     throw error
   }
+}
+
+async function readPlan(worktree: string, operationID: string) {
+  return readPrivateJson(path.join(operationPath(worktree, operationID), "plans", "operation-plan.json"))
 }
 
 function redacted(record: OperationCredentialRecord) {
@@ -162,38 +185,40 @@ export async function writeOperationCredential(storage: Storage.Interface, workt
   const operationID = slug(input.operationID, "operation")
   const credentialID = slug(input.credentialID ?? input.label, `credential-${Date.now()}`)
   const file = indexPath(worktree, operationID)
-  const index = await readIndex(file, operationID)
-  const existing = index.credentials.find((item) => item.credentialID === credentialID)
-  const now = new Date().toISOString()
-  const record: OperationCredentialRecord = {
-    credentialID,
-    label: input.label,
-    type: input.type,
-    username: input.username,
-    url: input.url,
-    target: input.target,
-    tags: input.tags ?? [],
-    notes: input.notes,
-    rules: input.rules,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  }
-  await Effect.runPromise(
-    storage.write<OperationCredentialSecret>(storageKey(operationID, credentialID), {
-      operationID,
+  return withIndexLock(file, async () => {
+    const index = await readIndex(file, operationID)
+    const existing = index.credentials.find((item) => item.credentialID === credentialID)
+    const now = new Date().toISOString()
+    const record: OperationCredentialRecord = {
       credentialID,
+      label: input.label,
+      type: input.type,
       username: input.username,
-      password: input.password ?? input.secret,
-      secret: input.secret ?? input.password,
+      url: input.url,
+      target: input.target,
+      tags: input.tags ?? [],
+      notes: input.notes,
+      rules: input.rules,
+      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    }),
-  )
-  await writeIndex(file, {
-    operationID,
-    updatedAt: now,
-    credentials: [...index.credentials.filter((item) => item.credentialID !== credentialID), record],
+    }
+    await Effect.runPromise(
+      storage.write<OperationCredentialSecret>(storageKey(operationID, credentialID), {
+        operationID,
+        credentialID,
+        username: input.username,
+        password: input.password ?? input.secret,
+        secret: input.secret ?? input.password,
+        updatedAt: now,
+      }),
+    )
+    await writeIndex(file, {
+      operationID,
+      updatedAt: now,
+      credentials: [...index.credentials.filter((item) => item.credentialID !== credentialID), record],
+    })
+    return { operationID, credentialID, index: file, credential: redacted(record) }
   })
-  return { operationID, credentialID, index: file, credential: redacted(record) }
 }
 
 export async function readOperationCredentials(worktree: string, input: { operationID: string; credentialID?: string }) {
@@ -203,6 +228,7 @@ export async function readOperationCredentials(worktree: string, input: { operat
   return {
     operationID,
     index: file,
+    expectedServices: expectedCredentialServices(await readPlan(worktree, operationID)),
     credentials: selectCredentials(index, input.credentialID ? [input.credentialID] : undefined).map(redacted),
   }
 }
@@ -234,6 +260,7 @@ export async function inspectOperationCredentials(
   return {
     operationID,
     index: file,
+    expectedServices: expectedCredentialServices(await readPlan(worktree, operationID)),
     credentials,
   }
 }
@@ -241,26 +268,40 @@ export async function inspectOperationCredentials(
 export async function submitOperationCredentialReview(worktree: string, input: { operationID: string }) {
   const operationID = slug(input.operationID, "operation")
   const file = reviewSubmissionPath(worktree, operationID)
-  const index = await readIndex(indexPath(worktree, operationID), operationID)
-  const submittedAt = new Date().toISOString()
-  const submission: OperationCredentialReviewSubmission = {
-    operationID,
-    submittedAt,
-    credentials: index.credentials.map(redacted),
-    file,
-  }
-  await writePrivateJson(file, submission)
-  return submission
+  return withIndexLock(indexPath(worktree, operationID), async () => {
+    const index = await readIndex(indexPath(worktree, operationID), operationID)
+    const submittedAt = new Date().toISOString()
+    const submission: OperationCredentialReviewSubmission = {
+      operationID,
+      submittedAt,
+      expectedServices: expectedCredentialServices(await readPlan(worktree, operationID)),
+      credentials: index.credentials.map(redacted),
+      file,
+    }
+    await writePrivateJson(file, submission)
+    return submission
+  })
 }
 
 export async function readOperationCredentialReview(worktree: string, input: { operationID: string }) {
   const operationID = slug(input.operationID, "operation")
+  const file = reviewSubmissionPath(worktree, operationID)
+  const expectedServices = expectedCredentialServices(await readPlan(worktree, operationID))
+  const submission = await readPrivateJson<OperationCredentialReviewSubmission>(file)
+  if (submission) {
+    return {
+      ...submission,
+      expectedServices: expectedServices.length ? expectedServices : submission.expectedServices ?? [],
+      file: submission.file ?? file,
+    }
+  }
   return (
-    (await readPrivateJson<OperationCredentialReviewSubmission>(reviewSubmissionPath(worktree, operationID))) ?? {
+    {
       operationID,
       submittedAt: "",
+      expectedServices,
       credentials: [],
-      file: reviewSubmissionPath(worktree, operationID),
+      file,
     }
   )
 }
@@ -274,9 +315,24 @@ export async function waitForOperationCredentialReview(
   const deadline = Date.now() + input.timeoutMillis
   for (;;) {
     const submission = await readPrivateJson<OperationCredentialReviewSubmission>(file)
-    if (submission?.submittedAt && Date.parse(submission.submittedAt) >= input.since) return submission
+    if (submission?.submittedAt && Date.parse(submission.submittedAt) >= input.since) {
+      return {
+        ...submission,
+        expectedServices: submission.expectedServices?.length
+          ? submission.expectedServices
+          : expectedCredentialServices(await readPlan(worktree, operationID)),
+      }
+    }
     if (Date.now() >= deadline) {
-      return submission ?? { operationID, submittedAt: "", credentials: [], file }
+      return (
+        submission ?? {
+          operationID,
+          submittedAt: "",
+          expectedServices: expectedCredentialServices(await readPlan(worktree, operationID)),
+          credentials: [],
+          file,
+        }
+      )
     }
     await new Promise((resolve) => setTimeout(resolve, 750))
   }
@@ -286,11 +342,13 @@ export async function deleteOperationCredential(storage: Storage.Interface, work
   const operationID = slug(input.operationID, "operation")
   const credentialID = slug(input.credentialID, "credential")
   const file = indexPath(worktree, operationID)
-  const index = await readIndex(file, operationID)
-  const next = index.credentials.filter((item) => item.credentialID !== credentialID)
-  await Effect.runPromise(storage.remove(storageKey(operationID, credentialID)))
-  await writeIndex(file, { operationID, updatedAt: new Date().toISOString(), credentials: next })
-  return { operationID, credentialID, index: file, deleted: next.length !== index.credentials.length }
+  return withIndexLock(file, async () => {
+    const index = await readIndex(file, operationID)
+    const next = index.credentials.filter((item) => item.credentialID !== credentialID)
+    await Effect.runPromise(storage.remove(storageKey(operationID, credentialID)))
+    await writeIndex(file, { operationID, updatedAt: new Date().toISOString(), credentials: next })
+    return { operationID, credentialID, index: file, deleted: next.length !== index.credentials.length }
+  })
 }
 
 export async function materializeOperationCredentials(

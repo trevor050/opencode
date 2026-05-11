@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import type { OperationGraphRecord } from "./operation-graph"
 
 async function readJson<T>(file: string): Promise<T | undefined> {
@@ -24,6 +25,7 @@ function laneID(job: BackgroundJob.Info) {
 }
 
 export function restartableOperationJobs(input: { operationID: string; jobs: BackgroundJob.Info[]; maxJobs?: number }) {
+  if (containsRawCredentialSecret(input)) throw new Error("operation recovery inputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const limit = input.maxJobs === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(input.maxJobs))
   return input.jobs
@@ -38,6 +40,7 @@ export function restartableOperationJobs(input: { operationID: string; jobs: Bac
 }
 
 export async function markRecoveredLanesRunning(worktree: string, input: { operationID: string; jobs: BackgroundJob.Info[] }) {
+  if (containsRawCredentialSecret(input)) throw new Error("operation recovery inputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const graphPath = path.join(root, "plans", "operation-graph.json")

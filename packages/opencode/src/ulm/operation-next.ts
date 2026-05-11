@@ -83,6 +83,18 @@ function selectReadyLane(graph: OperationGraphRecord) {
   })
 }
 
+async function readOperationScopeRules(worktree: string, operationID: string) {
+  const root = operationPath(worktree, operationID)
+  const plan = await readJson<{ scopeRules?: unknown[] }>(path.join(root, "plans", "operation-plan.json"))
+  return Array.isArray(plan?.scopeRules)
+    ? plan.scopeRules.filter((rule): rule is string => typeof rule === "string" && rule.trim().length > 0)
+    : []
+}
+
+function scopeRulePromptLines(scopeRules: string[]) {
+  return scopeRules.length ? ["Operation scope rules:", ...scopeRules.map((rule) => `- ${rule}`), ""] : []
+}
+
 function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date) {
   if (!goal || goal.status !== "active" || goal.targetDurationHours === undefined) return false
   const createdAt = Date.parse(goal.createdAt)
@@ -91,13 +103,13 @@ function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date)
   return elapsedHours < goal.targetDurationHours * 0.8
 }
 
-function promptForLane(lane: OperationLane) {
+function promptForLane(lane: OperationLane, scopeRules: string[]) {
   const specific =
     lane.id === "finding_validation"
       ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
       : lane.id === "report_writing"
-        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
-      : undefined
+        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering. Write a scaffold or first section immediately, then expand in bounded chunks with tool calls/checkpoints instead of spending minutes silently composing the whole report. For long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
+        : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,
     "",
@@ -107,6 +119,7 @@ function promptForLane(lane: OperationLane) {
     `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
     `Restart policy: max ${lane.restartPolicy.maxAttempts} attempts, stale after ${lane.restartPolicy.staleAfterMinutes} minutes.`,
     "",
+    ...scopeRulePromptLines(scopeRules),
     "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
     "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
@@ -181,6 +194,16 @@ export async function decideOperationNext(worktree: string, input: { operationID
       }
       return { action, path: await writeNextAction(worktree, action) }
     }
+    if (!incomplete && coverage?.ok) {
+      const action: OperationNextAction = {
+        operationID,
+        action: "stop",
+        reason: "all operation lanes are complete and coverage contract is release-ready",
+        recommendedTools: ["operation_checkpoint", "operation_audit", "report_lint"],
+        blockers: [],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
     if (!incomplete && targetWindowStillOpen(goal, now)) {
       const action: OperationNextAction = {
         operationID,
@@ -201,7 +224,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
         ? "no lane is ready because dependencies are still incomplete"
         : "all operation lanes are complete",
       laneID: incomplete?.id,
-      recommendedTools: incomplete ? ["operation_status", "task_status"] : ["operation_audit", "report_lint"],
+      recommendedTools: incomplete ? ["operation_status", "task_status"] : ["operation_checkpoint", "operation_audit", "report_lint"],
       blockers,
     }
     return { action, path: await writeNextAction(worktree, action) }
@@ -226,7 +249,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
     action: "launch_lane",
     reason: `lane ${lane.id} is ready and within governor limits`,
     lane,
-    prompt: promptForLane(lane),
+    prompt: promptForLane(lane, await readOperationScopeRules(worktree, operationID)),
     recommendedTools: lane.allowedTools,
     blockers: [],
     governor,

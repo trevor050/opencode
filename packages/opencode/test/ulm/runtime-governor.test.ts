@@ -45,6 +45,22 @@ describe("ULM runtime governor", () => {
     expect(decision.recommendedTools).toContain("operation_audit")
   })
 
+  test("treats nonpositive recorded budget as unknown instead of exhausted", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School" })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 0, budgetUSD: 0, remainingUSD: 0 },
+      compaction: { pressure: "low" },
+    })
+
+    const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School", laneID: "recon" })
+
+    expect(decision.action).toBe("continue")
+    expect(decision.remainingUSD).toBeUndefined()
+    expect(decision.blockers).not.toContain("operation budget exhausted")
+  })
+
   test("uses lane-specific spend before shared agent spend", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

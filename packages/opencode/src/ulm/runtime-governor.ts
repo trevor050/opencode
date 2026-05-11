@@ -74,9 +74,13 @@ function decideFromRuntime(input: {
   const recommendedTools = ["operation_status", "runtime_summary"]
   const usage = input.runtime?.usage
   const pressure = input.runtime?.compaction?.pressure
+  const hasPositiveBudget = usage?.budgetUSD !== undefined && usage.budgetUSD > 0
   const remainingUSD =
-    usage?.remainingUSD ??
-    (usage?.budgetUSD !== undefined && usage.costUSD !== undefined ? usage.budgetUSD - usage.costUSD : undefined)
+    hasPositiveBudget && usage?.remainingUSD !== undefined
+      ? usage.remainingUSD
+      : hasPositiveBudget && usage?.costUSD !== undefined
+        ? usage.budgetUSD! - usage.costUSD
+        : undefined
   const laneBudgetUSD = input.lane?.budget.maxUSD
   const laneSpent = input.lane
     ? (usage?.byLane?.[input.lane.id]?.costUSD ?? usage?.byAgent?.[input.lane.agent]?.costUSD)

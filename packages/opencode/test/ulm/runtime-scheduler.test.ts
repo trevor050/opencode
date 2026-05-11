@@ -66,6 +66,44 @@ async function writeLongSupervisedOperation(worktree: string, operationID = "Sch
 }
 
 describe("ULM runtime scheduler", () => {
+  test("rejects raw credential secrets before writing scheduler heartbeat artifacts", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    await expect(
+      runRuntimeScheduler(dir.path, {
+        operationID: "School\ntoken: raw-token-123",
+        maxCycles: 1,
+      }),
+    ).rejects.toThrow("runtime scheduler inputs must not contain raw credential secrets")
+  })
+
+  test("does not reject existing background job metadata while validating scheduler inputs", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 1,
+      backgroundJobs: [
+        {
+          id: "existing-task",
+          type: "task",
+          title: "Existing task",
+          status: "completed",
+          startedAt: Date.now(),
+          metadata: { operationID: "school", notes: "Historical bad metadata had token: raw-token-123." },
+        },
+      ],
+    })
+
+    expect(result.cycles).toHaveLength(1)
+  })
+
   test("writes heartbeat and advances operation lanes without chat-memory coordination", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
@@ -399,6 +437,106 @@ describe("ULM runtime scheduler", () => {
     expect(launched[0]?.laneID).toBe("report_repair")
     expect(launched[0]?.subagent_type).toBe("report-writer")
     expect(launched[0]?.prompt).toContain("reports/report-outline.md target_pages is too small")
+    expect(result.cycles[0]?.launchedJobs).toEqual(["job-report_repair"])
+  })
+
+  test("supervisor finalization window launches report closeout instead of more broad execution", async () => {
+    await using dir = await tmpdir({ git: true })
+    const goal = await createOperationGoal(dir.path, {
+      operationID: "School",
+      objective: "Authorized 48-hour school laptop assessment.",
+      targetDurationHours: 48,
+    })
+    const goalRecord = JSON.parse(await fs.readFile(goal.files.json, "utf8"))
+    goalRecord.createdAt = "2026-05-01T00:00:00.000Z"
+    await fs.writeFile(goal.files.json, JSON.stringify(goalRecord, null, 2) + "\n")
+    const discoveryCharter = {
+      purpose: "Plan the finalization handoff for a 48h school laptop run.",
+      researchQuestions: ["Which final report gates must run before handoff?"],
+      reconInvestments: ["Use stored evidence and graph state."],
+      operatorQuestions: ["Confirm finalization window timing."],
+      candidateDeepWorkLanes: ["report writing", "report review"],
+      decisionCriteriaForFullPlan: ["Finalization starts before the target window ends."],
+    }
+    await writeOperationPlan(dir.path, {
+      operationID: "School",
+      planningApproval: {
+        status: "approved",
+        discoveryCharterPath: "plans/discovery-charter.md",
+        approver: "operator",
+      },
+      discoveryCharter,
+      timeBudget: {
+        targetHours: 48,
+        finalizationWindowHours: 4,
+        allocations: [
+          { stage: "recon", hours: 30, work: "Authorized discovery." },
+          { stage: "validation", hours: 14, work: "Validate chains." },
+          { stage: "reporting", hours: 4, work: "Final reports and audit." },
+        ],
+        durationFit: {
+          confidence: "duration_sized",
+          evidence: ["48h target."],
+          overflowBacklog: ["Defer extra discovery once finalization starts."],
+        },
+      },
+      phases: [
+        {
+          stage: "recon",
+          objective: "Build a bounded inventory.",
+          actions: ["Run supervised inventory."],
+          successCriteria: ["Inventory exists."],
+          subagents: ["recon"],
+          noSubagents: ["Final handoff approval"],
+        },
+        {
+          stage: "reporting",
+          objective: "Build final report package.",
+          actions: ["Run report pipeline."],
+          successCriteria: ["operation_audit passes."],
+          subagents: ["report-writer", "report-reviewer"],
+          noSubagents: ["Risk acceptance"],
+        },
+      ],
+      coverageContract: {
+        status: "unmet",
+        goals: ["Complete required evidence and report closeout."],
+        minimumEvidence: ["operation graph lane proof", "final report package"],
+        requiredLanes: ["recon", "report_writing", "report_review"],
+        allowedSkippedLanes: [],
+        fallbackRules: ["Defer non-critical discovery once finalization opens."],
+        retryRules: ["Retry transient report failures."],
+        subagentOpportunities: ["report-writer", "report-reviewer"],
+        reportGates: ["report_lint", "report_render", "operation_audit"],
+      },
+      reportingCloseout: ["report_lint", "report_render", "runtime_summary", "operation_audit"],
+    })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await addSupervisorLane(dir.path, "School")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const launched: Array<{ laneID: string; prompt: string; description: string }> = []
+
+    const result = await runRuntimeScheduler(dir.path, {
+      operationID: "School",
+      maxCycles: 1,
+      supervisorIntervalMinutes: 0,
+      now: new Date("2026-05-02T21:00:00.000Z"),
+      launchModelLane: async (params) => {
+        launched.push({ laneID: params.laneID, prompt: params.prompt, description: params.description })
+        return { jobID: `job-${params.laneID}` }
+      },
+    })
+
+    expect(result.reason).toContain("finalization window is open")
+    expect(result.cycles[0]?.supervisor?.action).toBe("continue_reporting")
+    expect(launched[0]?.laneID).toBe("report_repair")
+    expect(launched[0]?.description).toBe("Start finalization report closeout")
+    expect(launched[0]?.prompt).toContain("protected finalization window")
+    expect(launched[0]?.prompt).toContain("Stop launching new broad discovery")
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-report_repair"])
   })
 

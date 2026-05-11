@@ -28,7 +28,10 @@ export const EvidenceNormalizeTool = Tool.define<typeof Parameters, Metadata, ne
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const result = yield* Effect.tryPromise(() => normalizeEvidence(Instance.worktree, params)).pipe(Effect.orDie)
+        const result = yield* Effect.tryPromise({
+          try: () => normalizeEvidence(Instance.worktree, params),
+          catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+        }).pipe(Effect.orDie)
         return {
           title: `Normalized ${result.leads.length} evidence leads`,
           output: formatEvidenceNormalization(result),

@@ -2,6 +2,8 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
+import { auditFirstRunObjective } from "./first-run-objective-audit"
 import { runRuntimeScheduler, type RuntimeSchedulerCycle } from "./runtime-scheduler"
 import type { OperationRunResult } from "./operation-run"
 import { markRecoveredLanesRunning, restartableOperationJobs } from "./operation-recovery"
@@ -28,6 +30,8 @@ export type RuntimeDaemonInput = {
   lastSupervisorReviewAt?: Parameters<typeof runRuntimeScheduler>[1]["lastSupervisorReviewAt"]
   supervisorReviewKind?: Parameters<typeof runRuntimeScheduler>[1]["supervisorReviewKind"]
   ensureReadinessProof?: Parameters<typeof runRuntimeScheduler>[1]["ensureReadinessProof"]
+  requireLaptopPreflight?: boolean
+  requireFirstRunLaunchReadiness?: boolean
   toolManifestPath?: Parameters<typeof runRuntimeScheduler>[1]["toolManifestPath"]
   recoverBackgroundJob?: (job: BackgroundJob.Info) => Promise<{ jobID?: string | undefined } | undefined>
   maxRecoveriesPerTick?: number
@@ -67,6 +71,28 @@ async function writeJson(file: string, value: unknown) {
 async function appendJsonl(file: string, value: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.appendFile(file, JSON.stringify(value) + "\n")
+}
+
+async function laptopPreflightGap(file: string, targetSeconds: number) {
+  const preflight = await readJson<{
+    status?: string
+    targetHours?: number
+    gaps?: unknown[]
+  }>(file)
+  if (!preflight) return "laptop-preflight.json is missing"
+  if (preflight.status !== "ready") {
+    const gaps = Array.isArray(preflight.gaps) && preflight.gaps.length ? `: ${preflight.gaps.join("; ")}` : ""
+    return `laptop preflight status is ${preflight.status ?? "missing"}${gaps}`
+  }
+  if ((preflight.targetHours ?? 0) * 60 * 60 < targetSeconds) {
+    return `laptop preflight target_hours=${preflight.targetHours ?? "missing"} is shorter than daemon duration`
+  }
+  return undefined
+}
+
+async function schoolLaptopTemplate(root: string) {
+  const plan = await readJson<{ templateName?: string }>(path.join(root, "plans", "operation-plan.json"))
+  return plan?.templateName === "school-laptop-48h"
 }
 
 async function lockIsStale(lockPath: string, staleLockSeconds: number, now: Date) {
@@ -121,6 +147,7 @@ function schedulerStoppedBeforeRuntimeWork(input: { stopped: boolean; reason: st
 }
 
 export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInput): Promise<RuntimeDaemonResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("runtime daemon inputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const daemonDir = path.join(root, "scheduler")
@@ -146,6 +173,56 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
   let stopped = false
   let reason = "runtime window elapsed"
   let consecutiveErrors = 0
+  let lastSchedulerError: string | undefined
+  const requireLaptopPreflight = input.requireLaptopPreflight ?? maxRuntimeSeconds >= 20 * 60 * 60
+
+  if (requireLaptopPreflight) {
+    const gap = await laptopPreflightGap(path.join(daemonDir, "laptop-preflight.json"), maxRuntimeSeconds)
+    if (gap) {
+      const ended = now()
+      const result: RuntimeDaemonResult = {
+        operationID,
+        lockPath,
+        heartbeatPath,
+        logPath,
+        cycles,
+        startedAt: started.toISOString(),
+        endedAt: ended.toISOString(),
+        elapsedSeconds: Math.max(0, (ended.getTime() - started.getTime()) / 1000),
+        stopped: true,
+        reason: `laptop preflight blocked: ${gap}`,
+        recoveredJobs,
+      }
+      await writeJson(heartbeatPath, result)
+      await appendJsonl(logPath, result)
+      return result
+    }
+  }
+
+  const requireFirstRunLaunchReadiness =
+    input.requireFirstRunLaunchReadiness ?? (requireLaptopPreflight && (await schoolLaptopTemplate(root)))
+  if (requireFirstRunLaunchReadiness) {
+    const readiness = await auditFirstRunObjective(worktree, { operationID })
+    if (!readiness.launchDecision.canStartDaemon) {
+      const ended = now()
+      const result: RuntimeDaemonResult = {
+        operationID,
+        lockPath,
+        heartbeatPath,
+        logPath,
+        cycles,
+        startedAt: started.toISOString(),
+        endedAt: ended.toISOString(),
+        elapsedSeconds: Math.max(0, (ended.getTime() - started.getTime()) / 1000),
+        stopped: true,
+        reason: `first-run launch readiness blocked: ${readiness.launchDecision.reason}`,
+        recoveredJobs,
+      }
+      await writeJson(heartbeatPath, result)
+      await appendJsonl(logPath, result)
+      return result
+    }
+  }
 
   await acquireLock(lockPath, staleLockSeconds, started)
   try {
@@ -158,7 +235,8 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         break
       }
       if (elapsedSeconds >= maxRuntimeSeconds) {
-        reason = "runtime window elapsed"
+        reason = lastSchedulerError ? `scheduler error before runtime window elapsed: ${lastSchedulerError}` : "runtime window elapsed"
+        stopped = !!lastSchedulerError
         break
       }
 
@@ -209,7 +287,8 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         now: tickTime,
       }).catch(async (error) => {
         consecutiveErrors += 1
-        reason = error instanceof Error ? error.message : String(error)
+        lastSchedulerError = error instanceof Error ? error.message : String(error)
+        reason = lastSchedulerError
         const heartbeat = {
           operationID,
           pid: process.pid,
@@ -237,7 +316,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
           reason = `scheduler error: ${reason}`
           return undefined
         }
-        if (errorBackoffSeconds > 0) await sleep(errorBackoffSeconds * 1000)
+        const remainingRuntimeSeconds = Math.max(0, maxRuntimeSeconds - elapsedSeconds)
+        const cappedBackoffSeconds = Math.min(errorBackoffSeconds, remainingRuntimeSeconds)
+        if (cappedBackoffSeconds > 0) await sleep(cappedBackoffSeconds * 1000)
         return undefined
       })
       if (!scheduler) {

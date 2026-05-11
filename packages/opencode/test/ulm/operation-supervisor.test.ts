@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { writeCoverageContract, writeOperationDiscoveryCharter, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import { writeCoverageContract, writeOperationCheckpoint, writeOperationDiscoveryCharter, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { operationPath } from "@/ulm/artifact"
@@ -104,6 +104,21 @@ describe("ULM operation supervisor", () => {
     expect(review.files?.markdown).toContain("latest.md")
   })
 
+  test("rejects raw credential secrets before writing supervisor review artifacts", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized overnight assessment", targetDurationHours: 20 })
+    await writeMinimalPlan(dir.path)
+
+    await expect(
+      superviseOperation(dir.path, {
+        operationID: "school",
+        reviewKind: "heartbeat",
+        latestAssistantMessage: "Operator pasted password: Summer2026!",
+        writeArtifacts: true,
+      }),
+    ).rejects.toThrow("operation supervisor reviews must not contain raw credential secrets")
+  })
+
   test("turn-end review carries plan excerpt and requires continued execution", async () => {
     await using dir = await tmpdir({ git: true })
     await createOperationGoal(dir.path, {
@@ -196,5 +211,137 @@ describe("ULM operation supervisor", () => {
     expect(reportingDecision?.action).toBe("continue_reporting")
     expect(reportingDecision?.requiredNextTool).toBe("report_outline")
     expect(reportingDecision?.requiredArtifacts).toContain("deliverables/operation-audit.json")
+  })
+
+  test("does not release handoff when the handoff stage gate is failing", async () => {
+    await using dir = await tmpdir({ git: true })
+    const goal = await createOperationGoal(dir.path, {
+      operationID: "school",
+      objective: "Authorized overnight assessment",
+      targetDurationHours: 20,
+    })
+    const goalRecord = JSON.parse(await fs.readFile(goal.files.json, "utf8"))
+    goalRecord.status = "complete"
+    goalRecord.completedAt = "2026-05-08T20:10:00.000Z"
+    await fs.writeFile(goal.files.json, JSON.stringify(goalRecord, null, 2) + "\n")
+    await writeOperationCheckpoint(dir.path, {
+      operationID: "school",
+      objective: "Authorized overnight assessment",
+      stage: "handoff",
+      status: "complete",
+      summary: "Final artifacts are being checked.",
+    })
+    await writeMinimalPlan(dir.path)
+    await writeRuntimeSummary(dir.path, {
+      operationID: "school",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "school")
+    await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
+    await fs.writeFile(path.join(root, "deliverables", "final", "manifest.json"), JSON.stringify({ operationID: "school" }) + "\n")
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify({ operationID: "school", ok: true, blockers: [] }, null, 2) + "\n",
+    )
+    await fs.mkdir(path.join(root, "deliverables", "stage-gates"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "stage-gates", "handoff.json"),
+      JSON.stringify({ operationID: "school", ok: false, gaps: ["final report was not reviewed"] }, null, 2) + "\n",
+    )
+
+    const review = await superviseOperation(dir.path, { operationID: "school", reviewKind: "pre_handoff", writeArtifacts: false })
+
+    expect(review.decisions.map((item) => item.action)).not.toContain("release_handoff")
+    const reportingDecision = review.decisions.find((item) => item.reason === "handoff stage gate has unresolved blockers")
+    expect(reportingDecision?.action).toBe("continue_reporting")
+    expect(reportingDecision?.requiredArtifacts).toContain("deliverables/stage-gates/handoff.json")
+  })
+
+  test("starts reporting closeout when a long run enters its protected finalization window", async () => {
+    await using dir = await tmpdir({ git: true })
+    const goal = await createOperationGoal(dir.path, {
+      operationID: "school",
+      objective: "Authorized 48 hour school laptop assessment.",
+      targetDurationHours: 48,
+    })
+    const goalRecord = JSON.parse(await fs.readFile(goal.files.json, "utf8"))
+    goalRecord.createdAt = "2026-05-01T00:00:00.000Z"
+    goalRecord.updatedAt = "2026-05-01T00:00:00.000Z"
+    await fs.writeFile(goal.files.json, JSON.stringify(goalRecord, null, 2) + "\n")
+    const discoveryCharter = {
+      purpose: "Plan the finalization handoff for a 48h school laptop run.",
+      researchQuestions: ["Which final report gates must run before handoff?"],
+      reconInvestments: ["Use stored evidence and graph state."],
+      operatorQuestions: ["Confirm finalization window timing."],
+      candidateDeepWorkLanes: ["report writing", "report review"],
+      decisionCriteriaForFullPlan: ["Finalization starts before the target window ends."],
+    }
+    await writeOperationPlan(dir.path, {
+      operationID: "school",
+      planningApproval: {
+        status: "approved",
+        discoveryCharterPath: "plans/discovery-charter.md",
+        approver: "operator",
+      },
+      discoveryCharter,
+      timeBudget: {
+        targetHours: 48,
+        finalizationWindowHours: 4,
+        allocations: [
+          { stage: "recon", hours: 30, work: "Authorized discovery and mapping." },
+          { stage: "validation", hours: 14, work: "Validate evidence-backed chains." },
+          { stage: "reporting", hours: 4, work: "Final reports, lint, render, runtime summary, and audit." },
+        ],
+        durationFit: {
+          confidence: "duration_sized",
+          evidence: ["48h target with protected finalization window."],
+          overflowBacklog: ["Defer nice-to-have discovery once finalization opens."],
+        },
+      },
+      phases: [
+        {
+          stage: "recon",
+          objective: "Inventory authorized targets.",
+          actions: ["Run supervised inventory"],
+          successCriteria: ["Evidence exists"],
+          subagents: ["recon"],
+          noSubagents: ["Final handoff approval"],
+        },
+        {
+          stage: "reporting",
+          objective: "Build the final report package.",
+          actions: ["Run report pipeline"],
+          successCriteria: ["operation_audit passes"],
+          subagents: ["report-writer", "report-reviewer"],
+          noSubagents: ["Risk acceptance"],
+        },
+      ],
+      coverageContract: {
+        status: "unmet",
+        goals: ["Complete required evidence and report closeout."],
+        minimumEvidence: ["operation graph lane proof", "final report package"],
+        requiredLanes: ["recon", "report_writing", "report_review"],
+        allowedSkippedLanes: [],
+        fallbackRules: ["Defer non-critical discovery once finalization opens."],
+        retryRules: ["Retry transient report failures."],
+        subagentOpportunities: ["report-writer", "report-reviewer"],
+        reportGates: ["report_lint", "report_render", "operation_audit"],
+      },
+      reportingCloseout: ["Run report_lint", "Run report_render", "Run runtime_summary", "Run operation_audit"],
+    })
+    await writeOperationGraph(dir.path, { operationID: "school", includeSupervisor: true })
+
+    const review = await superviseOperation(
+      dir.path,
+      { operationID: "school", reviewKind: "heartbeat", writeArtifacts: false },
+      { now: "2026-05-02T21:00:00.000Z" },
+    )
+
+    expect(review.decisions[0]?.action).toBe("continue_reporting")
+    expect(review.decisions[0]?.reason).toContain("finalization window is open")
+    expect(review.decisions[0]?.requiredNextTool).toBe("report_outline")
+    expect(review.decisions[0]?.modelPrompt).toContain("Stop launching new broad discovery")
+    expect(review.decisions.map((item) => item.reason)).not.toContain("coverage contract is not release-ready")
   })
 })

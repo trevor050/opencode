@@ -7,7 +7,9 @@ import { useUlm } from "@/context/ulm"
 import {
   artifactGroups,
   currentOperationFilesPath,
+  operationChatPath,
   operationCounts,
+  operationStatusGroups,
   operationTitle,
   reportPackageState,
 } from "@/utils/ulm-operation-ui"
@@ -67,21 +69,26 @@ function operationFilesPath(item: UlmOperationStatusSummary) {
 function SummaryBar(props: { operations: UlmOperationStatusSummary[] }) {
   const ulm = useUlm()
   const counts = createMemo(() => operationCounts(props.operations))
+  const groups = createMemo(() => operationStatusGroups(props.operations))
   const holds = createMemo(() => props.operations.filter((item) => ulm.confidence(item).level !== "ready").length)
 
   return (
-    <div class="grid gap-2 md:grid-cols-3">
+    <div class="grid gap-2 md:grid-cols-4">
       <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-4 py-3">
-        <div class="text-22-medium text-text-strong">{counts().running}</div>
-        <div class="mt-1 text-12-medium uppercase text-text-weak">marked running</div>
+        <div class="text-22-medium text-text-strong">{groups().active.length}</div>
+        <div class="mt-1 text-12-medium uppercase text-text-weak">active work</div>
       </div>
       <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-4 py-3">
-        <div class="text-22-medium text-text-strong">{counts().open}</div>
-        <div class="mt-1 text-12-medium uppercase text-text-weak">not closed</div>
+        <div class="text-22-medium text-text-strong">{groups().paused.length}</div>
+        <div class="mt-1 text-12-medium uppercase text-text-weak">paused</div>
       </div>
       <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-4 py-3">
         <div class="text-22-medium text-text-strong">{holds()}</div>
         <div class="mt-1 text-12-medium uppercase text-text-weak">need attention</div>
+      </div>
+      <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-4 py-3">
+        <div class="text-22-medium text-text-strong">{counts().total}</div>
+        <div class="mt-1 text-12-medium uppercase text-text-weak">total operations</div>
       </div>
     </div>
   )
@@ -127,7 +134,7 @@ function OperationCard(props: { item: UlmOperationStatusSummary; base: string })
             icon="speech-bubble"
             variant="secondary"
             size="small"
-            onClick={() => navigate(`${props.base}/session`)}
+            onClick={() => navigate(operationChatPath(props.base, props.item))}
           >
             Chat
           </Button>
@@ -146,10 +153,33 @@ function OperationCard(props: { item: UlmOperationStatusSummary; base: string })
   )
 }
 
+function OperationLane(props: { title: string; description: string; items: UlmOperationStatusSummary[]; base: string; empty: string }) {
+  return (
+    <section class="rounded-[8px] border border-border-weaker-base bg-background-stronger">
+      <div class="flex items-center justify-between gap-3 border-b border-border-weaker-base px-4 py-3">
+        <div class="min-w-0">
+          <h2 class="text-13-medium text-text-strong">{props.title}</h2>
+          <div class="mt-0.5 text-12-regular text-text-weak">{props.description}</div>
+        </div>
+        <Chip>{props.items.length}</Chip>
+      </div>
+      <div class="flex flex-col gap-2 p-3">
+        <Show
+          when={props.items.length > 0}
+          fallback={<div class="rounded-[8px] border border-dashed border-border-weak-base bg-surface-base p-4 text-13-regular text-text-weak">{props.empty}</div>}
+        >
+          <For each={props.items}>{(item) => <OperationCard item={item} base={props.base} />}</For>
+        </Show>
+      </div>
+    </section>
+  )
+}
+
 function OperationFiles(props: { item: UlmOperationStatusSummary }) {
   const platform = usePlatform()
   const [artifacts, setArtifacts] = createSignal<UlmArtifactFile[]>([])
   const [preview, setPreview] = createSignal<{ file: string; content: string }>()
+  const [selectedArtifact, setSelectedArtifact] = createSignal<string>()
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string>()
   const root = createMemo(() => operationFilesPath(props.item))
@@ -158,6 +188,7 @@ function OperationFiles(props: { item: UlmOperationStatusSummary }) {
     item.kind === "markdown" || item.kind === "json" || item.kind === "text" || item.kind === "html"
 
   const openFile = async (item: UlmArtifactFile) => {
+    setSelectedArtifact(item.file)
     if (previewable(item) && platform.readTextFile) {
       const content = await platform.readTextFile(item.path)
       setPreview({ file: item.file, content })
@@ -170,6 +201,8 @@ function OperationFiles(props: { item: UlmOperationStatusSummary }) {
     const directory = root()
     if (!directory || !platform.listUlmArtifacts) {
       setArtifacts([])
+      setSelectedArtifact()
+      setPreview()
       return
     }
     setLoading(true)
@@ -221,8 +254,15 @@ function OperationFiles(props: { item: UlmOperationStatusSummary }) {
                         {(artifact) => (
                           <button
                             type="button"
-                            class="rounded-[6px] px-2 py-1.5 text-left text-12-regular text-text-base hover:bg-surface-base-hover"
+                            class="rounded-[6px] border px-2 py-1.5 text-left text-12-regular transition-colors"
+                            classList={{
+                              "border-border-weak-base bg-surface-base text-text-strong shadow-[inset_2px_0_0_var(--border-strong-base)]":
+                                selectedArtifact() === artifact.file,
+                              "border-transparent text-text-base hover:border-border-weaker-base hover:bg-surface-base-hover":
+                                selectedArtifact() !== artifact.file,
+                            }}
                             onClick={() => void openFile(artifact)}
+                            aria-current={selectedArtifact() === artifact.file ? "true" : undefined}
                           >
                             <div class="truncate">{artifact.file}</div>
                           </button>
@@ -296,7 +336,7 @@ function OperationDetail(props: { item: UlmOperationStatusSummary; base: string 
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <Button icon="speech-bubble" variant="secondary" size="normal" onClick={() => navigate(`${props.base}/session`)}>
+            <Button icon="speech-bubble" variant="secondary" size="normal" onClick={() => navigate(operationChatPath(props.base, props.item))}>
               Open chat
             </Button>
           </div>
@@ -345,6 +385,7 @@ export default function OperationsPage() {
   const base = createMemo(() => `/${params.dir}`)
   const operations = createMemo(() => ulm.store.operations)
   const counts = createMemo(() => operationCounts(operations()))
+  const groups = createMemo(() => operationStatusGroups(operations()))
   const selected = createMemo(() =>
     params.operationID ? operations().find((item) => item.operationID === params.operationID) : undefined,
   )
@@ -362,23 +403,23 @@ export default function OperationsPage() {
         <header class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="text-11-medium uppercase text-text-weak">ULMCode Desktop</div>
-            <h1 class="mt-1 text-24-medium text-text-strong">Operations</h1>
+            <h1 class="mt-1 text-24-medium text-text-strong">Operation control</h1>
             <div class="mt-1 max-w-170 text-13-regular leading-5 text-text-base">
-              Pick a run, open its chat, or jump straight to the files it produced.
+              One place for active runs, paused work, finished handoffs, and the exact chat/files behind each operation.
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <Button icon="reset" variant="secondary" size="normal" onClick={() => void ulm.refresh()} disabled={ulm.store.refreshing}>
+            <Button icon="refresh" variant="secondary" size="normal" onClick={() => void ulm.refresh()} disabled={ulm.store.refreshing}>
               Refresh
             </Button>
             <Button
-              icon="checklist"
+              icon="stop"
               variant="secondary"
               size="normal"
               onClick={() => void ulm.closeOperations()}
               disabled={ulm.store.refreshing || counts().open === 0}
             >
-              Close all open
+              Pause active
             </Button>
             <Button icon="speech-bubble" variant="primary" size="normal" onClick={() => navigate(`${base()}/session`)}>
               Chat
@@ -399,18 +440,27 @@ export default function OperationsPage() {
           fallback={
             <>
               <SummaryBar operations={operations()} />
-              <section class="flex flex-col gap-2">
-                <Show
-                  when={operations().length > 0}
-                  fallback={
-                    <div class="rounded-[8px] border border-dashed border-border-weak-base bg-surface-base p-6 text-13-regular text-text-weak">
-                      No operations yet. Start in chat and ask for a scoped pentest plan.
-                    </div>
-                  }
-                >
-                  <For each={operations()}>{(item) => <OperationCard item={item} base={base()} />}</For>
-                </Show>
-              </section>
+              <OperationLane
+                title="Active"
+                description="Running, blocked, or planned operations that still need operator attention."
+                items={groups().active}
+                base={base()}
+                empty="No active operations. Start from chat when you want a scoped run."
+              />
+              <OperationLane
+                title="Paused"
+                description="Stopped early or intentionally held operations that can be resumed later."
+                items={groups().paused}
+                base={base()}
+                empty="No paused operations."
+              />
+              <OperationLane
+                title="Completed"
+                description="Operations marked complete with their files and report package still available."
+                items={groups().completed}
+                base={base()}
+                empty="No completed operations yet."
+              />
             </>
           }
         >

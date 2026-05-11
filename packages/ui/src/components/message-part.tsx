@@ -57,6 +57,7 @@ import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { useLocation } from "@solidjs/router"
 import { attached, inline, kind } from "./message-file"
+import { buildULMToolView, isULMTool } from "./ulm-tool-view"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -2285,6 +2286,83 @@ ToolRegistry.register({
     )
   },
 })
+
+function ULMOperationTool(props: ToolProps) {
+  const view = createMemo(() =>
+    buildULMToolView({
+      tool: props.tool,
+      input: props.input,
+      metadata: props.metadata,
+      output: props.output,
+    }),
+  )
+  const running = createMemo(() => props.status === "pending" || props.status === "running")
+
+  return (
+    <BasicTool
+      {...props}
+      defaultOpen={!running()}
+      icon="status"
+      trigger={{
+        title: view().title,
+        subtitle: view().subtitle,
+      }}
+    >
+      <div data-component="ulm-tool-card">
+        <Show when={view().rows.length > 0}>
+          <div data-slot="ulm-tool-rows">
+            <For each={view().rows}>
+              {(row) => (
+                <div data-slot="ulm-tool-row">
+                  <span data-slot="ulm-tool-row-label">{row.label}</span>
+                  <span data-slot="ulm-tool-row-value">{row.value}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+        <For each={view().sections}>
+          {(section) => (
+            <section data-slot="ulm-tool-section">
+              <div data-slot="ulm-tool-section-title">{section.title}</div>
+              <div data-slot="ulm-tool-section-rows">
+                <For each={section.rows}>
+                  {(row) => (
+                    <div data-slot="ulm-tool-section-row">
+                      <span data-slot="ulm-tool-section-index">{row.label}</span>
+                      <span data-slot="ulm-tool-section-value">{row.value}</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </section>
+          )}
+        </For>
+        <Show when={view().preview.length > 0}>
+          <pre data-slot="ulm-tool-preview">{view().preview.join("\n")}</pre>
+        </Show>
+      </div>
+    </BasicTool>
+  )
+}
+
+for (const name of [
+  "operation_goal",
+  "tool_inventory",
+  "operation_memory",
+  "operation_checkpoint",
+  "evidence_record",
+  "operation_plan",
+  "operation_run",
+  "operation_credentials",
+]) {
+  if (isULMTool(name)) {
+    ToolRegistry.register({
+      name,
+      render: ULMOperationTool,
+    })
+  }
+}
 
 ToolRegistry.register({
   name: "skill",

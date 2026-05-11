@@ -263,6 +263,20 @@
       ],
       "outputParsers": ["json"],
       "fallbacks": ["manual-secret-review"]
+    },
+    {
+      "id": "synthetic-local-fixture",
+      "purpose": "local-only synthetic evidence generation for live harness rehearsals",
+      "safety": "non_destructive",
+      "install": [
+        { "platform": "posix", "command": "printf available" }
+      ],
+      "validate": "printf available",
+      "safeExamples": [
+        "printf synthetic evidence > evidence/raw/synthetic-local-command.json"
+      ],
+      "outputParsers": ["json"],
+      "fallbacks": ["manual-synthetic-evidence-record"]
     }
   ],
   "commandProfiles": [
@@ -454,6 +468,17 @@
       "hardTimeoutSeconds": 14400,
       "restartable": true,
       "artifacts": ["evidence/raw/cloud-storage-baseline.json"]
+    },
+    {
+      "id": "synthetic-local-evidence",
+      "tool": "synthetic-local-fixture",
+      "safety": "non_destructive",
+      "template": "mkdir -p $(dirname {outputPrefix}.json) && printf '%s\\n' '{\"status\":\"synthetic-local-evidence\",\"source\":\"command_supervise\",\"scope\":\"local-only\"}' > {outputPrefix}.json",
+      "heartbeatSeconds": 5,
+      "idleTimeoutSeconds": 30,
+      "hardTimeoutSeconds": 120,
+      "restartable": true,
+      "artifacts": ["evidence/raw/synthetic-local-command.json"]
     }
   ]
 }

@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import { defaultToolManifestPath, readToolManifest, type CommandProfile } from "./tool-manifest"
 import type { EvidenceLead } from "./evidence-normalizer"
 
@@ -122,6 +123,11 @@ function dedupeValues(values: Array<string | undefined>) {
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))].sort()
 }
 
+function jobMatchesWorktree(job: BackgroundJob.Info, worktree: string) {
+  const metadataWorktree = job.metadata?.worktree
+  return typeof metadataWorktree !== "string" || path.resolve(metadataWorktree) === path.resolve(worktree)
+}
+
 function httpSurface(lead: EvidenceLead) {
   if (lead.url?.startsWith("http://") || lead.url?.startsWith("https://")) return lead.url
   if (lead.kind === "service" && lead.host && (lead.port === 80 || lead.port === 8080)) return `http://${lead.host}:${lead.port}`
@@ -165,6 +171,7 @@ function addUnit(input: {
 }
 
 export async function buildWorkQueue(worktree: string, input: WorkQueueInput): Promise<WorkQueueResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("work queues must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const manifest = await readToolManifest(input.manifestPath ?? defaultToolManifestPath(worktree))
@@ -173,6 +180,7 @@ export async function buildWorkQueue(worktree: string, input: WorkQueueInput): P
   const current = await readJson<WorkQueueRecord>(queuePath)
   const existing = new Map((current?.units ?? []).map((unit) => [unit.id, unit]))
   const leads = (await readJson<LeadsRecord>(path.join(root, "leads.json")))?.leads ?? []
+  if (containsRawCredentialSecret(leads)) throw new Error("work queues must not contain raw credential secrets")
   const now = new Date().toISOString()
   const generated: WorkUnit[] = []
   const skipped: string[] = []
@@ -261,6 +269,7 @@ export async function buildWorkQueue(worktree: string, input: WorkQueueInput): P
   }
 
   const units = [...(current?.units ?? []), ...generated].sort((a, b) => a.id.localeCompare(b.id))
+  if (containsRawCredentialSecret(units)) throw new Error("work queues must not contain raw credential secrets")
   await writeJson(queuePath, { operationID, generatedAt: now, units } satisfies WorkQueueRecord)
   return { operationID, queuePath, inputFiles, generated: generated.length, skipped, units }
 }
@@ -330,6 +339,7 @@ export async function syncWorkQueueJobs(
     const metadataOperation = job.metadata?.operationID
     const workUnitID = job.metadata?.workUnitID
     if (metadataOperation !== operationID || typeof workUnitID !== "string") continue
+    if (!jobMatchesWorktree(job, worktree)) continue
     const unit = unitsByID.get(workUnitID)
     if (!unit) continue
     unit.jobID = job.id

@@ -301,6 +301,25 @@ export function credentialVaultHtml() {
         color: var(--quiet);
         font-size: 10px;
       }
+      .requirements {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        padding: 12px;
+      }
+      .requirement-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--quiet);
+        font-size: 10px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .requirement-row.met { color: var(--accent); }
+      .requirement-row.missing { color: var(--danger); }
       .handle-code {
         color: var(--accent);
         flex: 0 0 auto;
@@ -364,6 +383,10 @@ export function credentialVaultHtml() {
           <button data-tab="overview">overview <span id="credential-count"></span></button>
         </nav>
         <div class="content">
+          <div class="requirements">
+            <div class="requirement-row"><span>expected services</span><span id="expected-services">none</span></div>
+            <div class="requirement-row"><span>missing services</span><span id="missing-services">none</span></div>
+          </div>
           <section id="tab-add" class="view active">
             <div class="section-head">
               <span>Define Secret</span>
@@ -440,6 +463,7 @@ export function credentialVaultHtml() {
       const apiBase = "/ulm/operation/" + encodeURIComponent(operationID) + "/credentials"
       let mode = "structured"
       let credentials = []
+      let expectedServices = []
       const fieldConfigs = {
         "Router/Admin Login": {
           username: ["user", "Router username"],
@@ -547,6 +571,14 @@ export function credentialVaultHtml() {
 
       function render() {
         document.getElementById("credential-count").textContent = credentials.length ? "(" + credentials.length + ")" : ""
+        const credentialText = credentials.map((item) => [item.credentialID, item.label, item.type, item.username, item.url, item.target, ...(item.tags || [])].join(" ").toLowerCase()).join("\\n")
+        const missingServices = expectedServices.filter((service) => !credentialText.includes(service))
+        const expectedEl = document.getElementById("expected-services")
+        const missingEl = document.getElementById("missing-services")
+        expectedEl.textContent = expectedServices.length ? expectedServices.join(", ") : "none"
+        missingEl.textContent = missingServices.length ? missingServices.join(", ") : "none"
+        missingEl.parentElement.classList.toggle("missing", missingServices.length > 0)
+        missingEl.parentElement.classList.toggle("met", expectedServices.length > 0 && missingServices.length === 0)
         const root = document.getElementById("handles")
         root.innerHTML = credentials.length
           ? credentials.map((item) => [
@@ -578,6 +610,7 @@ export function credentialVaultHtml() {
         try {
           const result = await request(apiBase + apiQuery)
           credentials = result.credentials || []
+          expectedServices = result.expectedServices || []
           render()
         } catch (error) {
           setMessage("load failed: " + error.message, true)
@@ -587,6 +620,7 @@ export function credentialVaultHtml() {
       async function save(payload) {
         const result = await request(apiBase + apiQuery, { method: "POST", body: JSON.stringify(payload) })
         credentials = result.credentials || []
+        expectedServices = result.expectedServices || expectedServices
         render()
         selectedTab("overview")
         setMessage("credential saved. raw secret stayed out of chat.")
@@ -609,6 +643,7 @@ export function credentialVaultHtml() {
       async function submitReview() {
         const result = await request(apiBase + "/submit" + apiQuery, { method: "POST", body: JSON.stringify({}) })
         credentials = result.credentials || []
+        expectedServices = result.expectedServices || expectedServices
         render()
         setMessage("credential review submitted to agent: " + credentials.length + " credential(s)")
       }

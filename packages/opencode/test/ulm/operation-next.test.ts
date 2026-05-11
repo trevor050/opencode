@@ -41,6 +41,37 @@ describe("ULM operation next action", () => {
     expect(result.action.recommendedTools).toContain("district_profile")
   })
 
+  test("includes operation plan scope rules in next lane prompts", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "plans"), { recursive: true })
+    await fs.writeFile(
+      path.join(operationRoot, "plans", "operation-plan.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          scopeRules: ["Only scan 10.20.0.0/16.", "Exclude payroll systems."],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await decideOperationNext(dir.path, { operationID: "School" })
+
+    expect(result.action.action).toBe("launch_lane")
+    if (result.action.action !== "launch_lane") throw new Error("expected launch_lane")
+    expect(result.action.prompt).toContain("Operation scope rules:")
+    expect(result.action.prompt).toContain("Only scan 10.20.0.0/16.")
+    expect(result.action.prompt).toContain("Exclude payroll systems.")
+  })
+
   test("does not launch the supervisor lane as normal operation work", async () => {
     await using dir = await tmpdir({ git: true })
     const written = await writeOperationGraph(dir.path, {
@@ -130,6 +161,46 @@ describe("ULM operation next action", () => {
     expect(result.action.action).toBe("wait")
     expect(result.action.reason).toContain("coverage contract is not release-ready")
     expect(result.action.recommendedTools).toContain("operation_supervise")
+  })
+
+  test("stops for final audit when lanes are complete and coverage is released even if goal window remains open", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(
+      dir.path,
+      { operationID: "School", objective: "Authorized internal assessment", targetDurationHours: 48 },
+      { now: "2026-05-05T00:00:00.000Z" },
+    )
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await writeCoverageContract(dir.path, {
+      operationID: "School",
+      status: "released",
+      goals: ["Complete all scheduled work."],
+      minimumEvidence: ["All required lanes complete."],
+      requiredLanes: ["recon", "web_inventory", "finding_validation", "report_review"],
+      allowedSkippedLanes: [],
+      fallbackRules: ["Use report gates for closeout."],
+      retryRules: ["Retry failed report gates before audit."],
+      subagentOpportunities: ["report review"],
+      reportGates: ["operation_audit finalHandoff=true"],
+    })
+
+    const result = await decideOperationNext(dir.path, {
+      operationID: "School",
+      now: "2026-05-05T00:20:00.000Z",
+    })
+
+    expect(result.action.action).toBe("stop")
+    expect(result.action.reason).toContain("coverage contract is release-ready")
+    expect(result.action.recommendedTools).toContain("operation_checkpoint")
+    expect(result.action.recommendedTools).toContain("operation_audit")
   })
 
   test("continues coverage when all lanes complete but the coverage contract is unmet", async () => {

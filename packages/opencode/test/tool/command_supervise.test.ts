@@ -61,4 +61,39 @@ describe("tool.command_supervise", () => {
         ),
     })
   })
+
+  test("rejects raw credential secrets before writing supervised command plans", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* CommandSuperviseTool
+            const def = yield* tool.init()
+            const exit = yield* def
+              .execute(
+                {
+                  operationID: "school",
+                  profileID: "icmp-sweep",
+                  variables: {
+                    target: "10.0.0.0/24",
+                    password: "Summer2026!",
+                  },
+                  outputPrefix: "evidence/raw/sweep",
+                  manifestPath: path.resolve(process.cwd(), "../../tools/ulmcode-profile/tool-manifest.json"),
+                  dryRun: true,
+                },
+                ctx,
+              )
+              .pipe(Effect.exit)
+
+            expect(exit._tag).toBe("Failure")
+            if (exit._tag !== "Failure") return
+            const message = String(Cause.squash(exit.cause))
+            expect(message).toContain("supervised command inputs must not contain raw credential secrets")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
 })
