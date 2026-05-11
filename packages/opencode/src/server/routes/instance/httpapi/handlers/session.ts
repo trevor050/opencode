@@ -15,6 +15,7 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
+import * as EffectLogger from "@opencode-ai/core/effect/logger"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { NotFoundError } from "@/storage/storage"
 import { NamedError } from "@opencode-ai/core/util/error"
@@ -269,7 +270,11 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
               ...ctx.payload,
               sessionID: ctx.params.sessionID,
             })
-            .pipe(Effect.provideService(InstanceRef, instance), Effect.provideService(WorkspaceRef, workspace)),
+            .pipe(
+              Effect.provideService(InstanceRef, instance),
+              Effect.provideService(WorkspaceRef, workspace),
+              Effect.provide(EffectLogger.layer),
+            ),
         ).pipe(
           Stream.map((message) => JSON.stringify(message)),
           Stream.encodeText,
@@ -282,7 +287,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
     }) {
-      yield* promptSvc.prompt({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
+      const runPrompt = promptSvc.prompt({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             yield* Effect.logError("prompt_async failed", { sessionID: ctx.params.sessionID, cause })
@@ -292,8 +297,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
             })
           }),
         ),
-        Effect.forkIn(scope, { startImmediately: true }),
+        Effect.provide(EffectLogger.layer),
       )
+      yield* Effect.forkIn(runPrompt, scope, { startImmediately: true })
       return HttpApiSchema.NoContent.make()
     })
 
