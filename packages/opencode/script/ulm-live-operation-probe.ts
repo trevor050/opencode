@@ -676,7 +676,7 @@ const report = hasArg("--replay")
       startupTimeoutMs: parseStartupTimeout(argValue("--startup-timeout-ms"), timeoutMs),
       idleTimeoutMs: parseIdleTimeout(argValue("--idle-timeout-ms"), timeoutMs),
       runnerCommand: argValue("--runner-command"),
-      model: argValue("--model") ?? "openai/gpt-5.5-fast",
+      model: argValue("--model") ?? "openai/gpt-5.5",
       agent: argValue("--agent") ?? "pentest",
     })
 

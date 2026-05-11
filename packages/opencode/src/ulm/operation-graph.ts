@@ -576,19 +576,23 @@ function routeFor(input: OperationScheduleInput, route: string) {
     (route === "small"
       ? "openai/gpt-5.4-mini-fast"
       : route === "throughput"
-        ? "opencode-go/qwen3.6-plus"
-        : "openai/gpt-5.5-fast")
+        ? "openai/gpt-5.4-mini-fast"
+        : "openai/gpt-5.5")
   )
 }
 
 function fallbackRoutesFor(input: OperationScheduleInput, route: string, primary: string) {
   const defaults =
     route === "throughput"
-      ? ["openai/gpt-5.4-mini-fast", "openai/gpt-5.5-fast"]
+      ? ["openai/gpt-5.5"]
       : route === "small"
-        ? ["opencode-go/qwen3.6-plus", "openai/gpt-5.5-fast"]
-        : ["openai/gpt-5.4-mini-fast", "opencode-go/qwen3.6-plus"]
+        ? ["openai/gpt-5.5"]
+        : ["openai/gpt-5.4-mini-fast"]
   return [...new Set([...(input.fallbackModelRoutes?.[route] ?? defaults)].filter((item) => item !== primary))]
+}
+
+function routeProvider(route: string) {
+  return route.split("/", 1)[0]
 }
 
 function laneForTemplate<
@@ -731,9 +735,11 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
       if (!ids.has(dependency)) gaps.push(`${lane.id}: depends on missing lane ${dependency}`)
     }
     if (!lane.modelRoute.includes("/")) gaps.push(`${lane.id}: modelRoute must include provider/model`)
+    else if (routeProvider(lane.modelRoute) !== "openai") gaps.push(`${lane.id}: modelRoute provider must be openai`)
     if (!lane.fallbackModelRoutes?.length) gaps.push(`${lane.id}: fallbackModelRoutes required`)
     for (const fallback of lane.fallbackModelRoutes ?? []) {
       if (!fallback.includes("/")) gaps.push(`${lane.id}: fallbackModelRoute must include provider/model`)
+      else if (routeProvider(fallback) !== "openai") gaps.push(`${lane.id}: fallbackModelRoute provider must be openai`)
       if (fallback === lane.modelRoute) gaps.push(`${lane.id}: fallbackModelRoutes must not repeat primary route`)
     }
     if (!lane.expectedArtifacts.length) gaps.push(`${lane.id}: expectedArtifacts required`)

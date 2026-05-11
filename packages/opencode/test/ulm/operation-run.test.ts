@@ -21,7 +21,7 @@ describe("ULM operation run controller", () => {
     expect(result.action).toBe("launch_lane")
     expect(result.laneID).toBe("district_profile")
     expect(result.taskParams?.background).toBe(true)
-    expect(result.taskParams?.modelRoute).toBe("opencode-go/qwen3.6-plus")
+    expect(result.taskParams?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
     expect(result.taskParams?.allowedTools).toEqual(["district_profile", "webfetch", "websearch", "evidence_record", "task", "operation_run"])
     expect(result.taskParams?.prompt).toContain("Use only the allowed tools listed above")
     expect(result.taskParams?.prompt).toContain("Bash, browser, and Playwright tools are unavailable")

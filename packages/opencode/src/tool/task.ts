@@ -44,7 +44,7 @@ export const Parameters = Schema.Struct({
     description: "Optional ULMCode operation lane ID used to reconcile background task completion with the operation graph.",
   }),
   modelRoute: Schema.optional(Schema.String).annotate({
-    description: "Optional provider/model route override for operation lanes, for example openai/gpt-5.5-fast.",
+    description: "Optional provider/model route override for operation lanes, for example openai/gpt-5.5.",
   }),
   allowedTools: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "Optional ULMCode lane tool allowlist enforced for the child task session.",

@@ -31,7 +31,8 @@ export function relevantBackgroundJobs(input: {
   jobs: BackgroundJob.Info[]
   worktree?: string
 }) {
-  return input.jobs.filter((job) =>
-    backgroundJobInScope({ job, operationID: input.operationID, worktree: input.worktree }),
-  )
+  const worktreeJobs = input.jobs.filter((job) => sameWorktree(backgroundJobWorktree(job), input.worktree))
+  const operationJobs = worktreeJobs.filter((job) => backgroundJobOperationID(job) === input.operationID)
+  if (operationJobs.length) return operationJobs
+  return worktreeJobs.filter((job) => backgroundJobOperationID(job) === undefined)
 }

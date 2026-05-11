@@ -123,6 +123,11 @@ function dedupeValues(values: Array<string | undefined>) {
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))].sort()
 }
 
+function nonBlank(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : undefined
+}
+
 function jobMatchesWorktree(job: BackgroundJob.Info, worktree: string) {
   const metadataWorktree = job.metadata?.worktree
   return typeof metadataWorktree !== "string" || path.resolve(metadataWorktree) === path.resolve(worktree)
@@ -231,6 +236,7 @@ export async function buildWorkQueue(worktree: string, input: WorkQueueInput): P
   }
 
   const contentDiscovery = profiles.get("content-discovery")
+  const contentDiscoveryWordlist = nonBlank(input.wordlist) ?? "wordlists/common.txt"
   if (contentDiscovery) {
     for (const url of urls.slice(0, maxUnits)) {
       addUnit({
@@ -239,7 +245,7 @@ export async function buildWorkQueue(worktree: string, input: WorkQueueInput): P
         operationID,
         laneID: "web_inventory",
         profile: contentDiscovery,
-        variables: { url, wordlist: input.wordlist ?? "wordlists/common.txt" },
+        variables: { url, wordlist: contentDiscoveryWordlist },
         outputPrefix: `evidence/raw/content-discovery-${slug(url, "url")}`,
         leadID: leads.find((lead) => httpSurface(lead) === url)?.id,
         rationale: `Conservative content discovery for ${url}`,

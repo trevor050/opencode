@@ -7,6 +7,7 @@ import { Shell } from "../../src/shell/shell"
 import {
   isDangerousProcessKillCommand,
   isULMForegroundScanCommand,
+  ulmForegroundScanPolicyMessage,
   isULMOperationArtifactShellRead,
   isULMOperationArtifactMutation,
   ShellTool,
@@ -108,6 +109,15 @@ describe("isULMForegroundScanCommand", () => {
 
   test.each(["nmap --version", "arp -a", "ifconfig en0 | grep inet"])("allows passive/version command: %s", (command) => {
     expect(isULMForegroundScanCommand(command)).toBe(false)
+  })
+
+  test("explains the supervised-scan policy without looking like a crash", () => {
+    const message = ulmForegroundScanPolicyMessage("nmap -sn 192.168.1.0/24")
+
+    expect(message).toContain("Intentional ULM safety policy")
+    expect(message).toContain("command_supervise")
+    expect(message).toContain("No scan was started")
+    expect(message).not.toContain("blocked")
   })
 })
 

@@ -148,7 +148,7 @@ function reportRepairTaskParams(
     subagent_type: "report-writer",
     operationID,
     laneID: REPORT_REPAIR_LANE_ID,
-    modelRoute: "openai/gpt-5.5-fast",
+    modelRoute: "openai/gpt-5.5",
     allowedTools: ["report_outline", "write", "report_lint", "report_render", "runtime_summary", "operation_audit"],
     background: true,
   }

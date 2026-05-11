@@ -121,6 +121,39 @@ describe("ULM work queue", () => {
     )
   })
 
+  test("uses the default content-discovery wordlist when the input wordlist is blank", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const manifest = path.join(dir.path, "manifest.json")
+    await writeManifest(manifest)
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(
+      path.join(root, "leads.json"),
+      JSON.stringify({
+        operationID: "school",
+        leads: [
+          {
+            id: "url-1",
+            kind: "url",
+            title: "Portal",
+            url: "https://portal.school.example",
+            severity: "info",
+            confidence: 0.8,
+            summary: "web",
+            evidence: [],
+            source: { parser: "httpx-jsonl", path: "httpx.jsonl" },
+          },
+        ],
+      }),
+    )
+
+    const result = await buildWorkQueue(dir.path, { operationID: "School", manifestPath: manifest, wordlist: "   " })
+
+    expect(result.units.find((unit) => unit.profileID === "content-discovery")?.variables.wordlist).toBe(
+      "wordlists/common.txt",
+    )
+  })
+
   test("rejects raw credential secrets before persisting work queues", async () => {
     await using dir = await tmpdir({ git: true })
     const root = operationPath(dir.path, "School")

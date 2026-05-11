@@ -2706,6 +2706,7 @@ export class Question extends HeyApiClient {
       directory?: string
       workspace?: string
       holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      answers?: Array<QuestionAnswer>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2718,6 +2719,7 @@ export class Question extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "holdMillis" },
+            { in: "body", key: "answers" },
           ],
         },
       ],

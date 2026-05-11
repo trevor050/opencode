@@ -14,6 +14,7 @@ import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/inst
 import { NpmConfig } from "@opencode-ai/core/npm-config"
 
 const log = Log.create({ service: "installation" })
+const RELEASE_REPO = "trevor050/ulmcode"
 
 export type Method = "curl" | "npm" | "yarn" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
 
@@ -55,7 +56,7 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
-export const USER_AGENT = `opencode/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
+export const USER_AGENT = `ulmcode/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
 
 export function isPreview() {
   return InstallationChannel !== "latest"
@@ -134,20 +135,67 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       )
 
       const getBrewFormula = Effect.fnUntraced(function* () {
+        const ulmTapFormula = yield* text(["brew", "list", "--formula", "trevor050/ulmcode/ulmcode"])
+        if (ulmTapFormula.includes("ulmcode")) return "trevor050/ulmcode/ulmcode"
+        const ulmFormula = yield* text(["brew", "list", "--formula", "ulmcode"])
+        if (ulmFormula.includes("ulmcode")) return "ulmcode"
         const tapFormula = yield* text(["brew", "list", "--formula", "anomalyco/tap/opencode"])
         if (tapFormula.includes("opencode")) return "anomalyco/tap/opencode"
         const coreFormula = yield* text(["brew", "list", "--formula", "opencode"])
         if (coreFormula.includes("opencode")) return "opencode"
-        return "opencode"
+        return "trevor050/ulmcode/ulmcode"
       })
 
       const upgradeCurl = Effect.fnUntraced(
         function* (target: string) {
-          const response = yield* httpOk.execute(HttpClientRequest.get("https://opencode.ai/install"))
-          const body = yield* response.text
-          const bodyBytes = new TextEncoder().encode(body)
-          const proc = ChildProcess.make("bash", [], {
-            stdin: Stream.make(bodyBytes),
+          const script = String.raw`
+set -euo pipefail
+target="$1"
+dest="$2"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) platform="darwin-arm64"; ext="zip" ;;
+  Darwin-x86_64) platform="darwin-x64-baseline"; ext="zip" ;;
+  Linux-aarch64|Linux-arm64) platform="linux-arm64"; ext="tar.gz" ;;
+  Linux-x86_64) platform="linux-x64-baseline"; ext="tar.gz" ;;
+  *) echo "Unsupported ULMCode curl upgrade platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+esac
+
+base="https://github.com/trevor050/ulmcode/releases/download/v\${target}"
+archive="$tmp/ulmcode.\${ext}"
+downloaded=""
+for prefix in ulmcode opencode; do
+  candidate="\${prefix}-\${platform}.\${ext}"
+  if curl -fL --retry 3 --connect-timeout 20 -o "$archive" "\${base}/\${candidate}"; then
+    downloaded="$candidate"
+    break
+  fi
+done
+
+if [ -z "$downloaded" ]; then
+  echo "No ULMCode release asset found for \${platform} in v\${target}" >&2
+  exit 1
+fi
+
+mkdir -p "$tmp/extract"
+case "$ext" in
+  zip) unzip -q "$archive" -d "$tmp/extract" ;;
+  tar.gz) tar -xzf "$archive" -C "$tmp/extract" ;;
+esac
+
+bin="$(find "$tmp/extract" -type f \( -path '*/bin/ulmcode' -o -name 'ulmcode' \) | head -1)"
+if [ -z "$bin" ]; then
+  echo "Downloaded \${downloaded}, but no ulmcode binary was found" >&2
+  exit 1
+fi
+
+chmod +x "$bin"
+mkdir -p "$(dirname "$dest")"
+install -m 0755 "$bin" "$dest"
+`
+          const proc = ChildProcess.make("bash", ["-lc", script, "ulmcode-upgrade", target, process.execPath], {
             env: { VERSION: target },
             extendEnv: true,
           })
@@ -180,6 +228,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
             { name: "yarn", command: () => text(["yarn", "global", "list"]) },
             { name: "pnpm", command: () => text(["pnpm", "list", "-g", "--depth=0"]) },
             { name: "bun", command: () => text(["bun", "pm", "ls", "-g"]) },
+            { name: "brew", command: () => text(["brew", "list", "--formula", "ulmcode"]) },
             { name: "brew", command: () => text(["brew", "list", "--formula", "opencode"]) },
             { name: "scoop", command: () => text(["scoop", "list", "opencode"]) },
             { name: "choco", command: () => text(["choco", "list", "--limit-output", "opencode"]) },
@@ -195,11 +244,11 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
 
           for (const check of checks) {
             const output = yield* check.command()
-            const installedName =
-              check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+            const installedName = check.name === "brew" ? "ulmcode" : check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
             if (output.includes(installedName)) {
               return check.name
             }
+            if (check.name === "brew" && output.includes("opencode")) return check.name
           }
 
           return "unknown" as Method
@@ -209,7 +258,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
 
           if (detectedMethod === "brew") {
             const formula = yield* getBrewFormula()
-            if (formula.includes("/")) {
+            if (formula.includes("/") || formula === "ulmcode") {
               const infoJson = yield* text(["brew", "info", "--json=v2", formula])
               const info = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(BrewInfoV2))(infoJson)
               return info.formulae[0].versions.stable
@@ -254,7 +303,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           }
 
           const response = yield* httpOk.execute(
-            HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
+            HttpClientRequest.get(`https://api.github.com/repos/${RELEASE_REPO}/releases/latest`).pipe(
               HttpClientRequest.acceptJson,
             ),
           )
@@ -268,24 +317,25 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
               upgradeResult = yield* upgradeCurl(target)
               break
             case "npm":
-              upgradeResult = yield* run(["npm", "install", "-g", `opencode-ai@${target}`])
+              upgradeResult = yield* run(["npm", "install", "-g", `opencode-ai@\${target}`])
               break
             case "pnpm":
-              upgradeResult = yield* run(["pnpm", "install", "-g", `opencode-ai@${target}`])
+              upgradeResult = yield* run(["pnpm", "install", "-g", `opencode-ai@\${target}`])
               break
             case "bun":
-              upgradeResult = yield* run(["bun", "install", "-g", `opencode-ai@${target}`])
+              upgradeResult = yield* run(["bun", "install", "-g", `opencode-ai@\${target}`])
               break
             case "brew": {
               const formula = yield* getBrewFormula()
               const env = { HOMEBREW_NO_AUTO_UPDATE: "1" }
-              if (formula.includes("/")) {
-                const tap = yield* run(["brew", "tap", "anomalyco/tap"], { env })
+              const tapName = formula.startsWith("trevor050/ulmcode/") || formula === "ulmcode" ? "trevor050/ulmcode" : "anomalyco/tap"
+              if (formula.includes("/") || formula === "ulmcode") {
+                const tap = yield* run(["brew", "tap", tapName], { env })
                 if (tap.code !== 0) {
                   upgradeResult = tap
                   break
                 }
-                const repo = yield* text(["brew", "--repo", "anomalyco/tap"])
+                const repo = yield* text(["brew", "--repo", tapName])
                 const dir = repo.trim()
                 if (dir) {
                   const pull = yield* run(["git", "pull", "--ff-only"], { cwd: dir, env })
@@ -299,10 +349,10 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
               break
             }
             case "choco":
-              upgradeResult = yield* run(["choco", "upgrade", "opencode", `--version=${target}`, "-y"])
+              upgradeResult = yield* run(["choco", "upgrade", "opencode", `--version=\${target}`, "-y"])
               break
             case "scoop":
-              upgradeResult = yield* run(["scoop", "install", `opencode@${target}`])
+              upgradeResult = yield* run(["scoop", "install", `opencode@\${target}`])
               break
             default:
               return yield* new UpgradeFailedError({ stderr: `Unknown method: ${m}` })

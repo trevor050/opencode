@@ -63,6 +63,10 @@ function modelCallCount(
   return 0
 }
 
+function routeProvider(route: string | undefined) {
+  return route?.split("/", 1)[0]
+}
+
 function decideFromRuntime(input: {
   operationID: string
   lane?: OperationLane
@@ -103,6 +107,16 @@ function decideFromRuntime(input: {
   if (input.lane && !model) {
     blockers.push(`model route metadata is missing for ${input.lane.modelRoute}`)
     recommendedTools.push("operation_schedule")
+  }
+  if (input.lane && routeProvider(input.lane.modelRoute) !== "openai") {
+    blockers.push(`model route provider must be openai for ${input.lane.modelRoute}`)
+    recommendedTools.push("operation_schedule")
+  }
+  for (const fallback of input.lane?.fallbackModelRoutes ?? []) {
+    if (routeProvider(fallback) !== "openai") {
+      blockers.push(`fallback model route provider must be openai for ${fallback}`)
+      recommendedTools.push("operation_schedule")
+    }
   }
   if (model?.quota?.maxCalls !== undefined && routeCalls >= model.quota.maxCalls) {
     blockers.push(`model route quota exhausted for ${model.route}`)

@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "openai/gpt-5.5-fast",
+  "model": "openai/gpt-5.5",
   "small_model": "openai/gpt-5.4-mini-fast",
   "max_retries": 8,
   "experimental": {
@@ -17,14 +17,14 @@
   ],
   "agent": {
     "action": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "primary",
       "options": {
         "reasoningEffort": "medium"
       }
     },
     "pentest": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "primary",
       "options": {
         "reasoningEffort": "high"
@@ -45,7 +45,7 @@
       }
     },
     "attack-map": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "subagent",
       "options": {
         "reasoningEffort": "high"
@@ -59,21 +59,21 @@
       }
     },
     "validator": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "subagent",
       "options": {
         "reasoningEffort": "xhigh"
       }
     },
     "report-writer": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "subagent",
       "options": {
         "reasoningEffort": "high"
       }
     },
     "report-reviewer": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "mode": "subagent",
       "options": {
         "reasoningEffort": "xhigh"

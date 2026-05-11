@@ -49,7 +49,7 @@ async function writeDaemonSupervisorFixture(worktree: string) {
     agent: "pentest",
     status: "complete",
     dependsOn: [],
-    modelRoute: "openai/gpt-5.5-fast",
+    modelRoute: "openai/gpt-5.5",
     fallbackModelRoutes: ["openai/gpt-5.4-mini-fast"],
     allowedTools: ["operation_supervise", "operation_resume", "operation_status"],
     expectedArtifacts: ["supervisor/latest.md"],
@@ -267,7 +267,7 @@ describe("ULM runtime daemon", () => {
     const runtime = JSON.parse(await fs.readFile(path.join(root, "deliverables", "runtime-summary.json"), "utf8"))
     expect(preflight.blocked).toBe(0)
     expect(preflight.tools[0]?.toolID).toBe("fixture-tool")
-    expect(routeAudit.routes.some((route: { route?: string }) => route.route === "opencode-go/qwen3.6-plus")).toBe(true)
+    expect(routeAudit.routes.every((route: { providerID?: string }) => route.providerID === "openai")).toBe(true)
     expect(runtime.usage.costUSD).toBe(0)
     expect(runtime.compaction.pressure).toBe("low")
   })
@@ -878,7 +878,7 @@ describe("ULM runtime daemon", () => {
           id: "district_profile",
           laneID: "district_profile",
           agent: "recon",
-          modelRoute: "opencode-go/qwen3.6-plus",
+          modelRoute: "openai/gpt-5.4-mini-fast",
           prompt: "resume district profile",
           allowedTools: "district_profile, webfetch, websearch, evidence_record, task, operation_run",
           createdAt: "2026-05-05T00:00:00.000Z",

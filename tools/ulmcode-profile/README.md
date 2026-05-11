@@ -21,7 +21,7 @@ It also runs the bundled lab replay catalog, proving the manifest-driven replay 
 - `pentest` is the default primary agent for operations.
 - `action` is the focused primary mode for one-off fixes, quick research, and narrow security checks. The old `build` mode remains hidden as a compatibility alias.
 - `gpt-5.4-mini-fast` handles quick recon and evidence normalization.
-- `gpt-5.5-fast` handles operation control, attack-path mapping, validation, reporting, report review, and hard reasoning lanes.
+- `gpt-5.5` handles operation control, attack-path mapping, validation, reporting, report review, and hard reasoning lanes.
 - Session retries are capped with `max_retries: 8` so a long unattended operation can ride out transient provider failures without spinning forever.
 - Skills are allowlisted to the bundled K-12 pentest profile, including a dedicated long-report production skill for dense report drafting and sparse-report prevention.
 - Websearch, Agent Browser, Playwright, and pentest MCP are configured. `websearch` uses the Exa remote MCP for current research without loading Oh My OpenAgent. `agent_browser` is the preferred browser automation MCP; Playwright is the fallback.

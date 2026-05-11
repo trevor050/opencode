@@ -5413,6 +5413,7 @@ export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejec
 export type QuestionTouchData = {
   body?: {
     holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    answers?: Array<QuestionAnswer>
   }
   path: {
     requestID: string

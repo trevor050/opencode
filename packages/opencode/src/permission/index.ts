@@ -21,6 +21,7 @@ import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "permission" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
+const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
 export const Action = Schema.Literals(["allow", "deny", "ask"])
   .annotate({ identifier: "PermissionAction" })
@@ -295,7 +296,12 @@ export const layer = Layer.effect(
       const entry = (yield* InstanceState.get(state)).pending.get(input.requestID)
       if (!entry?.timeoutExpiresAt) return false
       const holdUntil =
-        Date.now() + Math.max(entry.timeoutWindowMillis ?? 0, input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+        Date.now() +
+        Math.max(
+          entry.timeoutWindowMillis ?? 0,
+          input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS,
+          OPERATOR_ACTIVITY_RESET_MILLIS,
+        )
       entry.timeoutExpiresAt = Math.max(entry.timeoutExpiresAt, holdUntil)
       entry.info = Schema.decodeUnknownSync(Request)({
         ...entry.info,

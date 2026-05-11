@@ -16,10 +16,10 @@ describe("ULM operation graph", () => {
       operationID: "School",
       budgetUSD: 20,
       modelRoutes: {
-        throughput: "opencode-go/nano",
-        reasoning: "openai/gpt-5.5-fast",
-        reporting: "openai/gpt-5.5-fast",
-        review: "openai/gpt-5.5-fast",
+        throughput: "openai/gpt-5.4-mini-fast",
+        reasoning: "openai/gpt-5.5",
+        reporting: "openai/gpt-5.5",
+        review: "openai/gpt-5.5",
         small: "openai/gpt-5.4-mini-fast",
       },
     })
@@ -37,7 +37,9 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "report_writing")?.dependsOn).toEqual(["report_evidence_index"])
     expect(graph.lanes.every((lane) => lane.modelRoute.includes("/"))).toBe(true)
     expect(graph.lanes.every((lane) => lane.fallbackModelRoutes.length >= 1)).toBe(true)
-    expect(graph.lanes.find((lane) => lane.id === "recon")?.fallbackModelRoutes).toContain("openai/gpt-5.4-mini-fast")
+    expect(graph.lanes.find((lane) => lane.id === "report_writing")?.modelRoute).toBe("openai/gpt-5.5")
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.fallbackModelRoutes).toContain("openai/gpt-5.5")
     expect(graph.lanes.find((lane) => lane.id === "recon")?.coverageImpact).toBe("blocks_release")
     expect(graph.lanes.find((lane) => lane.id === "report_review")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(20, 2)
@@ -52,6 +54,34 @@ describe("ULM operation graph", () => {
     expect(validateOperationGraph(graph)).toContain(
       "district_profile: non_destructive lanes must use command_supervise instead of raw shell",
     )
+  })
+
+  test("defaults primary reasoning and reporting lanes to GPT-5.5 non-fast", () => {
+    const graph = buildOperationGraph({ operationID: "School" })
+
+    expect(graph.lanes.find((lane) => lane.id === "identity_graph")?.modelRoute).toBe("openai/gpt-5.5")
+    expect(graph.lanes.find((lane) => lane.id === "report_writing")?.modelRoute).toBe("openai/gpt-5.5")
+    expect(graph.lanes.find((lane) => lane.id === "report_review")?.modelRoute).toBe("openai/gpt-5.5")
+  })
+
+  test("defaults throughput lanes to OpenAI mini instead of unavailable subscription routes", () => {
+    const graph = buildOperationGraph({ operationID: "School" })
+    const throughputLane = graph.lanes.find((lane) => lane.id === "recon")
+
+    expect(throughputLane?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
+    expect(throughputLane?.fallbackModelRoutes).toEqual(["openai/gpt-5.5"])
+    expect(graph.lanes.flatMap((lane) => [lane.modelRoute, ...lane.fallbackModelRoutes])).not.toContain(
+      "opencode-go/qwen3.6-plus",
+    )
+  })
+
+  test("rejects non-OpenAI model routes in operation graphs", () => {
+    const graph = buildOperationGraph({
+      operationID: "School",
+      modelRoutes: { throughput: "opencode-go/qwen3.6-plus" },
+    })
+
+    expect(validateOperationGraph(graph)).toContain("district_profile: modelRoute provider must be openai")
   })
 
   test("writes a durable operation graph artifact", async () => {

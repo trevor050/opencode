@@ -15,7 +15,7 @@ export const dict = {
   "desktop.updater.downloadFailed.title": "更新失败",
   "desktop.updater.downloadFailed.message": "无法下载更新",
   "desktop.updater.downloaded.title": "更新已下载",
-  "desktop.updater.downloaded.prompt": "已下载 OpenCode {{version}} 版本，是否安装并重启？",
+  "desktop.updater.downloaded.prompt": "已下载 ULMCode {{version}} 版本，是否安装并重启？",
   "desktop.updater.installFailed.title": "更新失败",
   "desktop.updater.installFailed.message": "无法安装更新",
 

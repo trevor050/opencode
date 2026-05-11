@@ -228,8 +228,8 @@ export const GlobalRoutes = lazy(() =>
     .post(
       "/upgrade",
       describeRoute({
-        summary: "Upgrade opencode",
-        description: "Upgrade opencode to the specified version or latest if not specified.",
+        summary: "Upgrade ULMCode",
+        description: "Upgrade ULMCode to the specified version or latest if not specified.",
         operationId: "global.upgrade",
         responses: {
           200: {

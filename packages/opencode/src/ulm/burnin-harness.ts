@@ -244,7 +244,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       agent: "pentest",
       status: "complete",
       dependsOn: [],
-      modelRoute: "openai/gpt-5.5-fast",
+      modelRoute: "openai/gpt-5.5",
       fallbackModelRoutes: ["openai/gpt-5.4-mini-fast"],
       allowedTools: ["operation_supervise", "operation_resume", "runtime_summary", "operation_audit"],
       expectedArtifacts: ["supervisor/latest.md"],

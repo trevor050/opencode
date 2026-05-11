@@ -20,6 +20,8 @@ import { useTuiConfig } from "../../context/tui-config"
 import { OperatorAutoResume } from "./operator-auto-resume"
 import { useBindings, useCommandShortcut } from "../../keymap"
 
+const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
+
 type PermissionStage = "permission" | "always" | "reject"
 
 function normalizePath(input?: string) {
@@ -139,7 +141,6 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
     stage: "permission" as PermissionStage,
   })
   let lastTouch = 0
-  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
   const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
@@ -160,7 +161,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
+    setResetTimeoutAt(new Date(now + OPERATOR_ACTIVITY_RESET_MILLIS).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.permission.touch({

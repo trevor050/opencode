@@ -70,6 +70,15 @@ export type ProviderCatalogSource = Record<
 >
 
 const DEFAULTS: ModelRuntimeCatalog = {
+  "openai/gpt-5.5": {
+    providerKind: "api",
+    contextLimit: 1_000_000,
+    outputLimit: 128_000,
+    inputUSDPerMTok: 5,
+    outputUSDPerMTok: 30,
+    cacheReadUSDPerMTok: 0.5,
+    costCliffTokens: 270_000,
+  },
   "openai/gpt-5.5-fast": {
     providerKind: "api",
     contextLimit: 1_000_000,
@@ -87,12 +96,6 @@ const DEFAULTS: ModelRuntimeCatalog = {
     outputUSDPerMTok: 4.5,
     cacheReadUSDPerMTok: 0.075,
     costCliffTokens: 270_000,
-  },
-  "opencode-go/qwen3.6-plus": {
-    providerKind: "subscription",
-    contextLimit: 200_000,
-    outputLimit: 32_000,
-    quota: { kind: "soft", window: "unknown" },
   },
 }
 

@@ -33,7 +33,7 @@ describe("ULM model runtime catalog", () => {
     expect(resolveModelRuntime("openai/gpt-current", catalog)?.contextLimit).toBe(1_000_000)
   })
 
-  test("keeps OpenCode Go routes classified as subscription lanes", () => {
+  test("does not infer unavailable OpenCode Go route metadata", () => {
     const catalog = buildModelRuntimeCatalog({
       "opencode-go": {
         source: "custom",
@@ -46,7 +46,7 @@ describe("ULM model runtime catalog", () => {
       },
     })
 
-    expect(resolveModelRuntime("opencode-go/qwen3.6-plus", catalog)?.providerKind).toBe("subscription")
+    expect(resolveModelRuntime("opencode-go/qwen3.6-plus", catalog)).toBeUndefined()
   })
 
   test("audits primary and fallback route availability against provider metadata", () => {
@@ -54,13 +54,7 @@ describe("ULM model runtime catalog", () => {
       openai: {
         source: "env",
         models: {
-          "gpt-5.5-fast": { limit: { context: 1_000_000, output: 128_000 } },
-        },
-      },
-      "opencode-go": {
-        source: "custom",
-        models: {
-          default: { limit: { context: 200_000, output: 32_000 } },
+          "gpt-5.5": { limit: { context: 1_000_000, output: 128_000 } },
         },
       },
     }
@@ -69,23 +63,16 @@ describe("ULM model runtime catalog", () => {
       operationID: "school",
       providers,
       routes: [
-        { route: "openai/gpt-5.5-fast", laneID: "report_writing", role: "primary" },
-        { route: "opencode-go/qwen3.6-plus", laneID: "recon", role: "primary" },
+        { route: "openai/gpt-5.5", laneID: "report_writing", role: "primary" },
+        { route: "openai/gpt-5.5", laneID: "recon", role: "fallback" },
         { route: "openai/missing-model", laneID: "recon", role: "fallback" },
       ],
-      quotaOverrides: {
-        "opencode-go/qwen3.6-plus": { kind: "soft", window: "daily", maxCalls: 20 },
-      },
     })
 
-    expect(audit.routes.find((route) => route.route === "openai/gpt-5.5-fast")).toMatchObject({
+    expect(audit.routes.find((route) => route.route === "openai/gpt-5.5")).toMatchObject({
       availableInProviderList: true,
       hasRuntimeMetadata: true,
       quotaPolicyKnown: false,
-    })
-    expect(audit.routes.find((route) => route.route === "opencode-go/qwen3.6-plus")).toMatchObject({
-      providerKind: "subscription",
-      quotaPolicyKnown: true,
     })
     expect(audit.routes.find((route) => route.route === "openai/missing-model")).toMatchObject({
       availableInProviderList: false,

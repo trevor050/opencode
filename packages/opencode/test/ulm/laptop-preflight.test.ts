@@ -243,8 +243,8 @@ describe("ULM laptop preflight", () => {
     expect(result.checks.find((item) => item.id === "tool-preflight")?.status).toBe("ok")
     expect(result.checks.find((item) => item.id === "model-route-audit")?.status).toBe("ok")
     expect(await fs.readFile(path.join(root, "tools", "tool-preflight.json"), "utf8")).toContain("fixture-tool")
-    expect(await fs.readFile(path.join(root, "deliverables", "model-route-audit.json"), "utf8")).toContain(
-      "opencode-go/qwen3.6-plus",
+    expect(await fs.readFile(path.join(root, "deliverables", "model-route-audit.json"), "utf8")).not.toContain(
+      "opencode-go/",
     )
   })
 

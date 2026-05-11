@@ -38,7 +38,7 @@ async function addSupervisorLane(worktree: string, operationID = "School", statu
     agent: "pentest",
     status,
     dependsOn: [],
-    modelRoute: "openai/gpt-5.5-fast",
+    modelRoute: "openai/gpt-5.5",
     fallbackModelRoutes: ["openai/gpt-5.4-mini-fast"],
     allowedTools: ["operation_supervise", "operation_resume", "operation_status"],
     expectedArtifacts: ["supervisor/latest.md"],
@@ -142,7 +142,7 @@ describe("ULM runtime scheduler", () => {
       },
     })
 
-    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "opencode-go/qwen3.6-plus" }])
+    expect(launched).toEqual([{ laneID: "district_profile", modelRoute: "openai/gpt-5.4-mini-fast" }])
     expect(result.cycles[0]?.launchedJobs).toEqual(["job-district_profile"])
     const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
     expect(heartbeat.launchedJobs).toEqual(["job-district_profile"])

@@ -30,11 +30,12 @@ export const questionHandlers = HttpApiBuilder.group(InstanceHttpApi, "question"
 
     const touch = Effect.fn("QuestionHttpApi.touch")(function* (ctx: {
       params: { requestID: QuestionID }
-      payload: { holdMillis?: number }
+      payload: { holdMillis?: number; answers?: ReadonlyArray<Question.Answer> }
     }) {
       return yield* svc.touch({
         requestID: ctx.params.requestID,
         holdMillis: ctx.payload.holdMillis,
+        answers: ctx.payload.answers,
       })
     })
 

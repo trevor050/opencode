@@ -1433,7 +1433,7 @@ async function auditProfileRouting() {
   const reconPrompt = await read("packages/opencode/src/agent/prompt/recon.txt")
   const actionPrompt = await read("packages/opencode/src/agent/prompt/action.txt")
   requireText("packages/opencode/script/ulm-profile-skills.ts", profileSkills, [
-    "profile model must default to GPT-5.5 Fast",
+    "profile model must default to GPT-5.5",
     "profile small_model must use GPT-5.4 Mini Fast",
     "action must use medium reasoning",
     "websearch must route through the Exa remote MCP",
@@ -1442,7 +1442,7 @@ async function auditProfileRouting() {
     "routing: ok",
   ])
   requireText("tools/ulmcode-profile/opencode.json", profileConfig, [
-    '"model": "openai/gpt-5.5-fast"',
+    '"model": "openai/gpt-5.5"',
     '"small_model": "openai/gpt-5.4-mini-fast"',
     '"default_agent": "pentest"',
     '"action"',

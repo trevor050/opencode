@@ -178,6 +178,26 @@ export function credentialVaultHtml() {
         border: 1px solid var(--line);
         background: var(--panel-2);
       }
+      .secret-field input {
+        padding-right: 8px;
+      }
+      .secret-toggle {
+        flex: 0 0 auto;
+        border: 0;
+        border-left: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--quiet);
+        cursor: pointer;
+        padding: 0 12px;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+      }
+      .secret-toggle:hover,
+      .secret-toggle[aria-pressed="true"] {
+        color: var(--accent);
+      }
       .prefix {
         width: 62px;
         flex: 0 0 62px;
@@ -360,6 +380,12 @@ export function credentialVaultHtml() {
           border-right: 0;
           border-bottom: 1px solid var(--line);
         }
+        .secret-toggle {
+          border-left: 0;
+          border-top: 1px solid var(--line);
+          padding: 8px 12px;
+          text-align: left;
+        }
         .save { width: 100%; }
       }
     </style>
@@ -384,8 +410,8 @@ export function credentialVaultHtml() {
         </nav>
         <div class="content">
           <div class="requirements">
-            <div class="requirement-row"><span>expected services</span><span id="expected-services">none</span></div>
-            <div class="requirement-row"><span>missing services</span><span id="missing-services">none</span></div>
+            <div class="requirement-row"><span>credentials in plan</span><span id="expected-services">none</span></div>
+            <div class="requirement-row"><span>still needed</span><span id="missing-services">none</span></div>
           </div>
           <section id="tab-add" class="view active">
             <div class="section-head">
@@ -411,8 +437,16 @@ export function credentialVaultHtml() {
               </div>
               <div id="structured-fields" class="stack">
                 <div class="field" data-row="username"><span class="prefix" data-prefix="username">user</span><input name="username" placeholder="Username or identity" /></div>
-                <div class="field" data-row="password"><span class="prefix" data-prefix="password">pass</span><input name="password" type="password" placeholder="Password" /></div>
-                <div class="field" data-row="secret"><span class="prefix" data-prefix="secret">secret</span><input name="secret" type="password" placeholder="Token, private key, cookie, or other secret" /></div>
+                <div class="field secret-field" data-row="password">
+                  <span class="prefix" data-prefix="password">pass</span>
+                  <input name="password" type="password" placeholder="Password" />
+                  <button class="secret-toggle" type="button" data-toggle-secret="password" aria-label="Show password" aria-pressed="false">show</button>
+                </div>
+                <div class="field secret-field" data-row="secret">
+                  <span class="prefix" data-prefix="secret">secret</span>
+                  <input name="secret" type="password" placeholder="Token, private key, cookie, or other secret" />
+                  <button class="secret-toggle" type="button" data-toggle-secret="secret" aria-label="Show secret" aria-pressed="false">show</button>
+                </div>
                 <div class="field" data-row="url"><span class="prefix" data-prefix="url">url</span><input name="url" placeholder="Login/admin URL" /></div>
                 <div class="field" data-row="target"><span class="prefix" data-prefix="target">host</span><input name="target" placeholder="Target IP, hostname, SSID, or command" /></div>
                 <div class="field" data-row="extra1"><span class="prefix" data-prefix="extra1">extra</span><input name="extra1" placeholder="Additional detail" /></div>
@@ -532,6 +566,29 @@ export function credentialVaultHtml() {
           applyMode()
         })
       })
+
+      function setSecretVisible(button, visible) {
+        const row = button.closest("[data-row]")
+        const input = row?.querySelector("input")
+        if (!input) return
+        input.type = visible ? "text" : "password"
+        button.textContent = visible ? "hide" : "show"
+        button.setAttribute("aria-label", (visible ? "Hide " : "Show ") + (row.dataset.row || "secret"))
+        button.setAttribute("aria-pressed", visible ? "true" : "false")
+      }
+
+      document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const row = button.closest("[data-row]")
+          const input = row?.querySelector("input")
+          const isHidden = input?.type !== "text"
+          setSecretVisible(button, isHidden)
+        })
+      })
+
+      function resetSecretVisibility() {
+        document.querySelectorAll("[data-toggle-secret]").forEach((button) => setSecretVisible(button, false))
+      }
 
       function applyMode() {
         document.querySelectorAll("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === mode))
@@ -687,6 +744,7 @@ export function credentialVaultHtml() {
             tags: [mode],
           })
           form.reset()
+          resetSecretVisibility()
           applySecretType()
         } catch (error) {
           setMessage("save failed: " + error.message, true)

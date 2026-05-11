@@ -15,6 +15,7 @@ const Reply = z.object({
 })
 const Touch = z.object({
   holdMillis: z.number().optional(),
+  answers: Question.Answer.zod.array().optional(),
 })
 
 export const QuestionRoutes = lazy(() => {
@@ -144,6 +145,7 @@ export const QuestionRoutes = lazy(() => {
         return yield* svc.touch({
           requestID: params.requestID,
           holdMillis: json.holdMillis,
+          answers: json.answers,
         })
       }),
   )

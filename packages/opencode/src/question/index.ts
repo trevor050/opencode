@@ -13,6 +13,7 @@ import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "question" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
+export const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
 // Schemas
 
@@ -117,6 +118,7 @@ interface PendingEntry {
   deferred: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
   timeoutAt?: number
   timeoutWindowMillis?: number
+  partialAnswers?: ReadonlyArray<Answer>
 }
 
 interface State {
@@ -130,6 +132,11 @@ function fallbackAnswer(question: Info): Answer {
   return [preferred?.label ?? question.options[0]?.label ?? "Unavailable"]
 }
 
+export function timeoutAnswer(question: Info, partial?: Answer): Answer {
+  if (partial !== undefined) return partial.length > 0 ? [...partial] : []
+  return fallbackAnswer(question)
+}
+
 // Service
 
 export interface Interface {
@@ -140,7 +147,11 @@ export interface Interface {
   }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
   readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
-  readonly touch: (input: { requestID: QuestionID; holdMillis?: number }) => Effect.Effect<boolean>
+  readonly touch: (input: {
+    requestID: QuestionID
+    holdMillis?: number
+    answers?: ReadonlyArray<Answer>
+  }) => Effect.Effect<boolean>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 }
 
@@ -218,7 +229,7 @@ export const layer = Layer.effect(
               if (!latest) return []
               if ((latest.timeoutAt ?? 0) > Date.now()) return yield* loop()
               pending.delete(id)
-              const answers = input.questions.map(fallbackAnswer)
+              const answers = input.questions.map((question, index) => timeoutAnswer(question, latest.partialAnswers?.[index]))
               const sensitive = input.questions.some((question) =>
                 isSensitiveOperatorPrompt(`${question.header} ${question.question}`),
               )
@@ -286,14 +297,24 @@ export const layer = Layer.effect(
       yield* Deferred.fail(existing.deferred, new RejectedError())
     })
 
-    const touch = Effect.fn("Question.touch")(function* (input: { requestID: QuestionID; holdMillis?: number }) {
+    const touch = Effect.fn("Question.touch")(function* (input: {
+      requestID: QuestionID
+      holdMillis?: number
+      answers?: ReadonlyArray<Answer>
+    }) {
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
       if (!existing || existing.timeoutAt === undefined) return false
       const holdUntil =
-        Date.now() + Math.max(existing.timeoutWindowMillis ?? 0, input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+        Date.now() +
+        Math.max(
+          existing.timeoutWindowMillis ?? 0,
+          input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS,
+          OPERATOR_ACTIVITY_RESET_MILLIS,
+        )
       const timeoutAt = Math.max(existing.timeoutAt, holdUntil)
       existing.timeoutAt = timeoutAt
+      if (input.answers) existing.partialAnswers = input.answers.map((answer) => [...answer])
       existing.info = Schema.decodeUnknownSync(Request)({
         ...existing.info,
         timeoutAt: new Date(timeoutAt).toISOString(),

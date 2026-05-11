@@ -1,8 +1,8 @@
-import { afterEach, expect } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
-import { Question } from "../../src/question"
+import { Question, timeoutAnswer } from "../../src/question"
 import { Instance } from "../../src/project/instance"
 import { InstanceState } from "../../src/effect/instance-state"
 import { WithInstance } from "../../src/project/with-instance"
@@ -41,9 +41,13 @@ const rejectEffect = Effect.fn("QuestionTest.reject")(function* (id: QuestionID)
   yield* question.reject(id)
 })
 
-const touchEffect = Effect.fn("QuestionTest.touch")(function* (id: QuestionID, holdMillis?: number) {
+const touchEffect = Effect.fn("QuestionTest.touch")(function* (
+  id: QuestionID,
+  holdMillis?: number,
+  answers?: ReadonlyArray<Question.Answer>,
+) {
   const question = yield* Question.Service
-  yield* question.touch({ requestID: id, holdMillis })
+  yield* question.touch({ requestID: id, holdMillis, answers })
 })
 
 afterEach(async () => {
@@ -64,6 +68,17 @@ const waitForPending = (count: number) =>
     }
     return yield* Effect.fail(new Error(`timed out waiting for ${count} pending question request(s)`))
   })
+
+test("timeoutAnswer preserves partial answers and leaves unanswered custom questions blank", () => {
+  const question = {
+    question: "Which step?",
+    header: "Step",
+    options: [{ label: "Skip", description: "Skip this step" }],
+  }
+
+  expect(timeoutAnswer(question, ["Answered"])).toEqual(["Answered"])
+  expect(timeoutAnswer(question, [])).toEqual([])
+})
 
 it.instance(
   "ask - remains pending until answered",
@@ -262,6 +277,43 @@ it.instance(
       const updated = (yield* listEffect)[0]
       const renewedTimeout = Date.parse(updated?.timeoutAt ?? "")
       expect(renewedTimeout).toBeGreaterThan(firstTimeout + 50)
+      yield* rejectAll
+      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - active operator touch always renews at least 300 seconds",
+  () =>
+    Effect.gen(function* () {
+      const ctx = yield* InstanceState.context
+      yield* Effect.promise(() =>
+        createOperationGoal(ctx.worktree, {
+          operationID: "school",
+          objective: "Authorized unattended run",
+          targetDurationHours: 20,
+          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
+        }),
+      )
+      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
+
+      const fiber = yield* askEffect({
+        sessionID: SessionID.make("ses_test"),
+        questions: [
+          {
+            question: "Type any operator note?",
+            header: "Note",
+            options: [{ label: "Skip", description: "Continue without a note" }],
+          },
+        ],
+      }).pipe(Effect.forkScoped)
+
+      const pending = yield* waitForPending(1)
+      yield* touchEffect(pending[0].id, 30)
+      const updated = (yield* listEffect)[0]
+      const renewedTimeout = Date.parse(updated?.timeoutAt ?? "")
+      expect(renewedTimeout).toBeGreaterThan(Date.now() + 299_000)
       yield* rejectAll
       expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
     }),

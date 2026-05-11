@@ -8,6 +8,7 @@ import {
   APP_IDS,
   APP_NAMES,
   DESKTOP_PROTOCOLS,
+  getDesktopPublishConfig,
   resolveDesktopChannel,
 } from "./src/main/branding"
 
@@ -100,7 +101,7 @@ function getConfig() {
         appId: APP_IDS.beta,
         productName: APP_NAMES.beta,
         protocols: { name: APP_NAMES.beta, schemes: DESKTOP_PROTOCOLS },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
+        publish: getDesktopPublishConfig(channel),
         rpm: { packageName: "ulmcode-beta" },
       }
     }
@@ -110,7 +111,7 @@ function getConfig() {
         appId: APP_IDS.prod,
         productName: APP_NAMES.prod,
         protocols: { name: APP_NAMES.prod, schemes: DESKTOP_PROTOCOLS },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+        publish: getDesktopPublishConfig(channel),
         rpm: { packageName: "ulmcode" },
       }
     }

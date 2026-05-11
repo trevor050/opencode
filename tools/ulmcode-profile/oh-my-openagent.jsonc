@@ -13,20 +13,20 @@
   },
   "agents": {
     "sisyphus": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.08,
       "textVerbosity": "medium",
       "fallback_models": [
         {
-          "model": "openai/gpt-5.5-fast",
+          "model": "openai/gpt-5.5",
           "variant": "xhigh",
           "reasoningEffort": "xhigh",
           "temperature": 0.03
         },
         {
-          "model": "opencode-go/glm-5.1",
+          "model": "openai/gpt-5.4-mini-fast",
           "temperature": 0.12
         }
       ],
@@ -64,7 +64,7 @@
       "description": "Documentation, setup-note, command, API, and convention extraction."
     },
     "pentest-control": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.08,
@@ -72,7 +72,7 @@
       "description": "Operation planning, scope control, task routing, and final handoff ownership."
     },
     "plan-critic": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.02,
@@ -94,7 +94,7 @@
       "description": "Authorized public K-12 people and role profiling for access, workflow, and identity graph context."
     },
     "attack-map": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.04,
@@ -109,7 +109,7 @@
       "description": "Evidence normalization, artifact summarization, and source-to-finding traceability."
     },
     "validator": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "xhigh",
       "reasoningEffort": "xhigh",
       "temperature": 0.03,
@@ -117,7 +117,7 @@
       "description": "High-confidence validation, exploit reproducibility review, and false-positive reduction."
     },
     "report-writer": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.08,
@@ -125,7 +125,7 @@
       "description": "Dense report drafting, finding synthesis, artifact handoff, and final readiness checks."
     },
     "report-reviewer": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "xhigh",
       "reasoningEffort": "xhigh",
       "temperature": 0.03,
@@ -133,7 +133,7 @@
       "description": "Adversarial report QA for sparse sections, unsupported claims, missing evidence, and final handoff blockers."
     },
     "backend-architect": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.04,
@@ -141,7 +141,7 @@
       "description": "Backend architecture, data model, API contracts, auth, authorization, evidence storage, reliability, and test strategy."
     },
     "backend-builder": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "medium",
       "reasoningEffort": "medium",
       "temperature": 0.08,
@@ -149,13 +149,13 @@
       "description": "Backend/API/data implementation from an approved architecture, including tests and integration wiring."
     },
     "frontend-taste": {
-      "model": "opencode-go/kimi-k2.6",
+      "model": "openai/gpt-5.5",
       "temperature": 0.35,
       "textVerbosity": "medium",
       "description": "UI/UX specs, visual hierarchy, interaction design, and operator dashboard taste."
     },
     "frontend-builder": {
-      "model": "opencode-go/kimi-k2.6",
+      "model": "openai/gpt-5.5",
       "temperature": 0.25,
       "textVerbosity": "medium",
       "description": "Frontend implementation from an approved UI spec, with responsive states and accessibility."
@@ -177,7 +177,7 @@
         "skill": false
       },
       "fallback_models": [
-        "openai/gpt-5.5-fast"
+        "openai/gpt-5.5"
       ],
       "is_unstable_agent": true,
       "description": "Gemini semantic/product taste pass for audience fit, claims, wording, and operator UX sanity before UI build."
@@ -194,7 +194,7 @@
       "description": "Sparse optional Claude review for human feel, copy tone, product coherence, and emotional UX. Do not use for coding."
     },
     "verification-court": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "high",
       "reasoningEffort": "high",
       "temperature": 0.03,
@@ -202,7 +202,7 @@
       "description": "Final technical review for bugs, false confidence, missing evidence, and bad handoff claims."
     },
     "xhigh-court": {
-      "model": "openai/gpt-5.5-fast",
+      "model": "openai/gpt-5.5",
       "variant": "xhigh",
       "reasoningEffort": "xhigh",
       "temperature": 0.03,
@@ -215,7 +215,7 @@
       "textVerbosity": "medium",
       "fallback_models": [
         {
-          "model": "openai/gpt-5.5-fast",
+          "model": "openai/gpt-5.5",
           "variant": "medium",
           "reasoningEffort": "medium"
         }
@@ -229,15 +229,12 @@
     "providerConcurrency": {
       "openai": 8,
       "github-copilot": 4,
-      "opencode-go": 6,
       "claude-code": 1
     },
     "modelConcurrency": {
-      "openai/gpt-5.5-fast": 4,
+      "openai/gpt-5.5": 4,
       "openai/gpt-5.4-mini-fast": 10,
       "github-copilot/gemini-3.1-pro-preview": 4,
-      "opencode-go/kimi-k2.6": 4,
-      "opencode-go/glm-5.1": 2,
       "claude-code/claude-sonnet-4-6": 1
     }
   },

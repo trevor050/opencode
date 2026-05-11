@@ -1,290 +1,84 @@
-# ULMCode Agent Notes (packages/opencode)
+# packages/opencode Agent Notes
 
-Last updated: 2026-02-16 (AutoPentest default + action mode + conversational plan flow)
+Last updated: 2026-05-11
 
-## Project Snapshot
-- ULMCode is an OpenCode fork focused on internal, authorized penetration testing workflows.
-- This package (`packages/opencode`) contains the core runtime, agent orchestration, tool registry, and report generation pipeline.
-- The cyber workflow is not just prompt-level, it is enforced in runtime logic.
+This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, operation artifacts, scheduler/daemon scripts, provider catalog, server routes, and most tests. The repo-root `AGENTS.md` carries the product-level ULM operation contract; this file keeps package-local coding and runtime landmines.
 
-## Branch + Release Context
-- Primary upstream default branch is `dev`.
-- Current ULM snapshot commit lineage includes:
-  - `2258ab1bd` (`feat: complete cyber harness runtime, subagents, and report bundle`)
-  - `775a6f410` (`chore(ulmcode): snapshot pentest harness state`)
-- Sync commit used to align fork branches: `b517b9b15` (merged ULM snapshot onto latest `trevor/dev`).
+## Run From Here
 
-## Cyber Harness Architecture
-- Core cyber agent definitions live in `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/agent/agent.ts`.
-- Primary orchestration agents: `AutoPentest` (default guided mode) and `pentest`.
-- One-off execution agent: `action` (focused targeted tasks/questions).
-- `build` remains as a hidden compatibility alias for `action`.
-- Specialized subagents: `recon`, `assess`, `report`, `network_mapper`, `host_auditor`, `vuln_researcher`, `evidence_scribe`, `report_writer`.
-- Compatibility alias: `analyst` maps to assess behavior.
+- Run package tests from `packages/opencode`, or use `bun run --cwd packages/opencode <script>` from repo root. The repo root has a guard against test execution.
+- Typecheck with `bun typecheck` from this package. Do not call `tsc` directly.
+- Prefer focused tests near the changed subsystem, then add ULM gates only when the change touches runtime behavior, profile wiring, scheduler/reporting, or route surfaces.
+- Regenerate the JS SDK after changing HttpApi surfaces exposed to clients: `./packages/sdk/js/script/build.ts` from repo root.
 
-## Shared Engagement Environment
-- Environment logic: `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/session/environment.ts`.
-- Cyber sessions scaffold into: `engagements/<date>-<session-short>/`
-- Required shared artifacts:
-  - `finding.md`
-  - `engagement.md`
-  - `handoff.md`
-  - `agents/<subagent-session-id>/results.md`
-  - `reports/`
-  - `evidence/raw`, `evidence/processed`
-- Legacy path migration is handled: `.opencode/engagements` -> `engagements` with symlink compatibility.
-- `engagements/latest` symlink is maintained.
+## Code Shape
 
-## Finding Lifecycle
-- Finding tool: `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/tool/finding.ts`.
-- `finding` writes to environment-root `finding.md` when cyber environment exists, otherwise falls back to project-level `finding.md`.
-- Findings include machine-parsable HTML comments (`<!-- finding_json:{...} -->`) that power downstream report generation.
-- Findings now support optional `evidence_refs` (`path` + optional `line_hint`) for deterministic evidence-link validation during report bundling.
+- Prefer Bun APIs such as `Bun.file()` and `Bun.write()` when they match the job.
+- Avoid `any`, unnecessary explicit annotations, unnecessary destructuring, and mutable `let` variables. Use early returns instead of `else`.
+- Prefer functional array methods with type guards when filtering narrows downstream types.
+- Keep small values inline when they are used once; do not create path/string temporaries just to immediately consume them.
+- Drizzle schema files live in `src/**/*.sql.ts`. Use snake_case fields and generate migrations with `bun run db generate --name <slug>`.
+- Do not use `export namespace Foo`. Use flat top-level exports plus `export * as Foo from "./foo"` at the bottom, or `export * as Foo from "."` for a single-module `index.ts`.
+- For multi-sibling directories such as `src/session` or `src/config`, keep sibling modules independent and avoid barrel `index.ts` files that force every sibling to load.
 
-## Report Workflow (Hard Requirements)
-- Report writer prompt: `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/agent/prompt/report-writer.txt`.
-- Finalization tool: `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/tool/report_finalize.ts`.
-- Report bundle generator: `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/report/report.ts`.
-- Required intermediate markdown outputs in `reports/`:
-  - `report-plan.md`
-  - `report-outline.md`
-  - `report-draft.md`
-  - `results.md`
-  - `remediation-plan.md`
-- Required structured outputs:
-  - `findings.json`
-  - `sources.json`
-  - `timeline.json`
-  - `run-metadata.json`
-  - `report.md`
-  - `report.pdf` (unless explicitly degraded outside `report_writer`)
+## Effect Rules
 
-## Reporting/PDF Implementation Notes (Critical)
-- `report_finalize` previously overwrote authored report artifacts with generated defaults; this now preserves existing non-empty `reports/report.md`, `reports/report-draft.md`, `reports/remediation-plan.md`, `reports/report-plan.md`, `reports/report-outline.md`, and `reports/results.md`.
-- The final PDF renderer is `/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode/src/report/pdf/generate_report_pdf.py`.
-- PDF rendering was upgraded from raw markdown `Preformatted` dump to styled layout parsing (headings, lists, code blocks, severity emphasis, cover page, page chrome).
-- PDF renderer now includes executive snapshot cards, table of contents, and findings matrix extraction for client-facing readability.
-- `report_writer` prompt now explicitly requires assembling polished `reports/report.md` before `report_finalize`, so authored client copy is retained and used for PDF output.
-- Contract update: `report_finalize` is now validation/bundling-first and requires model-authored report artifacts when invoked from reporting flow; it does not auto-generate report templates/PDF in that mode.
-- HTML-first contract: report runs should author `reports/report-render-plan.md`, `reports/report.html`, and `reports/report.pdf`; browser print-to-PDF is preferred over Python canvas pipelines.
-- Final handoff lint/audit can require `minPdfPages`; for 20h+ runs it defaults to the 50-page long-report gate and rejects rendered PDFs whose `/Pages /Count` is missing or too small.
-- Smoke-test efficiency: report_writer prompt now enforces concise artifact limits to reduce token/compute overhead during quick verification runs.
-- Quality telemetry is now emitted to `reports/quality-checks.json` and surfaced by `report_finalize`.
-- Config toggle: `cyber.report_quality_mode = "warn" | "strict"` (default `warn`).
-  - `warn`: do not block finalization, but emit warning banner + quality summary.
-  - `strict`: fail finalization on poor evidence linkage or critical quality errors.
-- Report rendering now includes:
-  - Quality warnings banner
-  - Known Unknowns
-  - Unverified Claims
-  - Source Traceability table with per-finding validation status and evidence files.
-- Confidence now has an adjusted quality-aware value (downgraded when evidence linkage is weak or claims are unverified).
+- Use `Effect.gen(function* () { ... })` for composition and `Effect.fn("Domain.method")` / `Effect.fnUntraced` for named helpers.
+- In `Effect.gen` / `Effect.fn`, prefer `yield* new MyError(...)` over `yield* Effect.fail(new MyError(...))`.
+- Use `Effect.void`, `DateTime.nowAsDate`, `Schema.Class`, branded schemas, `Schema.TaggedErrorClass`, and `Schema.Defect` where they fit.
+- Prefer Effect services inside effectified code: `FileSystem.FileSystem`, `ChildProcessSpawner.ChildProcessSpawner`, `HttpClient.HttpClient`, `Path.Path`, `Config`, `Clock`, and `DateTime`.
+- Use `makeRuntime` from `src/effect/run-service.ts` for services. Use `InstanceState` when state is per-directory/project and needs scoped cleanup.
+- Do the initialization work directly inside `InstanceState.make`; avoid extra `started` flags, `ensure()` wrappers, or hidden fibers. Use `Effect.addFinalizer`, `Effect.acquireRelease`, and `Effect.forkScoped` inside the closure for cleanup and background stream consumers.
+- To make service `init()` non-blocking, fork `InstanceState.get(state)` at the caller, not inside the `InstanceState.make` closure.
+- Effect v4 beta does not have `Effect.fork` / `Effect.forkDaemon`; use `Effect.forkIn(scope)`.
+- Use `Effect.cached` for concurrent in-flight dedupe instead of storing `Fiber | undefined` or `Promise | undefined` by hand.
+- Use `Instance.bind(fn)` for native callbacks that need `Instance.directory` context, such as `@parcel/watcher`, `node-pty`, or native `fs.watch`.
 
-## Transcript-Learned Pitfalls (2026-02-07 smoke test)
-- Common failure mode: subagents may read repo files from a wrong nested root (for example `packages/opencode/.github/...` instead of `<repo>/.github/...`).
-  - Prompts now instruct resolving repo root early via `git rev-parse --show-toplevel` and using root-anchored absolute paths.
-- `report_finalize` can be invoked from child `report_writer` sessions; report metadata must still represent the top-level engagement session.
-  - `ReportBundle.generate` now resolves and uses the root parent session for session/timeline metadata.
-- Subagents previously had blanket `edit: deny`, which blocked updates to required engagement artifacts (`handoff.md`, `agents/*/results.md`, `reports/*`).
-  - Cyber subagents now use scoped edit permissions: deny by default, allow only those engagement artifact paths.
-- Overclaiming pitfall: polished report copy can claim completion while unresolved findings remain.
-  - Runtime now emits contradiction warnings (example: “no remaining next steps” while actionable findings exist).
-- Confidence-theater pitfall: high confidence attached to weakly evidenced claims.
-  - Quality checks now validate referenced evidence files + claim tokens (ports/versions) and downgrade adjusted confidence as needed.
+## Runtime Surfaces
 
-## Enforcement Chain (Important)
-- Cyber reminder injection is in `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/src/session/prompt.ts`.
-- Enforcement layers:
-  1. Prompt-level requirement in `pentest` and `report_writer` prompts.
-  2. Synthetic reminder markers (skill loading, report_writer required).
-  3. Auto-launch fallback: if pentest has completed cyber subtasks and no `report_writer` run, runtime queues `task(subagent_type="report_writer")`.
-- Marker constants (used by tests, do not casually rename):
-  - `[CYBER_SKILL_REMINDER_V1]`
-  - `[CYBER_REPORT_WRITER_REQUIRED_V1]`
-  - `[REPORT_WRITER_SKILL_REQUIRED_V1]`
-- Plan-mode resilience note:
-  - If a plan-mode cyber assistant prints literal `plan_exit` text instead of calling the `plan_exit` tool, runtime now catches that and triggers the same approval question UI automatically.
-  - This fallback now applies in generic plan sessions too, not only cyber-tagged sessions.
-  - On approval, runtime enqueues a synthetic user message and maps `AutoPentest`/`pentest_flow`/`pentest_auto` back to `pentest` execution mode.
-  - On rejection, runtime keeps the session in `plan` and requests plan refinement instead of dead-ending.
-- Conversational plan flow:
-  - AutoPentest intake is now conversational (direct chat questions) rather than question-tool-gated.
-  - Model should keep clarifying until safe/complete, then call `plan_exit` only after explicit user confirmation to proceed.
-  - plan_exit approval UI now uses:
-    - `Continue with plan`
-    - `Make changes` (custom input allowed for amendments)
+- ULM tools and artifact writers should write under repo-root `.ulmcode/operations/<id>`, not `packages/opencode/.ulmcode`. Package scripts must resolve the real repo worktree instead of trusting `process.cwd()`.
+- Operation session binding is explicit. New chats cannot silently bind to the newest operation on disk, and `operation_run` may omit `operationID` only when the session is already bound.
+- `operationsRoot()` intentionally walks upward because chats often start inside `packages/opencode` while operation artifacts live at repo root. Tests with nested synthetic worktrees must create their own `.ulmcode/operations` root before writing artifacts.
+- Raw credential guardrails belong at durable writer boundaries: goals, plans, checkpoints, evidence, findings, profile artifacts, graph/run/queue/runtime artifacts, report outputs, eval scorecards, operation memory, command supervision, and task prompts must persist only redacted handles/ids.
+- `operation.updated` publication is awaited after durable writes. Keep that ordering so TUI dashboards and tests see fresh disk-backed state.
+- Package CLI daemon child lanes may pass subagent names through `opencode run --agent` only when `ULMCODE_DAEMON_CHILD=1` and `ULMCODE_LANE_ID` are set. Normal CLI runs should still reject subagents as primary agents.
+- Background `task` metadata is persisted under `background_job/<task_id>` and must keep prompt/subagent/operation/worktree metadata, restart args, and runtime usage snapshots for stale-job recovery.
+- `operation_recover` depends on `command_supervise` metadata: `profileID`, variables, output prefix, manifest path, lane ID, and `workUnitID`.
 
-## Path + Shell Gotcha
-- Host paths include spaces (`Mobile Documents/...`).
-- Runtime reminders explicitly tell agents to quote absolute paths.
-- Keep this behavior, otherwise shell commands break in real runs.
+## Provider And Process Gotchas
 
-## Isolated Profile Tooling
-- Profile bootstrap + isolation checks:
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/tools/ulmcode-profile/scripts/bootstrap-ulmcode-profile.sh`
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/tools/ulmcode-profile/scripts/check-ulmcode-skill-isolation.sh`
-- Profile enforces deny-by-default skill permissions and allowlists compact K-12 pentest skills.
-- Launcher exports strict runtime vars:
-  - `OPENCODE_CONFIG_DIR`
-  - `OPENCODE_CONFIG`
-  - `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`
-  - `OPENCODE_DISABLE_PROJECT_CONFIG=1`
+- Anthropic/Vertex-Anthropic normalization treats client `tool-call` and `tool-result` as one group. Do not split them when moving trailing text.
+- Provider-executed/server-side tool pairs must remain assistant content.
+- Moonshot/Kimi schema normalization strips `$ref` siblings, cleans tuple items, and flattens deeply nested schemas near provider depth limits.
+- MCP dynamic tools retry once after transport/session errors by reconnecting; auth/business errors should surface directly.
+- Codex/OpenAI `server_is_overloaded` is retryable provider overload. Codex OAuth refresh may omit a new refresh token; preserve the existing one on refresh while keeping first-login strict.
+- Core process handling resolves exit state on `exit` as well as `close`, and SIGKILL escalation must not wait forever for a close event.
+- Broad Node process-kill commands stay blocked because OpenCode itself runs on Node; PID-scoped kills and project-scoped stop commands can remain allowed.
 
-## Test Anchors For This Harness
-- Environment scaffolding + legacy normalization:
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/session/environment.test.ts`
-- Reminder/enforcement behavior:
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/session/prompt-cyber-reminder.test.ts`
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/session/prompt-report-writer-enforcement.test.ts`
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/session/report-writer-skill-autoload.test.ts`
-- Finding/report outputs:
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/tool/finding-environment.test.ts`
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/tool/report-finalize.test.ts`
-  - `/Users/trevorrosato/Library/Mobile Documents/com~apple~CloudDocs/slatt/codeprojects/ULMcode/opencode/packages/opencode/test/report/report-bundle-extended.test.ts`
+## Server Routes
 
-## Practical Rules For Future Agents
-- Keep the report_writer terminal stage intact, do not remove fallback auto-queue behavior without replacing equivalent guarantees.
-- Preserve the `finding_json` embedded format or update parser + tests together.
-- Preserve environment root migration behavior for legacy `.opencode/engagements` installs.
-- If changing model/system prompt routing, keep `SystemPrompt.withCyber(...)` behavior so cyber-core policy still appends across providers.
-- Do not present “complete/closed/no remaining next steps” language unless findings + quality checks support that claim.
-- Always include structured subagent completion fields in `results.md`:
-  - `executed_commands`, `generated_files`, `unverified_claims`, `failed_commands`.
+- Legacy Hono instance routes and Effect HttpApi routes under `src/server/routes/instance/httpapi` must stay behaviorally aligned: request shape, response shape, status codes, workspace/instance routing, and SDK-visible schemas.
+- For normal HttpApi endpoints, use `HttpApiBuilder.group(...)`, yield stable services once while building the handler layer, and close over them in endpoint implementations.
+- For SSE in HttpApi, return `HttpServerResponse.stream(...)` and mark success with `HttpApiSchema.asText({ contentType: "text/event-stream" })`.
+- Use raw `HttpRouter.use(...)` only for WebSocket upgrades or catch-all routes that do not fit the request/response model.
+- Avoid rebuilding layers inside request handlers. Provide stable layers at the application/layer boundary; use request-derived context only for `WorkspaceRouteContext`, `InstanceRef`, or `WorkspaceRef`.
+- Public JSON errors should be explicit `Schema.ErrorClass` contracts declared on each endpoint.
+- `/global/event` uses a shared 1024-event SSE replay ring; both legacy and HttpApi routes must honor `Last-Event-ID`.
 
-# opencode database guide
+## Tests
 
-## Database
+- For Effect tests, use `testEffect(...)`; keep test bodies inside `Effect.gen(function* () { ... })`.
+- Use `it.effect(...)` for TestClock/TestConsole, `it.live(...)` for real time/filesystem/git/processes/locks, and `it.instance(...)` when a scoped temp instance is needed.
+- Prefer helpers from `test/fixture/fixture.ts`: `tmpdir`, `tmpdirScoped`, `provideInstance`, `provideTmpdirInstance`, and `provideTmpdirServer`.
+- Use `Layer.mock` for small service overrides instead of hand-rolling full service objects with placeholder methods.
+- Server tests should prefer focused middleware/probe routes over full API trees. Use `NodeHttpServer.layerTest`, relative `HttpClient` requests, scoped layers for mutable state, and `tmpdirScoped({ git: true })` plus `Project.use.fromDirectory(dir)` for project-backed requests.
 
-- **Schema**: Drizzle schema lives in `src/**/*.sql.ts`.
-- **Naming**: tables and columns use snake_case; join columns are `<entity>_id`; indexes are `<table>_<column>_idx`.
-- **Migrations**: generated by Drizzle Kit using `drizzle.config.ts` (schema: `./src/**/*.sql.ts`, output: `./migration`).
-- **Command**: `bun run db generate --name <slug>`.
-- **Output**: creates `migration/<timestamp>_<slug>/migration.sql` and `snapshot.json`.
-- **Tests**: migration tests should read the per-folder layout (no `_journal.json`).
+## ULM Verification Anchors
 
-# Module shape
-
-Do not use `export namespace Foo { ... }` for module organization. It is not
-standard ESM, it prevents tree-shaking, and it breaks Node's native TypeScript
-runner. Use flat top-level exports combined with a self-reexport at the bottom
-of the file:
-
-```ts
-// src/foo/foo.ts
-export interface Interface { ... }
-export class Service extends Context.Service<Service, Interface>()("@opencode/Foo") {}
-export const layer = Layer.effect(Service, ...)
-export const defaultLayer = layer.pipe(...)
-
-export * as Foo from "./foo"
-```
-
-Consumers import the namespace projection:
-
-```ts
-import { Foo } from "@/foo/foo"
-
-yield * Foo.Service
-Foo.layer
-Foo.defaultLayer
-```
-
-Namespace-private helpers stay as non-exported top-level declarations in the
-same file — they remain inaccessible to consumers (they are not projected by
-`export * as`) but are usable by the file's own code.
-
-## When the file is an `index.ts`
-
-If the module is `foo/index.ts` (single-namespace directory), use `"."` for
-the self-reexport source rather than `"./index"`:
-
-```ts
-// src/foo/index.ts
-export const thing = ...
-
-export * as Foo from "."
-```
-
-## Multi-sibling directories
-
-For directories with several independent modules (e.g. `src/session/`,
-`src/config/`), keep each sibling as its own file with its own self-reexport,
-and do not add a barrel `index.ts`. Consumers import the specific sibling:
-
-```ts
-import { SessionRetry } from "@/session/retry"
-import { SessionStatus } from "@/session/status"
-```
-
-Barrels in multi-sibling directories force every import through the barrel to
-evaluate every sibling, which defeats tree-shaking and slows module load.
-
-# opencode Effect rules
-
-Use these rules when writing or migrating Effect code.
-
-See `specs/effect/migration.md` for the compact pattern reference and examples.
-
-## Core
-
-- Use `Effect.gen(function* () { ... })` for composition.
-- Use `Effect.fn("Domain.method")` for named/traced effects and `Effect.fnUntraced` for internal helpers.
-- `Effect.fn` / `Effect.fnUntraced` accept pipeable operators as extra arguments, so avoid unnecessary outer `.pipe()` wrappers.
-- Use `Effect.callback` for callback-based APIs.
-- Use `Effect.void` instead of `Effect.succeed(undefined)` or `Effect.succeed(void 0)`.
-- Prefer `DateTime.nowAsDate` over `new Date(yield* Clock.currentTimeMillis)` when you need a `Date`.
-
-## Module conventions
-
-- In `src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
-
-## Schemas and errors
-
-- Use `Schema.Class` for multi-field data.
-- Use branded schemas (`Schema.brand`) for single-value types.
-- Use `Schema.TaggedErrorClass` for typed errors.
-- Use `Schema.Defect` instead of `unknown` for defect-like causes.
-- In `Effect.gen` / `Effect.fn`, prefer `yield* new MyError(...)` over `yield* Effect.fail(new MyError(...))` for direct early-failure branches.
-
-## Runtime vs InstanceState
-
-- Use `makeRuntime` (from `src/effect/run-service.ts`) for all services. It returns `{ runPromise, runFork, runCallback }` backed by a shared `memoMap` that deduplicates layers.
-- Use `InstanceState` (from `src/effect/instance-state.ts`) for per-directory or per-project state that needs per-instance cleanup. It uses `ScopedCache` keyed by directory — each open project gets its own state, automatically cleaned up on disposal.
-- If two open directories should not share one copy of the service, it needs `InstanceState`.
-- Do the work directly in the `InstanceState.make` closure — `ScopedCache` handles run-once semantics. Don't add fibers, `ensure()` callbacks, or `started` flags on top.
-- Use `Effect.addFinalizer` or `Effect.acquireRelease` inside the `InstanceState.make` closure for cleanup (subscriptions, process teardown, etc.).
-- Use `Effect.forkScoped` inside the closure for background stream consumers — the fiber is interrupted when the instance is disposed.
-- To make a service's `init()` non-blocking, fork `InstanceState.get(state)` at the `init()` call site (e.g. `Effect.forkIn(scope)`), not by forking work inside the `InstanceState.make` closure. Forking inside the closure leaves state incomplete for other methods that read it.
-- `src/project/bootstrap.ts` already wraps every service `init()` in `Effect.forkDetach`, so `init()` is fire-and-forget in production. Keep `init()` methods synchronous internally; the caller controls concurrency.
-
-## Effect v4 beta API
-
-- `Effect.fork` and `Effect.forkDaemon` do not exist. Use `Effect.forkIn(scope)` to fork a fiber into a specific scope.
-
-## Preferred Effect services
-
-- In effectified services, prefer yielding existing Effect services over dropping down to ad hoc platform APIs.
-- Prefer `FileSystem.FileSystem` instead of raw `fs/promises` for effectful file I/O.
-- Prefer `ChildProcessSpawner.ChildProcessSpawner` with `ChildProcess.make(...)` instead of custom process wrappers.
-- Prefer `HttpClient.HttpClient` instead of raw `fetch`.
-- Prefer `Path.Path`, `Config`, `Clock`, and `DateTime` when those concerns are already inside Effect code.
-- For background loops or scheduled tasks, use `Effect.repeat` or `Effect.schedule` with `Effect.forkScoped` in the layer definition.
-
-## Effect.cached for deduplication
-
-Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually. See `specs/effect/migration.md` for the full pattern.
-
-## Instance.bind — ALS for native callbacks
-
-`Instance.bind(fn)` captures the current Instance AsyncLocalStorage context and restores it synchronously when called.
-
-Use it for native addon callbacks (`@parcel/watcher`, `node-pty`, native `fs.watch`, etc.) that need to call `Bus.publish` or anything that reads `Instance.directory`.
-
-You do not need it for `setTimeout`, `Promise.then`, `EventEmitter.on`, or Effect fibers.
-
-```typescript
-const cb = Instance.bind((err, evts) => {
-  Bus.publish(MyEvent, { ... })
-})
-nativeAddon.subscribe(dir, cb)
-```
+- `bun run --cwd packages/opencode test:ulm-tui-launch` or `tools/ulmcode-profile/test-profile.sh` for profile/TUI launch checks.
+- `bun run --cwd packages/opencode test:ulm-skills` for bundled skills and command drift.
+- `bun run --cwd packages/opencode test:ulm-tool-manifest` for supervised command/tool catalog rules.
+- `bun run --cwd packages/opencode test:ulm-smoke` for the synthetic ULM lifecycle.
+- `bun run --cwd packages/opencode test:ulm-lab` and `test:ulm-lab-target` for lab replay and bundled target probes.
+- `bun run --cwd packages/opencode test:ulm-rebuild-audit` for the rebuild evidence checklist.
+- `bun run --cwd packages/opencode test:ulm-harness:fast` for harness scorecards; use `:chaos`, `:full`, and `:overnight` when refreshing first-run readiness evidence.

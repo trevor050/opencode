@@ -2,6 +2,9 @@ import { dirname, join } from "node:path"
 
 export type DesktopChannel = "dev" | "beta" | "prod"
 
+export const UPDATE_OWNER = "trevor050"
+export const UPDATE_REPO = "ulmcode"
+
 export const APP_NAMES: Record<DesktopChannel, string> = {
   dev: "ULMCode Dev",
   beta: "ULMCode Beta",
@@ -33,6 +36,17 @@ export function getDesktopAppName(raw?: string) {
 
 export function getDesktopAppId(raw?: string) {
   return APP_IDS[resolveDesktopChannel(raw)]
+}
+
+export function getDesktopPublishConfig(raw?: string) {
+  const channel = resolveDesktopChannel(raw)
+  if (channel === "dev") return undefined
+  return {
+    provider: "github" as const,
+    owner: UPDATE_OWNER,
+    repo: UPDATE_REPO,
+    channel: "latest",
+  }
 }
 
 export function isDesktopDeepLink(value: string) {
