@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug, writeRuntimeSummary } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import { readOperationGoal } from "./operation-goal"
 import {
   superviseOperation,
@@ -126,18 +127,23 @@ function reportRepairTaskParams(
   supervisor: RuntimeSchedulerSupervisorSummary,
 ): SchedulerLaunchParams {
   const nextTool = supervisor.requiredNextTool ?? "report_lint"
+  const finalizationMode = supervisor.reason?.includes("finalization window is open") ?? false
   const prompt = [
-    `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
+    finalizationMode
+      ? `Operation ${operationID} is inside its protected finalization window. Start the reporting closeout instead of launching new broad discovery.`
+      : `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
     supervisor.modelPrompt,
     `Required next tool: ${nextTool}.`,
-    "Read deliverables/operation-audit.json first, then fix every listed blocker.",
+    finalizationMode
+      ? "Read operation_status, preserve limitations, validate or reject remaining candidates, then build the final report pipeline from durable evidence."
+      : "Read deliverables/operation-audit.json first, then fix every listed blocker.",
     "Use the report pipeline tools as needed: report_outline for page/section budget issues, report_lint for content gaps, report_render for final HTML/PDF packaging, runtime_summary for accounting, and operation_audit to prove the final gates.",
     "Do not mark the operation ready until operation_audit passes with the same strict handoff gates.",
   ]
     .filter((line): line is string => !!line)
     .join("\n\n")
   return {
-    description: "Repair final report audit",
+    description: finalizationMode ? "Start finalization report closeout" : "Repair final report audit",
     prompt,
     subagent_type: "report-writer",
     operationID,
@@ -279,6 +285,14 @@ export async function runRuntimeScheduler(
   worktree: string,
   input: RuntimeSchedulerInput,
 ): Promise<RuntimeSchedulerResult> {
+  if (
+    containsRawCredentialSecret({
+      operationID: input.operationID,
+      toolManifestPath: input.toolManifestPath,
+    })
+  ) {
+    throw new Error("runtime scheduler inputs must not contain raw credential secrets")
+  }
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const schedulerDir = path.join(root, "scheduler")

@@ -11,6 +11,7 @@ import {
 import { readOperationPlanExcerpt, type OperationPlanExcerpt } from "./operation-context"
 import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import { effectiveULMContinuation, readULMConfig } from "./config"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export type OperationSupervisorReviewKind =
   | "startup"
@@ -82,6 +83,18 @@ type OperationAuditLike = {
   blockers?: unknown[]
 }
 
+type StageGateLike = {
+  ok?: boolean
+  gaps?: unknown[]
+}
+
+type OperationPlanLike = {
+  timeBudget?: {
+    targetHours?: number
+    finalizationWindowHours?: number
+  }
+}
+
 async function readJson<T>(file: string): Promise<T | undefined> {
   try {
     return JSON.parse(await fs.readFile(file, "utf8")) as T
@@ -133,6 +146,32 @@ function longRunGoal(goal: OperationGoalRecord | undefined) {
   return (goal?.targetDurationHours ?? 0) >= 1
 }
 
+function defaultFinalizationWindowHours(targetHours: number) {
+  return Math.max(1, Math.min(4, Math.round(targetHours * 0.15)))
+}
+
+function finalizationWindowStatus(input: {
+  goal?: OperationGoalRecord
+  plan?: OperationPlanLike
+  now: Date
+}) {
+  const targetHours = input.plan?.timeBudget?.targetHours ?? input.goal?.targetDurationHours
+  if (!input.goal || input.goal.status !== "active" || targetHours === undefined || targetHours < 2) return undefined
+  const createdAt = Date.parse(input.goal.createdAt)
+  if (!Number.isFinite(createdAt)) return undefined
+  const elapsedHours = (input.now.getTime() - createdAt) / 60 / 60 / 1000
+  const finalizationWindowHours =
+    input.plan?.timeBudget?.finalizationWindowHours ?? defaultFinalizationWindowHours(targetHours)
+  const startsAtHours = Math.max(0, targetHours - finalizationWindowHours)
+  return {
+    due: elapsedHours >= startsAtHours,
+    elapsedHours,
+    targetHours,
+    finalizationWindowHours,
+    startsAtHours,
+  }
+}
+
 function approvedDiscoveryCharter(status: OperationStatusSummary) {
   return status.plans.discoveryCharter && status.plans.discoveryCharterApproval === "approved"
 }
@@ -140,10 +179,19 @@ function approvedDiscoveryCharter(status: OperationStatusSummary) {
 function decisionsFor(input: {
   reviewKind: OperationSupervisorReviewKind
   goal?: OperationGoalRecord
+  plan?: OperationPlanLike
+  now: Date
   status: OperationStatusSummary
   graph?: OperationGraphLike
   coverage: CoverageReadiness
-  finalArtifacts: { operationAudit: boolean; operationAuditOk?: boolean; operationAuditBlockers: string[]; handoffGate: boolean }
+  finalArtifacts: {
+    operationAudit: boolean
+    operationAuditOk?: boolean
+    operationAuditBlockers: string[]
+    handoffGate: boolean
+    handoffGateOk?: boolean
+    handoffGateGaps: string[]
+  }
 }) {
   const decisions: OperationSupervisorDecision[] = []
   if (!input.goal) {
@@ -209,7 +257,33 @@ function decisionsFor(input: {
       }),
     )
   }
-  if (longRunGoal(input.goal) && !input.coverage.ok) {
+  const finalization = finalizationWindowStatus({ goal: input.goal, plan: input.plan, now: input.now })
+  if (
+    finalization?.due &&
+    input.status.plans.operation &&
+    (!input.status.reports.manifest || !input.status.runtimeSummary || !input.finalArtifacts.operationAudit || !input.finalArtifacts.handoffGate)
+  ) {
+    decisions.push(
+      decision({
+        action: "continue_reporting",
+        reason: `finalization window is open (${finalization.elapsedHours.toFixed(2)}h elapsed of ${finalization.targetHours}h target; finalization starts at ${finalization.startsAtHours}h)`,
+        requiredNextTool: "report_outline",
+        requiredArtifacts: [
+          "reports/report-outline.md",
+          "reports/report.md",
+          "deliverables/final/manifest.json",
+          "deliverables/runtime-summary.json",
+          "deliverables/operation-audit.json",
+          "deliverables/stage-gates/handoff.json",
+        ],
+        operatorMessage:
+          "The target runtime is inside the protected finalization window; stop expanding exploratory work and start report closeout.",
+        modelPrompt:
+          "The operation is inside its finalization window. Stop launching new broad discovery. Validate or reject remaining candidates, preserve limitations, run report_outline, send report-writer/report-reviewer lanes, run report_lint, report_render, runtime_summary, operation_audit, and handoff stage gates.",
+      }),
+    )
+  }
+  if (longRunGoal(input.goal) && !input.coverage.ok && !finalization?.due) {
     decisions.push(
       decision({
         action: "continue_coverage",
@@ -242,6 +316,28 @@ function decisionsFor(input: {
           input.finalArtifacts.operationAuditBlockers.length
             ? `Current blockers: ${input.finalArtifacts.operationAuditBlockers.join("; ")}`
             : "Current blockers were not listed; rerun operation_audit for details.",
+        ].join(" "),
+      }),
+    )
+  }
+  if (input.status.plans.operation && input.finalArtifacts.handoffGate && input.finalArtifacts.handoffGateOk === false) {
+    decisions.push(
+      decision({
+        action: "continue_reporting",
+        reason: "handoff stage gate has unresolved blockers",
+        requiredNextTool: "operation_stage_gate",
+        requiredArtifacts: [
+          "deliverables/stage-gates/handoff.json",
+          "deliverables/final/manifest.json",
+          "deliverables/operation-audit.json",
+        ],
+        operatorMessage: "Handoff stage gate exists but is not passing; reopen report closeout before release.",
+        modelPrompt: [
+          "Read deliverables/stage-gates/handoff.json and fix every handoff gate gap.",
+          "Rerun report_lint, report_render, runtime_summary, operation_audit, and operation_stage_gate for handoff before releasing.",
+          input.finalArtifacts.handoffGateGaps.length
+            ? `Current handoff gate gaps: ${input.finalArtifacts.handoffGateGaps.join("; ")}`
+            : "Current handoff gate gaps were not listed; rerun operation_stage_gate for details.",
         ].join(" "),
       }),
     )
@@ -324,7 +420,9 @@ function decisionsFor(input: {
     input.status.runtimeSummary &&
     input.status.reports.manifest &&
     input.finalArtifacts.operationAudit &&
+    input.finalArtifacts.operationAuditOk === true &&
     input.finalArtifacts.handoffGate &&
+    input.finalArtifacts.handoffGateOk === true &&
     !hasRuntimeBlindSpot(input.status)
   ) {
     decisions.push(
@@ -405,6 +503,7 @@ function reviewMarkdown(review: OperationSupervisorReview) {
 }
 
 async function writeReview(worktree: string, review: OperationSupervisorReview) {
+  if (containsRawCredentialSecret(review)) throw new Error("operation supervisor reviews must not contain raw credential secrets")
   const dir = path.join(operationPath(worktree, review.operationID), "supervisor")
   const stamp = review.generatedAt.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")
   const files = {
@@ -423,6 +522,7 @@ export async function superviseOperation(
   input: OperationSupervisorInput,
   options: { now?: string } = {},
 ): Promise<OperationSupervisorReview> {
+  if (containsRawCredentialSecret(input)) throw new Error("operation supervisor reviews must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const status = await readOperationStatus(worktree, operationID)
   const goal = (await readOperationGoal(worktree, operationID)).goal
@@ -431,16 +531,23 @@ export async function superviseOperation(
     : undefined
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphLike>(path.join(root, "plans", "operation-graph.json"))
+  const plan = await readJson<OperationPlanLike>(path.join(root, "plans", "operation-plan.json"))
   const finalArtifacts = {
     operationAudit: false,
     operationAuditOk: undefined as boolean | undefined,
     operationAuditBlockers: [] as string[],
-    handoffGate: !!(await readJson(path.join(root, "deliverables", "stage-gates", "handoff.json"))),
+    handoffGate: false,
+    handoffGateOk: undefined as boolean | undefined,
+    handoffGateGaps: [] as string[],
   }
   const operationAudit = await readJson<OperationAuditLike>(path.join(root, "deliverables", "operation-audit.json"))
+  const handoffGate = await readJson<StageGateLike>(path.join(root, "deliverables", "stage-gates", "handoff.json"))
   finalArtifacts.operationAudit = !!operationAudit
   finalArtifacts.operationAuditOk = operationAudit?.ok
   finalArtifacts.operationAuditBlockers = (operationAudit?.blockers ?? []).filter((item): item is string => typeof item === "string")
+  finalArtifacts.handoffGate = !!handoffGate
+  finalArtifacts.handoffGateOk = handoffGate?.ok
+  finalArtifacts.handoffGateGaps = (handoffGate?.gaps ?? []).filter((item): item is string => typeof item === "string")
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const review: OperationSupervisorReview = {
     operationID,
@@ -453,6 +560,8 @@ export async function superviseOperation(
     decisions: decisionsFor({
       reviewKind: input.reviewKind ?? "manual",
       goal,
+      plan,
+      now: new Date(options.now ?? Date.now()),
       status,
       graph,
       coverage,

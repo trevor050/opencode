@@ -72,5 +72,6 @@ describe("ULM native surface", () => {
       expect(ids).toContain("report_render")
       expect(ids).toContain("runtime_summary")
       expect(ids).toContain("eval_scorecard")
+      expect(ids).toContain("laptop_preflight")
     }))
 })

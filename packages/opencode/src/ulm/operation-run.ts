@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import { decideOperationNext, type OperationNextAction } from "./operation-next"
 import type { OperationGraphRecord, OperationLane, OperationLaneCoverageImpact } from "./operation-graph"
 import { syncWorkQueueJobs } from "./work-queue"
@@ -51,6 +52,7 @@ export type OperationRunResult = {
   completedWorkUnits: string[]
   failedWorkUnits: string[]
   blockers: string[]
+  repairHints: string[]
 }
 
 export type OperationRuntimeSyncInput = {
@@ -178,6 +180,11 @@ function artifactCoversExpected(artifact: string, expected: string) {
   return cleanArtifact === cleanExpected
 }
 
+function jobMatchesWorktree(job: BackgroundJob.Info, worktree: string) {
+  const metadataWorktree = job.metadata?.worktree
+  return typeof metadataWorktree !== "string" || path.resolve(metadataWorktree) === path.resolve(worktree)
+}
+
 function laneRequiresEvidenceRefs(lane: OperationLane) {
   return [
     "evidence_normalization",
@@ -186,6 +193,70 @@ function laneRequiresEvidenceRefs(lane: OperationLane) {
     "report_review",
     "operator_summary",
   ].includes(lane.id)
+}
+
+const REPORT_AUTOCOMPLETE_LANES = new Set([
+  "report_evidence_index",
+  "report_writing",
+  "report_technical_review",
+  "report_executive_review",
+  "report_review",
+  "operator_summary",
+])
+
+function operationRunRepairHints(blockers: readonly string[], next?: OperationNextAction) {
+  const hints = new Set<string>()
+  const missingExpected = blockers
+    .map((blocker) => blocker.match(/^proof does not cover expected artifact: (.+)$/)?.[1])
+    .filter((value): value is string => Boolean(value))
+  const missingFinalArtifacts = missingExpected.filter((artifact) => artifact.startsWith("deliverables/final/"))
+  if (missingFinalArtifacts.length) {
+    hints.add(
+      `Final package proof is missing ${missingFinalArtifacts.join(", ")}. Run report_render, then runtime_summary if runtime-summary.md is expected, then retry operation_run complete_lane with the generated deliverables/final paths.`,
+    )
+  }
+  const missingEvalArtifacts = missingExpected.filter((artifact) => artifact === "deliverables/eval-scorecard.json" || artifact === "deliverables/eval-scorecard.md")
+  if (missingEvalArtifacts.length) {
+    hints.add(
+      `Evaluation proof is missing ${missingEvalArtifacts.join(", ")}. Run eval_scorecard, then retry operation_run complete_lane with deliverables/eval-scorecard.json and any other expected operator-summary artifacts.`,
+    )
+  }
+  const missingStageGates = missingExpected.filter((artifact) => artifact.startsWith("deliverables/stage-gates/"))
+  if (missingStageGates.length) {
+    hints.add(
+      `Stage-gate proof is missing ${missingStageGates.join(", ")}. Run operation_stage_gate for the required stage, then retry operation_run complete_lane with the generated stage-gate artifact path.`,
+    )
+  }
+  const missingEvidenceArtifacts = missingExpected.filter(
+    (artifact) => artifact.startsWith("evidence/") || artifact === "evidence-index.json" || artifact === "findings/",
+  )
+  if (missingEvidenceArtifacts.length) {
+    hints.add(
+      `Evidence proof is missing ${missingEvidenceArtifacts.join(", ")}. Record or normalize evidence/findings first, then retry operation_run complete_lane with those operation-relative artifact paths.`,
+    )
+  }
+  if (next?.action === "launch_lane") {
+    hints.add(
+      `Next lane ready: ${next.lane.id}. Do not call operation_schedule for active-run continuation. Use runtime_scheduler/runtime_daemon to launch lanes, or produce the lane artifacts (${next.lane.expectedArtifacts.join(", ")}) and retry operation_run complete_lane for ${next.lane.id}.`,
+    )
+  } else if (next?.action === "wait" && next.blockers.length) {
+    hints.add(
+      `Operation is waiting on blockers, not a new schedule: ${next.blockers.join("; ")}. Use ${next.recommendedTools.join(", ")} to repair or inspect progress; do not call operation_schedule.`,
+    )
+  } else if (next?.action === "wait") {
+    hints.add(
+      `Operation is waiting: ${next.reason}. Use ${next.recommendedTools.join(", ")} to inspect or continue; do not call operation_schedule for an already scheduled active run.`,
+    )
+  } else if (next?.action === "stop") {
+    hints.add(
+      `All scheduler lanes are complete. Do not call operation_schedule again; call operation_checkpoint with stage=handoff and status=complete, then run operation_audit finalHandoff=true and repair any reported final handoff gaps.`,
+    )
+  } else if (next?.action === "compact") {
+    hints.add(
+      `Runtime context needs maintenance before more lane work: ${next.reason}. Use ${next.recommendedTools.join(", ")}; do not reschedule the operation graph.`,
+    )
+  }
+  return [...hints]
 }
 
 const COVERAGE_RANK: Record<OperationLaneCoverageImpact, number> = {
@@ -231,13 +302,18 @@ async function proofIsValid(root: string, lane: OperationLane, proof: LaneComple
 }
 
 async function validateInputProof(root: string, lane: OperationLane, input: OperationRunInput) {
+  const artifacts = [...(input.artifacts ?? [])]
+  for (const expected of lane.expectedArtifacts) {
+    if (artifacts.some((artifact) => artifactCoversExpected(artifact, expected))) continue
+    if (await expectedArtifactExists(root, expected)) artifacts.push(expected)
+  }
   const proof: LaneCompletionProof = {
     operationID: lane.operationID,
     laneID: lane.id,
     status: "complete",
     completedAt: new Date().toISOString(),
     summary: input.summary?.trim() || "",
-    artifacts: [...(input.artifacts ?? [])],
+    artifacts,
     evidenceRefs: [...(input.evidenceRefs ?? [])],
     ...(input.jobID ? { jobID: input.jobID } : {}),
   }
@@ -291,6 +367,54 @@ async function readLaneCompletionProof(root: string, lane: OperationLane) {
   return proof
 }
 
+async function evidenceRefsForAutoProof(root: string) {
+  const evidenceDir = path.join(root, "evidence")
+  const entries = await fs.readdir(evidenceDir, { withFileTypes: true }).catch(() => [])
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name.replace(/\.json$/g, ""))
+    .sort((left, right) => left.localeCompare(right))
+}
+
+function dependenciesSatisfied(graph: OperationGraphRecord, lane: OperationLane) {
+  const complete = new Set(
+    graph.lanes
+      .filter(
+        (item) =>
+          item.status === "complete" ||
+          ((item.status === "skipped" || item.status === "blocked") &&
+            item.releaseRequired === false &&
+            item.coverageImpact !== "blocks_release"),
+      )
+      .map((item) => item.id),
+  )
+  return lane.dependsOn.every((dependency) => complete.has(dependency))
+}
+
+async function autoCompleteReportLane(root: string, graph: OperationGraphRecord, lane: OperationLane) {
+  if (!REPORT_AUTOCOMPLETE_LANES.has(lane.id)) return false
+  if (lane.status !== "ready" && lane.status !== "running") return false
+  if (!dependenciesSatisfied(graph, lane)) return false
+  if (!(await Promise.all(lane.expectedArtifacts.map((artifact) => expectedArtifactExists(root, artifact)))).every(Boolean)) {
+    return false
+  }
+  const evidenceRefs = laneRequiresEvidenceRefs(lane) ? await evidenceRefsForAutoProof(root) : []
+  if (laneRequiresEvidenceRefs(lane) && !evidenceRefs.length) return false
+  await persistLaneCompletionProof(root, {
+    operationID: lane.operationID,
+    laneID: lane.id,
+    status: "complete",
+    completedAt: new Date().toISOString(),
+    summary: `Auto-completed from existing rendered report artifacts for ${lane.title}.`,
+    artifacts: [...lane.expectedArtifacts],
+    evidenceRefs,
+    jobID: "auto-final-package-proof",
+  })
+  lane.status = "complete"
+  lane.terminalState = "complete"
+  return true
+}
+
 async function autoCompleteLanes(root: string, graph: OperationGraphRecord) {
   const completed: string[] = []
   for (const lane of graph.lanes) {
@@ -302,11 +426,23 @@ async function autoCompleteLanes(root: string, graph: OperationGraphRecord) {
     lane.terminalState = "complete"
     completed.push(lane.id)
   }
+  let changed = true
+  while (changed) {
+    changed = false
+    markDependentsReady(graph)
+    for (const lane of graph.lanes) {
+      if (await autoCompleteReportLane(root, graph, lane)) {
+        completed.push(lane.id)
+        changed = true
+      }
+    }
+  }
   if (completed.length) markDependentsReady(graph)
   return completed
 }
 
 async function syncBackgroundJobs(
+  worktree: string,
   root: string,
   graph: OperationGraphRecord,
   operationID: string,
@@ -321,6 +457,7 @@ async function syncBackgroundJobs(
     const metadataOperation = job.metadata?.operationID
     const laneID = job.metadata?.laneID
     if (metadataOperation !== operationID || typeof laneID !== "string" || !laneID) continue
+    if (!jobMatchesWorktree(job, worktree)) continue
     const lane = graph.lanes.find((item) => item.id === laneID)
     if (!lane) continue
     if (lane.status === "complete" || lane.status === "skipped" || lane.status === "blocked") continue
@@ -362,15 +499,26 @@ function commandProfilesForLane(lane: OperationLane) {
   return []
 }
 
+async function readOperationScopeRules(root: string) {
+  const plan = await readJson<{ scopeRules?: unknown[] }>(path.join(root, "plans", "operation-plan.json"))
+  return Array.isArray(plan?.scopeRules)
+    ? plan.scopeRules.filter((rule): rule is string => typeof rule === "string" && rule.trim().length > 0)
+    : []
+}
+
+function scopeRulePromptLines(scopeRules: string[]) {
+  return scopeRules.length ? ["Operation scope rules:", ...scopeRules.map((rule) => `- ${rule}`), ""] : []
+}
+
 function laneSpecificInstruction(lane: OperationLane) {
   if (lane.id === "finding_validation")
     return "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
   if (lane.id === "report_writing")
-    return "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
+    return "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering. Write a scaffold or first section immediately, then expand in bounded chunks with tool calls/checkpoints instead of spending minutes silently composing the whole report. For long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
   return undefined
 }
 
-function taskParamsForLane(lane: OperationLane) {
+function taskParamsForLane(lane: OperationLane, scopeRules: string[]) {
   const specific = laneSpecificInstruction(lane)
   return {
     description: lane.title.slice(0, 60),
@@ -381,6 +529,7 @@ function taskParamsForLane(lane: OperationLane) {
       `Allowed tools: ${lane.allowedTools.join(", ")}`,
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
+      ...scopeRulePromptLines(scopeRules),
       "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
       "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
@@ -406,6 +555,8 @@ async function persistRun(worktree: string, graph: OperationGraphRecord, record:
 }
 
 export async function runOperationStep(worktree: string, input: OperationRunInput): Promise<OperationRunResult> {
+  const { backgroundJobs: _backgroundJobs, controller: _controller, ...operatorInput } = input
+  if (containsRawCredentialSecret(operatorInput)) throw new Error("operation run inputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const mode = input.mode ?? "advance"
   const { root } = graphPaths(worktree, operationID)
@@ -430,8 +581,8 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     const lane = findLane(graph, input.laneID)
     if (mode === "complete_lane") {
       const proof = await validateInputProof(root, lane, input)
-      if (lane.status !== "running") {
-        blockers.push(`${lane.id}: lane must be running before it can be completed`)
+      if (lane.terminalState && lane.terminalState !== "complete" && proof.blockers.length) {
+        blockers.push(`${lane.id}: terminal ${lane.terminalState} lane cannot be completed`)
       }
       if (proof.blockers.length) {
         blockers.push(...proof.blockers)
@@ -471,9 +622,20 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
 
   if (mode === "complete_lane" || mode === "skip_lane" || mode === "block_lane" || mode === "fail_lane") {
     const laneID = input.laneID
+    const next = blockers.length ? undefined : await decideOperationNext(worktree, { operationID })
+    const nextHint =
+      next?.action.action === "launch_lane"
+        ? ` Next lane ready: ${next.action.lane.id}; continue via runtime_scheduler/runtime_daemon or complete that lane with operation_run.`
+        : next?.action.action === "stop"
+          ? " All scheduler lanes are complete; call operation_checkpoint stage=handoff status=complete, then run operation_audit finalHandoff=true instead of rescheduling."
+          : next?.action.action === "wait"
+            ? ` Next scheduler state is wait: ${next.action.reason}.`
+            : next?.action.action === "compact"
+              ? ` Next scheduler state is compact: ${next.action.reason}.`
+              : ""
     const reason = blockers.length
       ? `${mode} did not update lane ${laneID}: ${blockers.join("; ")}`
-      : `recorded ${mode} for lane ${laneID}; scheduler will choose the next lane`
+      : `recorded ${mode} for lane ${laneID}; scheduler will choose the next lane.${nextHint}`
     const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
       time: new Date().toISOString(),
       mode,
@@ -501,6 +663,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
       completedWorkUnits,
       failedWorkUnits,
       blockers,
+      repairHints: operationRunRepairHints(blockers, next?.action),
     }
   }
 
@@ -531,6 +694,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
       completedWorkUnits,
       failedWorkUnits,
       blockers,
+      repairHints: operationRunRepairHints(blockers),
     }
   }
 
@@ -543,7 +707,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     const lane = findLane(graph, next.action.lane.id)
     lane.status = "running"
     laneID = lane.id
-    taskParams = taskParamsForLane(lane)
+    taskParams = taskParamsForLane(lane, await readOperationScopeRules(root))
     commandProfiles = commandProfilesForLane(lane)
   }
 
@@ -561,6 +725,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     reason,
   })
 
+  const finalBlockers = [...blockers, ...next.action.blockers]
   return {
     operationID,
     mode,
@@ -579,7 +744,8 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     syncedWorkUnits,
     completedWorkUnits,
     failedWorkUnits,
-    blockers: [...blockers, ...next.action.blockers],
+    blockers: finalBlockers,
+    repairHints: operationRunRepairHints(finalBlockers, next.action),
   }
 }
 
@@ -595,7 +761,7 @@ export async function syncOperationRuntimeState(
   const failedLanes: string[] = []
 
   if (input.autoComplete ?? true) completedLanes.push(...(await autoCompleteLanes(root, graph)))
-  const jobSync = await syncBackgroundJobs(root, graph, operationID, input.backgroundJobs)
+  const jobSync = await syncBackgroundJobs(worktree, root, graph, operationID, input.backgroundJobs)
   completedLanes.push(...jobSync.completed.filter((lane) => !completedLanes.includes(lane)))
   failedLanes.push(...jobSync.failed.filter((lane) => !failedLanes.includes(lane)))
   const queueSync = await syncWorkQueueJobs(worktree, { operationID, backgroundJobs: input.backgroundJobs })
@@ -662,6 +828,10 @@ export function formatOperationRun(result: OperationRunResult) {
     "## Command Profiles",
     "",
     ...(result.commandProfiles?.length ? result.commandProfiles.map((profile) => `- ${profile}`) : ["- none"]),
+    "",
+    "## Repair Hints",
+    "",
+    ...(result.repairHints.length ? result.repairHints.map((hint) => `- ${hint}`) : ["- none"]),
     "",
     "<operation_run_json>",
     JSON.stringify(result, null, 2),

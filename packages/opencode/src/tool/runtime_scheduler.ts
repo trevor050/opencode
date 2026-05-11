@@ -58,31 +58,33 @@ export const RuntimeSchedulerTool = Tool.define<
         Effect.gen(function* () {
           assertLaneToolAllowed("runtime_scheduler")
           const backgroundJobs = yield* jobs.list()
-          const result = yield* Effect.tryPromise(() =>
-            runRuntimeScheduler(Instance.worktree, {
-              ...params,
-              backgroundJobs,
-              launchModelLane: (launchParams) =>
-                Effect.runPromise(
-                  taskDef.execute(launchParams, {
-                    ...ctx,
-                    extra: { ...ctx.extra, bypassAgentCheck: true },
-                  }),
-                ).then((launched) => ({
-                  jobID:
-                    launched.metadata && typeof launched.metadata === "object"
-                      ? Reflect.get(launched.metadata, "sessionId")
-                    : undefined,
-                })),
-              launchCommandWorkUnit: (commandParams) =>
-                Effect.runPromise(commandDef.execute({ ...commandParams, dryRun: false }, ctx)).then((launched) => ({
-                  jobID:
-                    launched.metadata && typeof launched.metadata === "object"
-                      ? Reflect.get(launched.metadata, "jobID")
-                      : undefined,
-                })),
-            }),
-          ).pipe(Effect.orDie)
+          const result = yield* Effect.tryPromise({
+            try: () =>
+              runRuntimeScheduler(Instance.worktree, {
+                ...params,
+                backgroundJobs,
+                launchModelLane: (launchParams) =>
+                  Effect.runPromise(
+                    taskDef.execute(launchParams, {
+                      ...ctx,
+                      extra: { ...ctx.extra, bypassAgentCheck: true },
+                    }),
+                  ).then((launched) => ({
+                    jobID:
+                      launched.metadata && typeof launched.metadata === "object"
+                        ? Reflect.get(launched.metadata, "sessionId")
+                        : undefined,
+                  })),
+                launchCommandWorkUnit: (commandParams) =>
+                  Effect.runPromise(commandDef.execute({ ...commandParams, dryRun: false }, ctx)).then((launched) => ({
+                    jobID:
+                      launched.metadata && typeof launched.metadata === "object"
+                        ? Reflect.get(launched.metadata, "jobID")
+                        : undefined,
+                  })),
+              }),
+            catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+          }).pipe(Effect.catch((error) => Effect.die(error)))
           return {
             title: `Runtime scheduler: ${result.cycles.length} cycles`,
             output: formatRuntimeScheduler(result),

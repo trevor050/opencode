@@ -11,6 +11,7 @@ export const Parameters = Schema.Struct({
     "external-k12-district",
     "authenticated-webapp",
     "internal-network",
+    "school-laptop-48h",
     "cloud-posture",
     "code-audit",
     "report-only",

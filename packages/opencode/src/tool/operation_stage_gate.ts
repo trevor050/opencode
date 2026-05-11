@@ -41,6 +41,9 @@ export const Parameters = Schema.Struct({
   minFindingWords: Schema.optional(Schema.Number).annotate({
     description: "Minimum word count for each validated/report-ready finding section when a report file exists.",
   }),
+  minPdfPages: Schema.optional(Schema.Number).annotate({
+    description: "Minimum readable page count for the final PDFs. Omit unless the engagement has an explicit PDF length gate.",
+  }),
 })
 
 type Metadata = {
@@ -84,6 +87,7 @@ export const OperationStageGateTool = Tool.define<typeof Parameters, Metadata, n
             minOutlineSectionWordsPerPage: params.minOutlineSectionWordsPerPage,
             requireFindingSections: params.requireFindingSections,
             minFindingWords: params.minFindingWords,
+            minPdfPages: params.minPdfPages,
           }),
         ).pipe(Effect.orDie)
         return {

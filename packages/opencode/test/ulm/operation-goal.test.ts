@@ -81,6 +81,18 @@ describe("ULM operation goal", () => {
     expect(result.goal.targetDurationHours).toBe(12)
   })
 
+  test("rejects raw credential secrets in operation goal objectives", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    await expect(
+      createOperationGoal(dir.path, {
+        operationID: "school",
+        objective: "Authorized run with Genesis password: Summer2026!",
+        targetDurationHours: 48,
+      }),
+    ).rejects.toThrow("operation goals must not contain raw credential secrets")
+  })
+
   test("records blockers instead of completing without required artifacts", async () => {
     await using dir = await tmpdir({ git: true })
     await createOperationGoal(dir.path, { operationID: "school", objective: "Finish full report", targetDurationHours: 20 })
@@ -110,6 +122,29 @@ describe("ULM operation goal", () => {
     expect(result.goal?.status).toBe("complete")
     expect(result.goal?.completedAt).toBe("2026-05-06T03:00:00.000Z")
     expect(await fs.readFile(created.files.json, "utf8")).toContain('"status": "complete"')
+  })
+
+  test("refuses completion when operation audit has unresolved blockers", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Finish full report", targetDurationHours: 20 })
+    const root = path.join(dir.path, ".ulmcode", "operations", "school")
+    await writeJson(path.join(root, "deliverables", "runtime-summary.json"), { operationID: "school" })
+    await writeJson(path.join(root, "deliverables", "final", "manifest.json"), { operationID: "school" })
+    await writeJson(path.join(root, "deliverables", "operation-audit.json"), {
+      operationID: "school",
+      ok: false,
+      blockers: ["coverage: coverage contract status is unmet"],
+    })
+    await writeJson(path.join(root, "deliverables", "stage-gates", "handoff.json"), { operationID: "school", ok: true })
+
+    const result = await completeOperationGoal(dir.path, { operationID: "school" }, { now: "2026-05-06T03:00:00.000Z" })
+
+    expect(result.completed).toBe(false)
+    expect(result.blockers).toContain("deliverables/operation-audit.json ok is not true")
+    expect(result.blockers).toContain(
+      "deliverables/operation-audit.json has unresolved blockers: coverage: coverage contract status is unmet",
+    )
+    expect((await readOperationGoal(dir.path, "school")).goal?.status).toBe("active")
   })
 
   test("rejects empty objectives and negative durations", async () => {

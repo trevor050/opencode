@@ -85,7 +85,7 @@
       "kind": "http_response",
       "summary": "The LTI configuration endpoint disclosed the consumer key, launch URL, and shared secret without authentication.",
       "url": "http://127.0.0.1/.well-known/lti-config.json",
-      "content": "{\"consumerKey\":\"district-lms\",\"launchUrl\":\"/lti/launch\",\"sharedSecret\":\"lti-secret-demo-9421\",\"labFinding\":\"lti_shared_secret_disclosure\"}"
+      "content": "{\"consumerKey\":\"district-lms\",\"launchUrl\":\"/lti/launch\",\"sharedSecret\":\"********\",\"labFinding\":\"lti_shared_secret_disclosure\"}"
     },
     {
       "evidenceID": "ev-lti-forged-instructor-launch",

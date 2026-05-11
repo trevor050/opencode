@@ -9,3 +9,13 @@ each tick.
 Use short `maxRuntimeSeconds` and `maxCycles` values for interactive checks.
 For operator terminal runs, prefer `bun run --cwd packages/opencode
 ulm:runtime-daemon <operationID>`.
+
+For long unattended windows, the daemon requires a ready
+`scheduler/laptop-preflight.json` artifact before it starts scheduler work. Run
+`laptop_preflight` first, or use the CLI `--skip-laptop-preflight` only for
+controlled tests where launch readiness is being exercised separately. For
+20h+ windows the CLI refuses that bypass unless
+`ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS=1` is set, and it writes
+`scheduler/laptop-preflight-bypass.json` as an audit artifact.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in operation IDs, job metadata, manifest paths, or daemon options.

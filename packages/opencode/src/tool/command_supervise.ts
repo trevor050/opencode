@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
 import { buildCommandPlan, writeCommandPlan } from "@/ulm/tool-manifest"
+import { containsRawCredentialSecret } from "@/ulm/credential-safety"
 import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import { errorMessage } from "@/util/error"
 import * as Tool from "./tool"
@@ -172,6 +173,16 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
       execute: (params: Schema.Schema.Type<typeof Parameters>) =>
         Effect.gen(function* () {
           assertLaneToolAllowed("command_supervise")
+          if (
+            containsRawCredentialSecret({
+              operationID: params.operationID,
+              profileID: params.profileID,
+              variables: params.variables,
+              outputPrefix: params.outputPrefix,
+            })
+          ) {
+            return yield* Effect.die(new Error("supervised command inputs must not contain raw credential secrets"))
+          }
           const dryRun = params.dryRun ?? true
           const plan = yield* toolPromise(() =>
             buildCommandPlan({

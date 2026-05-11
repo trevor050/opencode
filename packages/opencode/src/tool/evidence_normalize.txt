@@ -7,3 +7,5 @@ The tool reads explicit artifact paths or discovered `command-plan.json` files,
 parses structured outputs when possible, writes `evidence-index.json`,
 `leads.json`, and citable `evidence_record` entries. Leads are intentionally
 not findings; promote a lead with `finding_record` only after validation.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in artifact paths, command-plan paths, evidence summaries, URLs, leads, or indexes.

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import {
+  BENCHMARK_SUITE_OPERATION_LANES,
+  REPORT_ONLY_OPERATION_LANES,
   REQUIRED_OPERATION_LANES,
   buildOperationGraph,
   validateOperationGraph,
@@ -72,6 +74,17 @@ describe("ULM operation graph", () => {
     expect(markdown).toContain("report_review")
   })
 
+  test("rejects raw credential secrets before writing operation graph artifacts", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    await expect(
+      writeOperationGraph(dir.path, {
+        operationID: "School\npassword: Summer2026!",
+        maxConcurrentLanes: 3,
+      }),
+    ).rejects.toThrow("operation graphs must not contain raw credential secrets")
+  })
+
   test("archives stale lane proofs when rescheduling with a different template", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "Home Network" })
@@ -92,7 +105,11 @@ describe("ULM operation graph", () => {
       }) + "\n",
     )
 
-    const result = await writeOperationGraph(dir.path, { operationID: "Home Network", template: "internal-network" })
+    const result = await writeOperationGraph(dir.path, {
+      operationID: "Home Network",
+      template: "internal-network",
+      forceReschedule: true,
+    })
     const archiveRoot = `${dir.path}/.ulmcode/operations/home-network/lane-complete-stale`
     const archiveBatches = await fs.readdir(archiveRoot)
     const archivedProofs = await Promise.all(
@@ -106,6 +123,15 @@ describe("ULM operation graph", () => {
     expect(await Bun.file(staleProof).exists()).toBe(false)
     expect(await Bun.file(sameLaneStaleProof).exists()).toBe(false)
     expect(archivedProofs.filter(Boolean)).toHaveLength(2)
+  })
+
+  test("rejects accidental reschedules after an operation graph already exists", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "Home Network" })
+
+    await expect(writeOperationGraph(dir.path, { operationID: "Home Network", template: "internal-network" })).rejects.toThrow(
+      "operation graph already exists",
+    )
   })
 
   test("builds internal-network lanes without district recon baggage", () => {
@@ -148,6 +174,78 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
     expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)
+  })
+
+  test("includes a supervisor lane by default for the school laptop 48h template", () => {
+    const graph = buildOperationGraph({
+      operationID: "First Real School Laptop",
+      template: "school-laptop-48h",
+      trustLevel: "unattended",
+      scanProfile: "aggressive",
+    })
+
+    expect(graph.lanes.map((lane) => lane.id)).toContain("supervisor")
+    expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
+  })
+
+  test("builds report-only lanes without recon and identity discovery work", () => {
+    const graph = buildOperationGraph({
+      operationID: "Report Repair",
+      template: "report-only",
+      includeSupervisor: true,
+      budgetUSD: 5,
+    })
+    const laneIDs = graph.lanes.map((lane) => lane.id)
+
+    expect(laneIDs).toEqual([...REPORT_ONLY_OPERATION_LANES, "supervisor"])
+    expect(laneIDs).not.toContain("district_profile")
+    expect(laneIDs).not.toContain("person_recon")
+    expect(laneIDs).not.toContain("recon")
+    expect(laneIDs).not.toContain("web_inventory")
+    expect(graph.lanes.find((lane) => lane.id === "evidence_normalization")?.status).toBe("ready")
+    expect(graph.lanes.find((lane) => lane.id === "evidence_normalization")?.dependsOn).toEqual([])
+    expect(graph.lanes.find((lane) => lane.id === "report_writing")?.dependsOn).toEqual(["report_evidence_index"])
+    expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
+    expect(validateOperationGraph(graph)).toEqual([])
+  })
+
+  test("uses synthetic web evidence expectations for benchmark-suite schedules", () => {
+    const graph = buildOperationGraph({
+      operationID: "Synthetic Closeout",
+      template: "benchmark-suite",
+      includeSupervisor: true,
+    })
+    const laneIDs = graph.lanes.map((lane) => lane.id)
+    const web = graph.lanes.find((lane) => lane.id === "web_inventory")
+    const recon = graph.lanes.find((lane) => lane.id === "recon")
+    const evidence = graph.lanes.find((lane) => lane.id === "evidence_normalization")
+
+    expect(laneIDs).toEqual([...BENCHMARK_SUITE_OPERATION_LANES, "supervisor"])
+    expect(laneIDs).not.toContain("district_profile")
+    expect(laneIDs).not.toContain("saas_cloud_review")
+    expect(web?.title).toBe("Synthetic web inventory review")
+    expect(web?.expectedArtifacts).toEqual(["evidence/synthetic-web-inventory.md"])
+    expect(web?.coverageImpact).toBe("none")
+    expect(web?.releaseRequired).toBe(false)
+    expect(recon?.title).toBe("Synthetic evidence intake")
+    expect(recon?.expectedArtifacts).toEqual(["evidence/"])
+    expect(evidence?.dependsOn).toEqual(["recon", "web_inventory", "identity_graph", "identity_auth_review"])
+    expect(validateOperationGraph(graph)).toEqual([])
+  })
+
+  test("uses evidence-record web inventory proof for school laptop schedules", () => {
+    const graph = buildOperationGraph({
+      operationID: "School Laptop",
+      template: "school-laptop-48h",
+      includeSupervisor: true,
+    })
+    const web = graph.lanes.find((lane) => lane.id === "web_inventory")
+
+    expect(web?.title).toBe("Private Wi-Fi inventory evidence")
+    expect(web?.expectedArtifacts).toEqual(["evidence/ev-wifi-inventory.json"])
+    expect(web?.coverageImpact).toBe("blocks_release")
+    expect(web?.releaseRequired).toBe(true)
+    expect(validateOperationGraph(graph)).toEqual([])
   })
 
   test("rejects stale internal-network graphs that accidentally use district lanes", () => {

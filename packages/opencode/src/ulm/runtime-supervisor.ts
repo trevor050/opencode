@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export type RuntimeSupervisorKind = "launchd" | "systemd" | "all"
 
@@ -17,6 +18,7 @@ export type RuntimeSupervisorInput = {
   errorBackoffSeconds?: number
   maxConsecutiveErrors?: number
   staleLockSeconds?: number
+  launchReadinessCommand?: string
   supervisor: RuntimeSupervisorKind
 }
 
@@ -27,6 +29,7 @@ export type RuntimeSupervisorResult = {
   serviceName: string
   label: string
   command: string[]
+  launchReadinessCommand?: string
   files: {
     manifest: string
     runbook: string
@@ -169,10 +172,53 @@ function runbook(input: RuntimeSupervisorResult) {
     `- runbook: ${input.files.runbook}`,
     `- command: ${input.command.join(" ")}`,
     "",
+    "## Pre-Launch Gate",
+    "",
+    "Run this from the repo before starting or leaving the supervisor unattended:",
+    "",
+    "```sh",
+    `bun run --cwd packages/opencode ulm:laptop-preflight ${input.operationID} --prepare --strict --confirm power --confirm sleep --confirm wifi --confirm scope --confirm clock --json`,
+    "```",
+    "",
+    "This writes `scheduler/laptop-preflight.json` and `.md`; fix every blocker before starting the 48-hour daemon.",
+    ...(input.launchReadinessCommand
+      ? [
+          "",
+          "## Launch Readiness Gate",
+          "",
+          "Run this immediately before starting the supervisor. It must exit successfully before launchd/systemd is allowed to own the long daemon:",
+          "For first-run school-laptop supervisors this command must include `--require-launch-ready`.",
+          "",
+          "```sh",
+          input.launchReadinessCommand,
+          "```",
+        ]
+      : []),
+    "",
+    "## 48-Hour Laptop Checklist",
+    "",
+    "- Connect wall power before leaving the laptop unattended.",
+    "- Disable sleep/hibernate/modern standby for the full operation window; the daemon heartbeat cannot prove wall-clock runtime while the machine is asleep.",
+    "- Confirm the school Wi-Fi is connected, captive portals are cleared, and the assigned private-network scope is reachable before starting the daemon.",
+    "- Keep the lid open or configure lid-close behavior so the Surface/laptop stays awake.",
+    "- Confirm OS clock/timezone are correct so daemon heartbeat continuity and final audit freshness are trustworthy.",
+    "- Keep this terminal/service account logged in for user-level launchd/systemd supervisors.",
+    "- Do not store raw Genesis, Google, SIS, or vendor credentials in reports, prompts, command text, or operation artifacts; use the credential vault and redacted indexes.",
+    "",
+    "## Monitoring While Away",
+    "",
+    `- daemon heartbeat: ${path.join(path.dirname(input.files.manifest), "..", "daemon-heartbeat.json")}`,
+    `- daemon log: ${path.join(path.dirname(input.files.manifest), "..", "daemon.jsonl")}`,
+    `- supervisor stdout: ${path.join(path.dirname(input.files.manifest), "..", "daemon-supervisor.stdout.log")}`,
+    `- supervisor stderr: ${path.join(path.dirname(input.files.manifest), "..", "daemon-supervisor.stderr.log")}`,
+    "",
+    "After the daemon finishes, rerun `runtime_summary`, `report_lint`, `report_render`, `operation_audit`, then `ulm:literal-run-readiness --strict --json` for the same operation. Accelerated burn-in proof is useful prep, but it is not wall-clock proof.",
+    "",
   ].join("\n")
 }
 
 export async function writeRuntimeSupervisor(input: RuntimeSupervisorInput): Promise<RuntimeSupervisorResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("runtime supervisor manifests must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(input.worktree, operationID)
   const supervisorDir = path.join(root, "scheduler", "supervisor")
@@ -199,6 +245,7 @@ export async function writeRuntimeSupervisor(input: RuntimeSupervisorInput): Pro
     serviceName,
     label,
     command,
+    launchReadinessCommand: input.launchReadinessCommand,
     files,
   }
 

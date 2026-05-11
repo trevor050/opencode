@@ -5,7 +5,7 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { createEffect, createMemo, For, Show } from "solid-js"
 import { usePlatform } from "@/context/platform"
 import { useUlm } from "@/context/ulm"
-import { finalPackagePath, operationTitle, reportPackageState } from "@/utils/ulm-operation-ui"
+import { finalPackagePath, operationChatPath, operationTitle, reportPackageState } from "@/utils/ulm-operation-ui"
 
 function packageFiles(item: UlmOperationStatusSummary) {
   return [
@@ -78,6 +78,9 @@ function DeliverableRow(props: { item: UlmOperationStatusSummary; base: string }
           </div>
         </div>
         <div class="flex shrink-0 flex-wrap gap-2">
+          <Button icon="speech-bubble" variant="ghost" size="small" onClick={() => navigate(operationChatPath(props.base, props.item))}>
+            Chat
+          </Button>
           <Button icon="status" variant="ghost" size="small" onClick={() => navigate(`${props.base}/operations/${props.item.operationID}`)}>
             Details
           </Button>
@@ -96,19 +99,39 @@ function DeliverableRow(props: { item: UlmOperationStatusSummary; base: string }
   )
 }
 
+function DeliverableLane(props: { title: string; description: string; items: UlmOperationStatusSummary[]; base: string; empty: string }) {
+  return (
+    <section class="rounded-[8px] border border-border-weaker-base bg-background-stronger">
+      <div class="flex items-center justify-between gap-3 border-b border-border-weaker-base px-4 py-3">
+        <div class="min-w-0">
+          <h2 class="text-13-medium text-text-strong">{props.title}</h2>
+          <div class="mt-0.5 text-12-regular text-text-weak">{props.description}</div>
+        </div>
+        <div class="rounded-[6px] border border-border-weaker-base bg-surface-base px-2 py-1 text-12-medium text-text-base">
+          {props.items.length}
+        </div>
+      </div>
+      <div class="flex flex-col gap-2 p-3">
+        <Show
+          when={props.items.length > 0}
+          fallback={<div class="rounded-[8px] border border-dashed border-border-weak-base bg-surface-base p-4 text-13-regular text-text-weak">{props.empty}</div>}
+        >
+          <For each={props.items}>{(item) => <DeliverableRow item={item} base={props.base} />}</For>
+        </Show>
+      </div>
+    </section>
+  )
+}
+
 export default function DeliverablesPage() {
   const ulm = useUlm()
   const navigate = useNavigate()
   const params = useParams()
   const base = createMemo(() => `/${params.dir}`)
   const operations = createMemo(() => ulm.store.operations)
-  const rows = createMemo(() => {
-    const rank = (item: UlmOperationStatusSummary) =>
-      reportPackageState(item) === "ready" ? 0 : reportPackageState(item) === "partial" ? 1 : 2
-    return operations()
-      .slice()
-      .sort((a, b) => rank(a) - rank(b) || operationTitle(a).localeCompare(operationTitle(b)))
-  })
+  const readyRows = createMemo(() => operations().filter((item) => reportPackageState(item) === "ready"))
+  const draftRows = createMemo(() => operations().filter((item) => reportPackageState(item) === "partial"))
+  const missingRows = createMemo(() => operations().filter((item) => reportPackageState(item) === "missing"))
   const ready = createMemo(() => operations().filter((item) => reportPackageState(item) === "ready").length)
   const needsWork = createMemo(() => operations().length - ready())
 
@@ -126,13 +149,13 @@ export default function DeliverablesPage() {
         <header class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="text-11-medium uppercase text-text-weak">ULMCode Desktop</div>
-            <h1 class="mt-1 text-24-medium text-text-strong">Report packages</h1>
+            <h1 class="mt-1 text-24-medium text-text-strong">Reports</h1>
             <div class="mt-1 max-w-170 text-13-regular leading-5 text-text-base">
-              Final handoff files only: report HTML, PDF, manifest, README, and runtime summary.
+              Handoff readiness by operation: final packages, drafts in progress, and runs with no report artifacts yet.
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <Button icon="reset" variant="secondary" size="normal" onClick={() => void ulm.refresh()} disabled={ulm.store.refreshing}>
+            <Button icon="refresh" variant="secondary" size="normal" onClick={() => void ulm.refresh()} disabled={ulm.store.refreshing}>
               Refresh
             </Button>
             <Button icon="status" variant="primary" size="normal" onClick={() => navigate(`${base()}/operations`)}>
@@ -152,18 +175,27 @@ export default function DeliverablesPage() {
           </div>
         </div>
 
-        <section class="flex flex-col gap-2">
-          <Show
-            when={rows().length > 0}
-            fallback={
-              <div class="rounded-[8px] border border-dashed border-border-weak-base bg-surface-base p-6 text-13-regular text-text-weak">
-                No operations yet. Reports appear here after an operation creates handoff files.
-              </div>
-            }
-          >
-            <For each={rows()}>{(item) => <DeliverableRow item={item} base={base()} />}</For>
-          </Show>
-        </section>
+        <DeliverableLane
+          title="Ready to hand off"
+          description="Final HTML, PDF, and manifest are present."
+          items={readyRows()}
+          base={base()}
+          empty="No complete report packages yet."
+        />
+        <DeliverableLane
+          title="Drafts and partial packages"
+          description="Some report material exists, but the handoff is not complete."
+          items={draftRows()}
+          base={base()}
+          empty="No draft packages right now."
+        />
+        <DeliverableLane
+          title="No report artifacts"
+          description="Operations that still need report generation or packaging."
+          items={missingRows()}
+          base={base()}
+          empty="Every operation has at least some report material."
+        />
       </div>
     </main>
   )

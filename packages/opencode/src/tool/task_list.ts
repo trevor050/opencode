@@ -1,6 +1,8 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./task_list.txt"
 import { BackgroundJob } from "@/background/job"
+import { Instance } from "@/project/instance"
+import { backgroundJobInScope } from "./background_job_scope"
 import { taskRestartArgs } from "./task_restart_args"
 import { Effect, Schema } from "effect"
 
@@ -13,6 +15,14 @@ type Metadata = {
   count: number
 }
 
+function currentWorktree() {
+  try {
+    return Instance.worktree
+  } catch {
+    return undefined
+  }
+}
+
 export const TaskListTool = Tool.define<typeof Parameters, Metadata, BackgroundJob.Service>(
   "task_list",
   Effect.gen(function* () {
@@ -23,9 +33,10 @@ export const TaskListTool = Tool.define<typeof Parameters, Metadata, BackgroundJ
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>) =>
         Effect.gen(function* () {
+          const worktree = currentWorktree()
           const items = (yield* jobs.list()).filter((job) => {
             if (params.status && job.status !== params.status) return false
-            if (params.operationID && job.metadata?.operationID !== params.operationID) return false
+            if (params.operationID && !backgroundJobInScope({ job, operationID: params.operationID, worktree })) return false
             return true
           })
           return {

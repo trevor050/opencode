@@ -121,6 +121,37 @@ describe("ULM work queue", () => {
     )
   })
 
+  test("rejects raw credential secrets before persisting work queues", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const manifest = path.join(dir.path, "manifest.json")
+    await writeManifest(manifest)
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(
+      path.join(root, "leads.json"),
+      JSON.stringify({
+        operationID: "school",
+        leads: [
+          {
+            id: "url-1",
+            kind: "url",
+            title: "Portal",
+            url: "https://portal.school.example",
+            severity: "info",
+            confidence: 0.8,
+            summary: "Captured operator password: Summer2026!",
+            evidence: [],
+            source: { parser: "httpx-jsonl", path: "httpx.jsonl" },
+          },
+        ],
+      }),
+    )
+
+    await expect(buildWorkQueue(dir.path, { operationID: "School", manifestPath: manifest })).rejects.toThrow(
+      "work queues must not contain raw credential secrets",
+    )
+  })
+
   test("selects and claims queued units as command_supervise params", async () => {
     await using dir = await tmpdir({ git: true })
     const root = operationPath(dir.path, "School")
