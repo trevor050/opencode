@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export const REQUIRED_OPERATION_LANES = [
   "district_profile",
@@ -20,6 +21,55 @@ export const REQUIRED_OPERATION_LANES = [
   "operator_summary",
 ] as const
 
+export const INTERNAL_NETWORK_OPERATION_LANES = [
+  "network_discovery",
+  "recon",
+  "service_inventory",
+  "web_inventory",
+  "credentialed_review",
+  "finding_validation",
+  "evidence_normalization",
+  "report_evidence_index",
+  "report_writing",
+  "report_review",
+  "operator_summary",
+] as const
+
+export const REPORT_ONLY_OPERATION_LANES = [
+  "evidence_normalization",
+  "finding_validation",
+  "report_evidence_index",
+  "report_writing",
+  "report_technical_review",
+  "report_executive_review",
+  "report_review",
+  "operator_summary",
+] as const
+
+export const BENCHMARK_SUITE_OPERATION_LANES = [
+  "recon",
+  "web_inventory",
+  "person_recon",
+  "identity_graph",
+  "identity_auth_review",
+  "evidence_normalization",
+  "finding_validation",
+  "report_evidence_index",
+  "report_writing",
+  "report_technical_review",
+  "report_executive_review",
+  "report_review",
+  "operator_summary",
+] as const
+
+export const KNOWN_OPERATION_LANES = [
+  ...REQUIRED_OPERATION_LANES,
+  ...INTERNAL_NETWORK_OPERATION_LANES,
+  ...REPORT_ONLY_OPERATION_LANES,
+  ...BENCHMARK_SUITE_OPERATION_LANES,
+  "supervisor",
+] as const
+
 export type OperationLaneID = (typeof REQUIRED_OPERATION_LANES)[number] | string
 export type OperationLaneStatus = "pending" | "ready" | "running" | "blocked" | "skipped" | "complete" | "failed"
 export type OperationLaneTerminalState = "complete" | "skipped" | "blocked" | "failed"
@@ -32,6 +82,7 @@ export type OperationGraphTemplate =
   | "external-k12-district"
   | "authenticated-webapp"
   | "internal-network"
+  | "school-laptop-48h"
   | "cloud-posture"
   | "code-audit"
   | "report-only"
@@ -57,6 +108,9 @@ export type OperationLane = {
     staleAfterMinutes: number
   }
   activeJobs?: Array<{ id: string; type: string; status: string; updatedAt: string }>
+  startedAt?: string
+  plannedDurationMinutes?: number
+  minRuntimeMinutes?: number
   terminalState?: OperationLaneTerminalState
   skipReason?: string
   coverageImpact?: OperationLaneCoverageImpact
@@ -75,9 +129,25 @@ export type OperationGraphRecord = {
   lanes: OperationLane[]
 }
 
+type OperationPlanExecutionBlock = {
+  id?: string
+  stage?: string
+  laneID: string
+  title: string
+  startMinute: number
+  durationMinutes: number
+  objective: string
+  actions: string[]
+  successCriteria: string[]
+  fallbackWork: string[]
+  subagents: string[]
+  expectedArtifacts?: string[]
+}
+
 export type OperationScheduleInput = {
   operationID: string
   template?: OperationGraphTemplate
+  forceReschedule?: boolean
   includeSupervisor?: boolean
   safetyMode?: OperationSafetyMode
   trustLevel?: OperationTrustLevel
@@ -468,6 +538,42 @@ const INTERNAL_NETWORK_LANES: typeof BASE_LANES = [
   },
 ]
 
+const REPORT_ONLY_LANES: typeof BASE_LANES = REPORT_ONLY_OPERATION_LANES.map((id) => {
+  const lane = BASE_LANES.find((item) => item.id === id)
+  if (!lane) throw new Error(`missing report-only lane template: ${id}`)
+  if (id === "evidence_normalization") return { ...lane, dependsOn: [] }
+  return lane
+})
+
+const BENCHMARK_SUITE_LANE_IDS = new Set<string>(BENCHMARK_SUITE_OPERATION_LANES)
+const BENCHMARK_SUITE_LANES: typeof BASE_LANES = BENCHMARK_SUITE_OPERATION_LANES.map((id) => {
+  const lane = BASE_LANES.find((item) => item.id === id)
+  if (!lane) throw new Error(`missing benchmark-suite lane template: ${id}`)
+  const dependsOn = lane.dependsOn.filter((dependency) => BENCHMARK_SUITE_LANE_IDS.has(dependency))
+  if (id === "recon") {
+    return {
+      ...lane,
+      title: "Synthetic evidence intake",
+      dependsOn,
+      expectedArtifacts: ["evidence/"],
+      allowedTools: ["evidence_record", "task", "operation_checkpoint"],
+      coverageImpact: "blocks_release",
+      releaseRequired: true,
+    }
+  }
+  if (id === "identity_auth_review") {
+    return {
+      ...lane,
+      title: "Synthetic identity and authorization review",
+      dependsOn,
+      expectedArtifacts: ["findings/"],
+      coverageImpact: "high",
+      releaseRequired: false,
+    }
+  }
+  return { ...lane, dependsOn }
+})
+
 const SUPERVISOR_LANE: (typeof BASE_LANES)[number] = {
   id: "supervisor",
   title: "Supervisor heartbeat and recovery review",
@@ -482,33 +588,83 @@ const SUPERVISOR_LANE: (typeof BASE_LANES)[number] = {
   releaseRequired: false,
 }
 
+const REPORTING_LANE_IDS = new Set([
+  "report_evidence_index",
+  "report_writing",
+  "report_technical_review",
+  "report_executive_review",
+  "report_review",
+  "operator_summary",
+])
+
 function routeFor(input: OperationScheduleInput, route: string) {
   return (
     input.modelRoutes?.[route] ??
     (route === "small"
       ? "openai/gpt-5.4-mini-fast"
       : route === "throughput"
-        ? "opencode-go/qwen3.6-plus"
-        : "openai/gpt-5.5-fast")
+        ? "openai/gpt-5.4-mini-fast"
+        : "openai/gpt-5.5")
   )
 }
 
 function fallbackRoutesFor(input: OperationScheduleInput, route: string, primary: string) {
   const defaults =
     route === "throughput"
-      ? ["openai/gpt-5.4-mini-fast", "openai/gpt-5.5-fast"]
+      ? ["openai/gpt-5.5"]
       : route === "small"
-        ? ["opencode-go/qwen3.6-plus", "openai/gpt-5.5-fast"]
-        : ["openai/gpt-5.4-mini-fast", "opencode-go/qwen3.6-plus"]
+        ? ["openai/gpt-5.5"]
+        : []
   return [...new Set([...(input.fallbackModelRoutes?.[route] ?? defaults)].filter((item) => item !== primary))]
+}
+
+function routeProvider(route: string) {
+  return route.split("/", 1)[0]
+}
+
+function laneForTemplate<
+  T extends Omit<OperationLane, "operationID" | "modelRoute" | "fallbackModelRoutes" | "budget" | "restartPolicy" | "status"> & {
+    route: string
+    budgetWeight: number
+    staleAfterMinutes: number
+    coverageImpact: OperationLaneCoverageImpact
+    releaseRequired: boolean
+  },
+>(template: OperationGraphTemplate | undefined, lane: T): T {
+  if (lane.id !== "web_inventory") return lane
+  if (template === "benchmark-suite") {
+    return {
+      ...lane,
+      title: "Synthetic web inventory review",
+      expectedArtifacts: ["evidence/synthetic-web-inventory.md"],
+      coverageImpact: "none",
+      releaseRequired: false,
+    }
+  }
+  if (template === "school-laptop-48h") {
+    return {
+      ...lane,
+      title: "Private Wi-Fi inventory evidence",
+      expectedArtifacts: ["evidence/ev-wifi-inventory.json"],
+    }
+  }
+  return lane
 }
 
 export function buildOperationGraph(input: OperationScheduleInput): OperationGraphRecord {
   const operationID = slug(input.operationID, "operation")
   const budgetUSD = input.budgetUSD
   const now = new Date().toISOString()
-  const lanes = input.template === "internal-network" ? INTERNAL_NETWORK_LANES : BASE_LANES
-  const scheduledLanes = input.includeSupervisor ? [...lanes, SUPERVISOR_LANE] : lanes
+  const lanes =
+    input.template === "internal-network"
+      ? INTERNAL_NETWORK_LANES
+      : input.template === "report-only"
+        ? REPORT_ONLY_LANES
+        : input.template === "benchmark-suite"
+          ? BENCHMARK_SUITE_LANES
+          : BASE_LANES
+  const includeSupervisor = input.includeSupervisor ?? input.template === "school-laptop-48h"
+  const scheduledLanes = includeSupervisor ? [...lanes, SUPERVISOR_LANE] : lanes
   return {
     operationID,
     safetyMode: input.safetyMode ?? "non_destructive",
@@ -518,26 +674,29 @@ export function buildOperationGraph(input: OperationScheduleInput): OperationGra
     createdAt: now,
     updatedAt: now,
     lanes: scheduledLanes.map((lane) => {
-      const modelRoute = routeFor(input, lane.route)
+      const templateLane = laneForTemplate(input.template, lane)
+      const modelRoute = routeFor(input, templateLane.route)
       return {
-        id: lane.id,
-        title: lane.title,
-        agent: lane.agent,
-        status: lane.dependsOn.length ? "pending" : "ready",
-        dependsOn: [...lane.dependsOn],
+        id: templateLane.id,
+        title: templateLane.title,
+        agent: templateLane.agent,
+        status: templateLane.dependsOn.length ? "pending" : "ready",
+        dependsOn: [...templateLane.dependsOn],
         modelRoute,
-        fallbackModelRoutes: fallbackRoutesFor(input, lane.route, modelRoute),
+        fallbackModelRoutes: fallbackRoutesFor(input, templateLane.route, modelRoute),
         allowedTools:
-          lane.id === "supervisor" ? [...lane.allowedTools] : [...new Set([...lane.allowedTools, "operation_run"])],
-        expectedArtifacts: [...lane.expectedArtifacts],
-        budget: budgetUSD !== undefined ? { maxUSD: Number((budgetUSD * lane.budgetWeight).toFixed(4)) } : {},
+          templateLane.id === "supervisor"
+            ? [...templateLane.allowedTools]
+            : [...new Set([...templateLane.allowedTools, "operation_run"])],
+        expectedArtifacts: [...templateLane.expectedArtifacts],
+        budget: budgetUSD !== undefined ? { maxUSD: Number((budgetUSD * templateLane.budgetWeight).toFixed(4)) } : {},
         restartPolicy: {
           restartable: true,
           maxAttempts: 2,
-          staleAfterMinutes: lane.staleAfterMinutes,
+          staleAfterMinutes: templateLane.staleAfterMinutes,
         },
-        coverageImpact: lane.coverageImpact,
-        releaseRequired: lane.releaseRequired,
+        coverageImpact: templateLane.coverageImpact,
+        releaseRequired: templateLane.releaseRequired,
         operationID,
       }
     }),
@@ -548,12 +707,35 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
   const gaps: string[] = []
   const ids = new Set(graph.lanes.map((lane) => lane.id))
   const isInternalNetwork = graph.lanes.some((lane) => lane.id === "network_discovery")
+  const isReportOnly =
+    ids.has("report_writing") && !ids.has("district_profile") && !ids.has("recon") && !ids.has("network_discovery")
+  const isBenchmarkSuite =
+    ids.has("recon") &&
+    !ids.has("district_profile") &&
+    !ids.has("saas_cloud_review") &&
+    !ids.has("network_discovery") &&
+    !ids.has("service_inventory") &&
+    !ids.has("credentialed_review")
   const requiredLanes = isInternalNetwork
     ? ["network_discovery", "recon", "service_inventory", "finding_validation", "evidence_normalization", "report_writing", "report_review", "operator_summary"]
-    : REQUIRED_OPERATION_LANES
+    : isReportOnly
+      ? REPORT_ONLY_OPERATION_LANES
+      : isBenchmarkSuite
+        ? BENCHMARK_SUITE_OPERATION_LANES
+        : REQUIRED_OPERATION_LANES
   if (isInternalNetwork) {
     for (const lane of ["district_profile", "person_recon", "identity_graph", "identity_auth_review", "saas_cloud_review"]) {
       if (ids.has(lane)) gaps.push(`internal-network graph must not include ${lane}`)
+    }
+  }
+  if (isReportOnly) {
+    for (const lane of ["district_profile", "person_recon", "recon", "web_inventory", "identity_graph", "identity_auth_review", "saas_cloud_review"]) {
+      if (ids.has(lane)) gaps.push(`report-only graph must not include ${lane}`)
+    }
+  }
+  if (isBenchmarkSuite) {
+    for (const lane of ["district_profile", "saas_cloud_review", "credentialed_review"]) {
+      if (ids.has(lane)) gaps.push(`benchmark-suite graph must not include ${lane}`)
     }
   }
   for (const required of requiredLanes) {
@@ -580,9 +762,10 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
       if (!ids.has(dependency)) gaps.push(`${lane.id}: depends on missing lane ${dependency}`)
     }
     if (!lane.modelRoute.includes("/")) gaps.push(`${lane.id}: modelRoute must include provider/model`)
-    if (!lane.fallbackModelRoutes?.length) gaps.push(`${lane.id}: fallbackModelRoutes required`)
+    else if (routeProvider(lane.modelRoute) !== "openai") gaps.push(`${lane.id}: modelRoute provider must be openai`)
     for (const fallback of lane.fallbackModelRoutes ?? []) {
       if (!fallback.includes("/")) gaps.push(`${lane.id}: fallbackModelRoute must include provider/model`)
+      else if (routeProvider(fallback) !== "openai") gaps.push(`${lane.id}: fallbackModelRoute provider must be openai`)
       if (fallback === lane.modelRoute) gaps.push(`${lane.id}: fallbackModelRoutes must not repeat primary route`)
     }
     if (!lane.expectedArtifacts.length) gaps.push(`${lane.id}: expectedArtifacts required`)
@@ -660,14 +843,87 @@ async function archiveStaleLaneProofs(root: string, laneIDs: Set<string>, now: s
   return archived
 }
 
+async function readPlanExecutionBlocks(root: string) {
+  const planPath = path.join(root, "plans", "operation-plan.json")
+  try {
+    const plan = (await Bun.file(planPath).json()) as { timeBudget?: { executionBlocks?: OperationPlanExecutionBlock[] } }
+    return Array.isArray(plan.timeBudget?.executionBlocks) ? plan.timeBudget.executionBlocks : []
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
+}
+
+function operationBlockLaneID(block: OperationPlanExecutionBlock, index: number) {
+  const value = (block.id ?? `planned-work-${index + 1}`)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  return `planned_work_${value || index + 1}`
+}
+
+function expandGraphWithExecutionBlocks(graph: OperationGraphRecord, blocks: OperationPlanExecutionBlock[]) {
+  if (!blocks.length) return graph
+  const existingIDs = new Set(graph.lanes.map((lane) => lane.id))
+  const plannedLanes = blocks.map((block, index): OperationLane => {
+    const id = operationBlockLaneID(block, index)
+    const previous = index > 0 ? operationBlockLaneID(blocks[index - 1]!, index - 1) : undefined
+    const baseDependency =
+      index === 0 && existingIDs.has(block.laneID) && !REPORTING_LANE_IDS.has(block.laneID) ? block.laneID : undefined
+    return {
+      id,
+      title: block.title,
+      agent: block.subagents[0] ?? "pentest",
+      status: "pending",
+      dependsOn: [previous, baseDependency].filter((item): item is string => !!item),
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "command_supervise", "evidence_record", "finding_record", "write", "task", "operation_run"],
+      expectedArtifacts: block.expectedArtifacts?.length ? [...block.expectedArtifacts] : [`work-blocks/${id}.md`],
+      budget: {},
+      restartPolicy: {
+        restartable: true,
+        maxAttempts: 2,
+        staleAfterMinutes: Math.max(30, Math.ceil(block.durationMinutes * 2)),
+      },
+      plannedDurationMinutes: block.durationMinutes,
+      minRuntimeMinutes: Math.max(5, Math.ceil(block.durationMinutes * 0.8)),
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: graph.operationID,
+    }
+  })
+  const plannedIDs = plannedLanes.map((lane) => lane.id)
+  const lastPlannedID = plannedIDs.at(-1)
+  if (!lastPlannedID) return graph
+  const lanes = graph.lanes.map((lane) =>
+    REPORTING_LANE_IDS.has(lane.id) && !lane.dependsOn.includes(lastPlannedID)
+      ? { ...lane, dependsOn: [...lane.dependsOn, lastPlannedID] }
+      : lane,
+  )
+  const firstReportingIndex = lanes.findIndex((lane) => REPORTING_LANE_IDS.has(lane.id))
+  const insertAt = firstReportingIndex === -1 ? lanes.length : firstReportingIndex
+  return {
+    ...graph,
+    lanes: [...lanes.slice(0, insertAt), ...plannedLanes, ...lanes.slice(insertAt)],
+  }
+}
+
 export async function writeOperationGraph(worktree: string, input: OperationScheduleInput) {
-  const graph = buildOperationGraph(input)
+  if (containsRawCredentialSecret(input)) throw new Error("operation graphs must not contain raw credential secrets")
+  const root = operationPath(worktree, slug(input.operationID, "operation"))
+  const graph = expandGraphWithExecutionBlocks(buildOperationGraph(input), await readPlanExecutionBlocks(root))
   const gaps = validateOperationGraph(graph)
   if (gaps.length) throw new Error(gaps.join("; "))
-  const root = operationPath(worktree, graph.operationID)
   const json = path.join(root, "plans", "operation-graph.json")
   const md = path.join(root, "plans", "operation-graph.md")
   await fs.mkdir(path.dirname(json), { recursive: true })
+  if (!input.forceReschedule && (await Bun.file(json).exists())) {
+    throw new Error(
+      "operation graph already exists; use operation_run, operation_resume, or operation_recover to continue. Pass forceReschedule=true only when intentionally rebuilding the graph before execution.",
+    )
+  }
   const archivedStaleLaneProofs = await archiveStaleLaneProofs(
     root,
     new Set(graph.lanes.map((lane) => lane.id)),

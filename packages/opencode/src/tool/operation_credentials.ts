@@ -10,6 +10,7 @@ import {
   materializeOperationCredentials,
   readOperationCredentialReview,
   readOperationCredentials,
+  submitOperationCredentialReview,
   waitForOperationCredentialReview,
   writeOperationCredential,
 } from "@/ulm/operation-credentials"
@@ -38,7 +39,17 @@ async function existingBrowserServerUrl() {
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
-  action: Schema.Literals(["create", "list", "get", "delete", "materialize_env", "vault_url", "open_vault", "review_status"]),
+  action: Schema.Literals([
+    "create",
+    "list",
+    "get",
+    "delete",
+    "materialize_env",
+    "vault_url",
+    "open_vault",
+    "review_status",
+    "submit_review",
+  ]),
   credentialID: Schema.optional(Schema.String),
   credentialIDs: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   waitForSubmit: Schema.optional(Schema.Boolean),
@@ -59,6 +70,7 @@ type Metadata = {
   operationID: string
   credentialID?: string
   credentials?: unknown[]
+  expectedServices?: string[]
   index?: string
   envFile?: string
   vaultUrl?: string
@@ -177,6 +189,7 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
                       `submitted: ${review?.submittedAt ? "true" : "false"}`,
                       `submitted_at: ${review?.submittedAt || "not submitted before timeout"}`,
                       `wait_timeout_seconds: ${Math.round(waitTimeoutMillis / 1000)}`,
+                      `expected_services: ${review?.expectedServices?.length ? review.expectedServices.join(", ") : "none"}`,
                       `saved_credentials: ${review?.credentials.length ?? 0}`,
                     ]
                   : []),
@@ -189,6 +202,7 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
                 fullVaultUrl,
                 opened,
                 submittedAt: review?.submittedAt,
+                expectedServices: review?.expectedServices,
                 credentials: review?.credentials,
               },
             }
@@ -202,6 +216,7 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
                 `operation_id: ${review.operationID}`,
                 `submitted: ${review.submittedAt ? "true" : "false"}`,
                 `submitted_at: ${review.submittedAt || "not submitted"}`,
+                `expected_services: ${review.expectedServices.length ? review.expectedServices.join(", ") : "none"}`,
                 `review_file: ${review.file}`,
                 "",
                 "saved_credentials:",
@@ -214,6 +229,37 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
               ].join("\n"),
               metadata: {
                 operationID: review.operationID,
+                expectedServices: review.expectedServices,
+                credentials: review.credentials,
+                submittedAt: review.submittedAt,
+              },
+            }
+          }
+
+          if (params.action === "submit_review") {
+            const review = yield* Effect.promise(() => submitOperationCredentialReview(Instance.worktree, params))
+            return {
+              title: `Submitted credential review for ${review.operationID}`,
+              output: [
+                `operation_id: ${review.operationID}`,
+                `submitted: true`,
+                `submitted_at: ${review.submittedAt}`,
+                `expected_services: ${review.expectedServices.length ? review.expectedServices.join(", ") : "none"}`,
+                `review_file: ${review.file}`,
+                "",
+                "submitted_credentials:",
+                ...(review.credentials.length
+                  ? review.credentials.map(
+                      (credential) =>
+                        `- ${credential.credentialID}: ${credential.label}${credential.username ? ` (${credential.username})` : ""}`,
+                    )
+                  : ["- none"]),
+                "",
+                "next_step: Call operation_credentials action=review_status to verify the submitted redacted records, then continue with list/get or materialize_env only when a supervised command needs credentials.",
+              ].join("\n"),
+              metadata: {
+                operationID: review.operationID,
+                expectedServices: review.expectedServices,
                 credentials: review.credentials,
                 submittedAt: review.submittedAt,
               },
@@ -246,6 +292,7 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
                 `credential_id: ${result.credentialID}`,
                 `index: ${result.index}`,
                 "secret_values: stored outside operation artifacts",
+                "next_step: When the redacted credential index is ready for handoff or audit, call operation_credentials action=submit_review. Do not edit credentials/review-submission.json by hand.",
               ].join("\n"),
               metadata: {
                 operationID: result.operationID,
@@ -320,12 +367,14 @@ export const OperationCredentialsTool = Tool.define<typeof Parameters, Metadata,
             output: [
               `operation_id: ${result.operationID}`,
               `index: ${result.index}`,
+              `expected_services: ${result.expectedServices.length ? result.expectedServices.join(", ") : "none"}`,
               "",
               ...result.credentials.flatMap(credentialLines),
             ].join("\n"),
             metadata: {
               operationID: result.operationID,
               index: result.index,
+              expectedServices: result.expectedServices,
               credentials: result.credentials,
             },
           }

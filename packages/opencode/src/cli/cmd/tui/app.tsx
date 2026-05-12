@@ -24,7 +24,7 @@ import { DialogProvider, useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
 import { ErrorComponent } from "@tui/component/error-component"
 import { PluginRouteMissing } from "@tui/component/plugin-route-missing"
-import { ProjectProvider } from "@tui/context/project"
+import { ProjectProvider, useProject } from "@tui/context/project"
 import { EditorContextProvider } from "@tui/context/editor"
 import { useEvent } from "@tui/context/event"
 import { SDKProvider, useSDK } from "@tui/context/sdk"
@@ -70,6 +70,8 @@ import { OpencodeKeymapProvider, registerOpencodeKeymap, useBindings, useOpencod
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { resolveOpenOperationPath } from "./routes/session/open-operation"
+import type { SessionID } from "@/session/schema"
 
 const appBindingCommands = [
   "command.palette.show",
@@ -266,6 +268,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const themeState = useTheme()
   const { theme, mode, setMode, locked, lock, unlock } = themeState
   const sync = useSync()
+  const project = useProject()
   const exit = useExit()
   const promptRef = usePromptRef()
   const routes: RouteMap = new Map()
@@ -606,6 +609,31 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         category: "System",
       },
       {
+        name: "operation.openFiles",
+        title: "Open operation files",
+        slashName: "open-operation",
+        slashAliases: ["open-operations"],
+        run: async () => {
+          try {
+            const current = project.instance.path()
+            const target = await resolveOpenOperationPath({
+              worktree: current.worktree,
+              directory: current.directory || sdk.directory,
+              sessionID: route.data.type === "session" ? (route.data.sessionID as SessionID) : undefined,
+            })
+            await open(target)
+            toast.show({ message: `Opened operation files: ${target}`, variant: "success" })
+          } catch (error) {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to open operation files",
+              variant: "error",
+            })
+          }
+          dialog.clear()
+        },
+        category: "System",
+      },
+      {
         name: "opencode.status",
         title: "View status",
         slashName: "status",
@@ -885,7 +913,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     await DialogAlert.show(
       dialog,
       "Update Complete",
-      `Successfully updated to OpenCode v${result.data.version}. Please restart the application.`,
+      `Successfully updated to ULMCode v${result.data.version}. Please restart the application.`,
     )
 
     void exit()

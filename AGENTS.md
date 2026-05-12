@@ -1,249 +1,137 @@
-- To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
-- ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
-- The default branch in this repo is `dev`.
-- Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
-- Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
+# ULMCode Agent Notes
 
-## Style Guide
+Last updated: 2026-05-12
 
-### General Principles
+This file is for future agents working in this repo. Keep notes that prevent real rediscovery or dangerous regressions. Delete trivia, stale status, and one-off postmortems once tests or source code already carry the lesson.
 
-- Keep things in one function unless composable or reusable
-- Avoid `try`/`catch` where possible
-- Avoid using the `any` type
-- Use Bun APIs when possible, like `Bun.file()`
-- Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
-- Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
-- In `src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
+## Repo Orientation
 
-Reduce total variable count by inlining when a value is only used once.
+- Real repo/worktree root: `/Users/trevorrosato/codeprojects/ULMcode/opencode`. The outer `/Users/trevorrosato/codeprojects/ULMcode` folder is a wrapper with a `.git` pointer into this checkout, so git can appear to work from both places while tracked paths are relative to `opencode/`.
+- ULMCode is a customized OpenCode fork for guided, authorized internal pentest orchestration: plan-first operation flow, durable artifacts, subagents, runtime supervision, and final report packages.
+- Main implementation surfaces: `packages/opencode` for runtime/tools/agents, `packages/app` for the web UI, `packages/desktop` for Electron, `packages/llm` for provider/runtime LLM primitives, and `tools/ulmcode-profile` for the isolated pentest profile.
+- Default upstream branch is `dev`; local `main` may not exist. Use `dev`, `origin/dev`, or the relevant worktree branch for comparisons.
+- OpenCode upstream is mature. For ULM-specific bugs, suspect fork glue, profile wiring, desktop packaging, env defaults, operation tooling, or integration code before blaming upstream.
+- Regenerate the JS SDK after changing HttpApi route surfaces such as `/ulm/operation` or `/api/model`: `./packages/sdk/js/script/build.ts`.
 
-```ts
-// Good
-const journal = await Bun.file(path.join(dir, "journal.json")).json()
+## Local Discipline
 
-// Bad
-const journalPath = path.join(dir, "journal.json")
-const journal = await Bun.file(journalPath).json()
-```
+- Use parallel tool reads when useful, especially for repo searches and file inspection.
+- Prefer Bun APIs in TS code, avoid `any`, rely on inference, prefer `const`, early returns, dot notation over unnecessary destructuring, and functional array helpers with type guards.
+- Drizzle tables/columns use `snake_case`; generate migrations from `packages/opencode` with `bun run db generate --name <slug>`.
+- Do not use `export namespace Foo`. Use flat exports plus `export * as Foo from "./foo"` or `export * as Foo from "."` in single-module `index.ts` files. Avoid multi-sibling barrels.
+- Tests do not run from repo root. Run package commands from package dirs, for example `bun run --cwd packages/opencode test:ulm-smoke`.
+- Always run `bun typecheck` from package directories, never raw `tsc`.
 
-### Destructuring
+## ULM Operation Contract
 
-Avoid unnecessary destructuring. Use dot notation to preserve context.
+- Canonical operation artifacts live under `.ulmcode/operations/<operation-id>/`. Durable operation truth belongs in operation tools/artifacts, not chat prose or `todowrite`.
+- ULM operation context is session-scoped. A fresh chat must not inherit the newest active operation from disk. For named resume/continue requests, call `operation_resume` or `operation_status` for the exact operation before broad artifact reads.
+- `operation_run` may omit `operationID` only when the current session is already bound to an active operation. Unbound chats must pass an explicit id and must not fall back to "latest".
+- Start pentest work in plan mode. For 2h+ runs, write an approved Discovery Charter with `operation_plan` using `planningMode: "discovery-charter"` before the duration-aware final plan.
+- An approved Discovery Charter without `plans/operation-plan.json` is a research state, not a scheduling state: `operation_next`/`runtime_scheduler` should launch the `research_charter` / `discovery_research` pass, record evidence/memory/checkpoints, then write the full duration-aware plan.
+- Full plans must include ordered phases, success criteria, assumptions, subagent/no-subagent policy, and reporting closeout. The closeout contract is `report_writer` or report-writing lane, `report_render`, `runtime_summary`, strict `report_lint`, then `operation_audit`.
+- Use `operation_schedule` for initial graph creation after the plan. During active runs, use `operation_run`, `operation_next`, `operation_resume`, `operation_recover`, `runtime_scheduler`, or `runtime_daemon`; do not reschedule just to escape a bad graph.
+- `operation_memory` is operation-local continuity memory for compaction/restart/subagent handoff. Keep it concise and never treat it as a customer deliverable or cross-project memory.
+- Raw shell scans and raw shell mutation of `.ulmcode/operations` are blocked in the ULM profile. Use `command_supervise`, operation tools, background `task`, scheduler/daemon, or explicit artifact reads. Do not satisfy lane proofs by copying old artifacts into expected paths.
+- During pentest kickoff, the round-2-to-round-3 "fast network read" must keep foreground shell to passive/local facts. Any active probe such as `nmap`, ping sweeps, port/service checks, content discovery, templates, or multi-host HTTP probing goes through `command_supervise` or background `task`, even if it looks tiny.
+- Existing ULM chats are often rooted in `packages/opencode`, while operation artifacts live at repo-root `.ulmcode/operations`. `operationsRoot()` intentionally walks upward to find the nearest operation store. For nested synthetic worktrees in tests, pre-create `<synthetic>/.ulmcode/operations` to avoid mutating the parent operation.
 
-```ts
-// Good
-obj.a
-obj.b
+## Credentials And Safety
 
-// Bad
-const { a, b } = obj
-```
+- Authorized credentials belong in `operation_credentials`. Operation artifacts, reports, memory, command text, task metadata, and final deliverables should contain only redacted handles/ids/metadata.
+- If kickoff says credentials are available, open the vault with `operation_credentials action: "open_vault"` for the active operation and wait for Submit to agent. Use `vault_url` only when a link-only response is intentional.
+- `operation_credentials get` is the agent-facing redacted inspection path. Preserve structured metadata, notes, rules, target/url/tags, and masked raw-note previews.
+- For programmatic/synthetic handles, use `operation_credentials submit_review` and verify with `review_status`; do not hand-edit `credentials/review-submission.json` to satisfy audits.
+- K-12 person/org recon is professional and engagement-relevant only. Exclude private-life dossier material. Final client deliverables must stay sanitized; sensitive CEH leads belong in `deliverables/internal-review/sensitive-leads.*`.
 
-### Variables
+## Reporting And Final Handoff
 
-Prefer `const` over `let`. Use ternaries or early returns instead of reassignment.
+- `deliverables/final/` is the human handoff folder. It should be generated from canonical operation artifacts, not hand-patched after lint failures.
+- If `report_lint`, `operation_audit`, or lane completion reports stale/missing final artifacts, fix source operation artifacts, rerun `report_render`, rerun `runtime_summary`, then retry the gate.
+- Final handoff checks are intentionally strict: exact manifest paths, operation id matches, parseable JSON, styled HTML/PDF, stakeholder PDFs, runtime summary copy, evidence/finding reverse links, safe content, and non-stale audit ordering.
+- Final gate knobs are floors, not a way to grade yourself easier. For 20h+ runs expect about 50+ outline/PDF pages; `school-laptop-48h` expects 75.
+- Do not pass report gates with page padding or duplicate/overlapping findings. Expand with evidence-backed analysis, remediation worksheets, validation guidance, and useful appendices.
+- Report quality includes visual/editorial quality, not just length. `report_writer` should avoid table spam, run a design pass on rendered `deliverables/final/report.html`, and expect cover/TOC/metric cards/finding cards/roadmap/evidence scan paths before handoff.
 
-```ts
-// Good
-const foo = condition ? 1 : 2
+## Scheduler, Lanes, And Long Runs
 
-// Bad
-let foo
-if (condition) foo = 1
-else foo = 2
-```
+- `runtime_scheduler` owns unattended progress: it syncs background jobs, claims queued command units, advances graph state, and launches model lanes. Lane workers must not launch downstream lanes through scheduler/daemon/task/command tools.
+- Package CLI daemon lanes pass `ULMCODE_LANE_ALLOWED_TOOLS`; in-app scheduler tasks pass `allowedTools`. Guarded tools (`operation_recover`, `runtime_scheduler`, `runtime_daemon`, `task`, `command_supervise`, `bash`, `write`, browser/glob where guarded) must remain hidden/disabled unless allowed.
+- After supervised command artifacts exist, run `evidence_normalize` before validation/reporting. In internal-network graphs, evidence normalization precedes finding validation.
+- 2h+ full plans must include `timeBudget.executionBlocks`. `operation_schedule` expands them into `planned_work_*` lanes before reporting, and those lanes carry a harness-owned wall-clock floor (`minRuntimeMinutes`) so a worker cannot instantly check off a 30-60 minute block just because it wrote a note.
+- If all non-supervisor lanes complete while the active goal target window remains open, `operation_next` should return `expand_work`, not `stop` or passive `wait`. The scheduler/daemon must call `generateOperationBacklog` so long runs become a renewable campaign loop instead of a finite checklist.
+- `operation_gap_audit` is the deterministic gap detector for that loop. It writes `plans/gap-audit.json`/`.md` with coverage gaps, queue pressure, validation debt, identity/attack-chain gaps, report-finalization risk, progress metrics, tiered coverage confidence, and a lightweight world model. Backlog expansion should run it before adding `planned_work_expansion_*` lanes.
+- Use `operation_queue` and `operation_queue_next` to turn normalized leads into command work units. Preserve `workUnitID` when launching `command_supervise`.
+- Blank content-discovery wordlists should normalize to `wordlists/common.txt`. Empty `wordlist` variables wedge scheduler-launched `command_supervise` before a background job binds, leaving claimed queue units with no job.
+- Failed `command_supervise` jobs are lane evidence/limitations, not automatic lane failure. Empty `stderr.log` can be valid proof.
+- Real long runs use `bun run --cwd packages/opencode ulm:runtime-daemon <operationID> --detach --json` or OS supervisor files. `ulm:burnin` is accelerated readiness evidence, not wall-clock proof.
+- Literal readiness is final handoff proof, not uptime. It needs daemon heartbeat/log continuity, work proof, tool/model preflight, final manifest, fresh passing `operation_audit`, and matching operation ids.
 
-### Control Flow
+## School Laptop / First-Run Flow
 
-Avoid `else` statements. Prefer early returns.
+- Use `operation_template template: "school-laptop-48h"` for the real Surface/private-Wi-Fi school run. It implies 48h unattended trust, bounded aggressive scanning, laptop preflight, identity/person lanes, Genesis/Google credential targets, and a 75-page report target.
+- Before launch: run credential review, strict laptop preflight with `--prepare`, 120s wall-clock canary on the actual machine, launch packet, and objective audit with `--require-launch-ready`.
+- Regenerate launch packets, preflight, and objective-audit artifacts when plan scope, credentials, target hours, runbooks, or packet commands change. Do not hand-edit stale artifacts around exact-token checks.
+- Useful commands:
+  - `bun run --cwd packages/opencode ulm:credential-review <operationID> --strict --json`
+  - `bun run --cwd packages/opencode ulm:laptop-preflight <operationID> --prepare --strict --confirm power --confirm sleep --confirm wifi --confirm scope --confirm clock --json`
+  - `bun run --cwd packages/opencode ulm:wall-clock-canary <canaryID> --target-seconds 120 --strict --json`
+  - `bun run --cwd packages/opencode ulm:first-run-rehearsal <id> --canary-target-seconds 120 --strict --json`
+  - `bun run --cwd packages/opencode ulm:first-run-launch-packet <operationID> --strict --json`
+  - `bun run --cwd packages/opencode ulm:first-run-objective-audit --operation-id <operationID> --require-launch-ready --json`
 
-```ts
-// Good
-function foo() {
-  if (condition) return 1
-  return 2
-}
+## Isolated Profile And Models
 
-// Bad
-function foo() {
-  if (condition) return 1
-  else return 2
-}
-```
+- The isolated profile lives in `tools/ulmcode-profile`; validate with `tools/ulmcode-profile/test-profile.sh`.
+- `ulm:model-route-audit` is the fail-closed gate for ULM routing. It checks the repo profile, installed `~/.config/ulmcode/opencode.json`, installed `~/.config/ulmcode/ulmcode.json`, launch env, and operation graph route audit. For 20h+ daemon runs, do not bypass it; the installed `opencode.json` and `ulmcode.json` mirror must stay byte-identical.
+- ULM dev/profile launch must keep `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=$HOME/.config/ulmcode`, `OPENCODE_CONFIG=$HOME/.config/ulmcode/opencode.json`, `OPENCODE_DISABLE_PROJECT_CONFIG=1`, and `OPENCODE_MCP_ALLOWLIST=websearch,agent_browser,playwright,pentestMCP`.
+- The profile must not load personal/general OpenCode agents, prompts, Feature Forge, Sisyphus, OpenCode-Builder, or unrelated Vercel/context7 MCPs.
+- The ULM profile must not install, vendor, or load the Claude Code bridge plugin. ULM model routing is OpenAI-only; do not add non-OpenAI model routes without an explicit product decision and new verification.
+- Keep `tools/ulmcode-profile/tool-manifest.json` as the supervised command/tool catalog. Unattended profiles are `non_destructive`; destructive activity belongs in `interactive_destructive`.
+- ULM profile defaults should use non-fast `openai/gpt-5.5` for primary/reasoning/reporting. Keep `openai/gpt-5.4-mini-fast` for small/recon/evidence lanes and do not let provider sorting prefer `gpt-5.5-fast` when both are listed.
+- Local macOS tool preflight expects Docker through Colima for ZAP. If Docker pulls fail with stale `docker-credential-desktop`, remove `credsStore: "desktop"` from `~/.docker/config.json`. `gowitness` may need `~/go/bin` symlinked into `~/.local/bin`.
 
-### Schema Definitions (Drizzle)
+## Desktop, TUI, And App UX
 
-Use snake_case for field names so column names don't need to be redefined as strings.
+- ULMCode Desktop is a forked OpenCode Electron app, not a rewrite. Branding/env defaults live in `packages/desktop/src/main/branding.ts`; ULM app state lives in `packages/app/src/context/ulm.tsx`, `packages/app/src/context/ulm-state.ts`, and `packages/app/src/pages/operations.tsx`.
+- Desktop UX is chat-first. Recent chats are the primary sidebar surface; operations attach as status/context and remain available through the operations console.
+- Desktop session rows deep-link to `/<workspace>/session/<id>`, not the operations board. Rail/folder actions should open the bound operation root or final deliverables, never the ULMCode source tree.
+- Slash commands are split by surface: `packages/app` commands do not affect the TUI. The TUI `/open-operation` command is native in `packages/opencode/src/cli/cmd/tui/routes/session/` and opens the current chat's bound operation root, while `/open` stays reserved for normal file/editor flows.
+- Desktop and the `~/.local/bin/ulmcode` wrapper must share the same profile: `XDG_CONFIG_HOME=~/.config/ulmcode-xdg`, `XDG_DATA_HOME=~/.local/share/ulmcode`, `XDG_STATE_HOME=~/.local/state/ulmcode`, `XDG_CACHE_HOME=~/.cache/ulmcode`, `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=~/.config/ulmcode`, `OPENCODE_CONFIG=~/.config/ulmcode/opencode.json`, and `OPENCODE_DB=opencode-local.db`.
+- Desktop boot and CLI/server startup must use the configured `Database.Path` for SQLite migration sentinels. Hard-coding `opencode.db` makes ULM show migration/loading state repeatedly when the real DB is `opencode-local.db`.
+- Every desktop UI change needs a real Computer Use pass before "done". If Electron dev shows a stale blank/loading compositor while CDP/DOM is hydrated, record that CUA was blocked and include secondary CDP/browser evidence.
+- For local web UI verification, follow `packages/app/AGENTS.md`: backend on `4096`, app on `4444`, open `http://localhost:4444`.
 
-```ts
-// Good
-const table = sqliteTable("session", {
-  id: text().primaryKey(),
-  project_id: text().notNull(),
-  created_at: integer().notNull(),
-})
+## Runtime Gotchas Worth Keeping
 
-// Bad
-const table = sqliteTable("session", {
-  id: text("id").primaryKey(),
-  projectID: text("project_id").notNull(),
-  createdAt: integer("created_at").notNull(),
-})
-```
+- `operation.updated` publication is awaited after durable artifact writes so TUI dashboards and tests see fresh state.
+- Operator auto-resume prompts must treat each keystroke/touch as a fresh 300s hold, independent of the original remaining timeout. Question touches also carry partial answers so unattended fallback can preserve answered questions and leave only unanswered prompts blank.
+- `/global/event` has a shared 1024-event SSE replay ring; legacy Hono and Effect HttpApi global event routes must honor `Last-Event-ID`.
+- Config caching tracks fingerprints for global and instance config. Keep `Config.invalidate()` usable without an instance context.
+- `task` background jobs persist prompt/subagent/operation/worktree metadata and runtime usage snapshots. Preserve restart args for stale jobs.
+- `operation_recover` depends on `command_supervise` metadata: `profileID`, variables, output prefix, manifest path, lane ID, and `workUnitID`.
+- Upstream provider edge cases are deliberate in the OpenCode fork, but ULM profile routing still stays OpenAI-only. Preserve MCP transport reconnect retry, Codex OAuth refresh-token handling, and retryable OpenAI `server_is_overloaded`.
+- Shell cleanup must not hang after orphaned pipe holders; process exit handling resolves on `exit` as well as `close`, and broad Node process-kill commands stay blocked.
+- Package scripts that read/write `.ulmcode` must resolve the real repo worktree instead of raw `process.cwd()`, otherwise `bun run --cwd packages/opencode ...` writes under `packages/opencode/.ulmcode`.
+- `opencode run --agent recon` style daemon child launches are allowed only with `ULMCODE_DAEMON_CHILD=1` and `ULMCODE_LANE_ID`; normal CLI runs should still reject subagents as primary agents.
+- Invoking the package as `ulmcode` sets `OPENCODE_APP_NAME=ulmcode`; global paths must use the `ulmcode` app name.
+- Credential materialization can cross the `opencode`/`ulmcode` profile boundary during supervised runs. Keep the fallback from the current storage service to the ULM profile secret store, and never debug credentials by echoing, catting, grepping, snapshotting, or otherwise printing raw env values. Treat usernames/credential handles from vault submissions as sensitive too; use redacted labels like `[REDACTED_ROUTER_USERNAME]`. Length-only checks are fine.
+- Do not test common/default credential guesses during unattended security runs. "admin/password", vendor defaults, and tiny manual lists still count as credential guessing/password spraying unless the exact value came from the operator-approved vault for the current operation.
 
-## Testing
+## Verification Shortlist
 
-- Avoid mocks as much as possible
-- Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+- Core typecheck: `bun typecheck` from the package you changed.
+- ULM profile install/launch: `tools/ulmcode-profile/test-profile.sh` or `bun run --cwd packages/opencode test:ulm-tui-launch`.
+- Profile skills and tool catalog: `bun run --cwd packages/opencode test:ulm-skills` and `bun run --cwd packages/opencode test:ulm-tool-manifest`.
+- Synthetic lifecycle: `bun run --cwd packages/opencode test:ulm-smoke`.
+- Lab replay and lab targets: `bun run --cwd packages/opencode test:ulm-lab` and `bun run --cwd packages/opencode test:ulm-lab-target`.
+- Rebuild evidence checklist: `bun run --cwd packages/opencode test:ulm-rebuild-audit` or `bun run --cwd packages/opencode script/ulm-rebuild-audit.ts --json`.
+- Harness scorecards: `bun run --cwd packages/opencode test:ulm-harness:fast`; first-run readiness may also need `test:ulm-harness:chaos`, `test:ulm-harness:full`, and `test:ulm-harness:overnight`.
+- Live behavior probes are manual/live-eval tools, not default CI token furnaces:
+  - `bun run --cwd packages/opencode ulm:behavior-probe -- --scenario <scenario.json> --output <prefix> --timeout-ms <ms>`
+  - `bun run --cwd packages/opencode ulm:live-operation-probe -- --scenario <scenario.json> --output <prefix> --timeout-ms <ms> --json`
 
-## Type Checking
+## What Not To Add Here
 
-- Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
-
-## ULMCode Rebuild Notes
-
-- For overnight-supervisor work, read `docs/ulm-autonomy/overnight-supervisor.md` and `docs/superpowers/plans/2026-05-06-ulm-overnight-supervisor.md` before editing; the design doc explains the supervisor runtime, and the plan tracks the supervisor/goal/tool-inventory rebuild checklist.
-- The rebuild branch starts from current `upstream/dev`; old fork cyber code should be mined for requirements, not ported wholesale.
-- Native ULM operation artifacts are written under `.ulmcode/operations/<operation-id>/`. `operation_goal create` may omit `operationID`; ULMCode then generates a readable two- or three-word id with a short uniqueness tag.
-- Active ULM goals enable turn-end supervision by default: before a normal assistant stop exits `SessionPrompt.run`, the loop calls `operation_supervise` with `reviewKind=turn_end`. If the supervisor returns execution/reporting work, the loop injects a synthetic continuation instead of going idle. The no-tool continuation cap only counts continuation turns where the assistant did no tool work, so productive recovery turns can keep going until the graph/report gates are actually satisfied.
-- Automatic turn-end supervisor continuation is pentest-mode-only. `action`/`build` must stay lightweight for quick chat, one-off fixes, and focused commands; they may use ULM tools when relevant, but should not be auto-yanked back into operation plans after a normal stop.
-- Keep stable system prompt content before volatile env/ULM context in `SessionPrompt.run`; OpenAI prompt caching is exact-prefix based, so changing operation snippets near the top can tank cache-hit latency/cost even when `promptCacheKey` is set.
-- Active ULM prompts inject the durable plan from `plans/operation-plan.json` or `.md` up to `goal.continuation.injectPlanMaxChars` (default 12,000 chars). Keep the cap char-based, not token-based.
-- During unattended active operations, `ULMconfig.toml` is the fast-edit ULM runtime knob file. It can override continuation enablement, turn-end review, no-tool continuation cap, injected plan chars, operator fallback enablement, operator timeout seconds, repeated-timeout ceiling, and repeated-timeout suppression window. The default operator fallback timeout is 300 seconds. Set `operator_timeout_seconds = 0` to wait forever. Permission timeouts reject with corrective feedback; question timeouts prefer skip/decline/unavailable choices, then recommended choices, and write artifacts under `operator-timeouts/`. After `max_repeated_operator_timeouts_per_kind` is reached inside the recent `operator_timeout_suppression_window_seconds` window, later prompts of that kind fall back immediately instead of burning another timeout window; outside that window they get the normal timeout again. TUI question/permission prompts use `/touch` APIs to renew the real configured backend timeout while an operator is typing or reviewing; do not replace this with a visual-only countdown or a hard-coded 30-second hold.
-- `ULMconfig.toml` also controls operation posture: `trust_level`, `scan_profile`, `max_parallel_commands`, `per_host_rate_limit_per_second`, `stop_on_rate_limit_spike`, and `agent_no_tool_timeout_seconds`. Operation-scoped subagents use the no-tool timeout as a watchdog for stuck workers.
-- Each active operation can have a local `.ulmcode/operations/<id>/memory.md`. It is for agent continuity only; read/update it with `operation_memory` around compaction, resume, handoff, and important scope/tooling notes.
-- Use `operation_template` for repeatable starts instead of blank planning when the target fits a known mode. It creates goal, plan, graph, report outline, and memory together with trust/scan/report defaults.
-- New durable operation helpers include `asset_graph`, `attack_chain`, `browser_evidence`, `operation_alert`, and `output_normalize`; prefer them over chat-only notes for attack surface, exploit-chain narrative, browser state, alerts, and noisy scanner output summaries.
-- `operation_checkpoint` is the durable heartbeat/stage ledger tool.
-- `operation_plan` writes `plans/operation-plan.json` and `.md`; use it before broad execution to capture ordered phases, actions, success criteria, subagent/no-subagent policy, assumptions, and reporting closeout.
-- Operator-visible plan state is part of the ULM contract. Discovery Charter approval questions must summarize the charter, include the markdown path, and include a rendered preview from `operation_plan`; after approval, the durable charter `planningApproval.status` should be `approved` before resume/supervise/broad discovery. Do not point operators at fake slash commands as the primary review UI.
-- `operation_resume` is the first post-compaction/restart recovery tool. It emits health gaps, recommended follow-up tools, operation-scoped tool hints, active/background tasks, and a continuation prompt before raw JSON inside `<operation_resume_json>` tags. Use `staleAfterMinutes` for unattended runs so old checkpoints and stale background jobs become explicit health gaps; pass `recoverStaleTasks: true` to relaunch restartable stale/error/cancelled lanes directly from saved metadata, or use `operation_recover` separately when you want a dedicated recovery step. Exhausted `runtime_summary` budgets and runtime blind-spot notes also mark the resume brief not ready and recommend `runtime_summary`.
-- When `operation_resume recoverStaleTasks` restarts jobs with saved `worktree` metadata, the follow-up resume brief/session binding must use that metadata worktree. Fresh background-job layers may not have an `InstanceState` context, and falling back to `/` writes `.ulmcode` in the wrong place.
-- Chat todos are intentionally ephemeral: completed/cancelled items are pruned and `/clear-tasks` clears the active list. Do not rely on `todowrite` as durable ULM operation state; use operation checkpoints, stage gates, runtime summaries, and background job metadata.
-- `operation_stage_gate` checks whether a stage is ready to continue/advance and writes `deliverables/stage-gates/<stage>.json` plus `.md`. Use it at major stage boundaries; it blocks exhausted runtime budgets/blind spots, validation blocks unresolved candidate/needs-validation findings, and handoff gates can forward strict outline/finding quality options. Use final `report_lint`/`operation_audit` for rendered PDF page-count gates.
-- `operation_status` is the post-compaction/interruption resume reader for ledgers, finding counts, reports, runtime budget/task rollups, runtime notes, and recent events. It prints a compact dashboard first, then the full JSON inside `<operation_status_json>` tags.
-- `operation_audit` combines restart health and final handoff lint, writes `deliverables/operation-audit.json` plus `.md`, and should be the last gate before claiming a final package is ready. Final handoff lint now verifies package integrity too: manifest paths must match rendered artifacts, JSON files must parse, `report.pdf` must look like a styled PDF with a parseable page count, `report.html` must look like HTML, and copied `deliverables/final/runtime-summary.md` must match the source runtime summary when one exists.
-- CLI operators can inspect the same ledger outside a model turn with `opencode ulm list`, `opencode ulm status <operationID>`, `opencode ulm resume <operationID>`, `opencode ulm gate <operationID>`, and `opencode ulm audit <operationID>`; use `--format json` for machine-readable handoff.
-- Instance HTTP API routes under `/ulm/operation` expose typed operation list, status, resume, and audit JSON for TUI/plugin dashboards. `/api/model` exposes configured/provider-registered models through the v2 HttpApi and generated JS SDK. Regenerate the JS SDK after changing either route surface.
-- ULMCode Desktop is a forked OpenCode Electron app, not a rewrite. Desktop branding/env defaults live in `packages/desktop/src/main/branding.ts`; ULM app state lives under `packages/app/src/context/ulm.tsx`, `packages/app/src/context/ulm-state.ts`, and `packages/app/src/pages/operations.tsx`. The desktop UX is chat-first: recent chats are the primary sidebar surface, while operations attach as status/context and remain available through the operations console.
-- ULM Desktop session rows must deep-link to `/<workspace>/session/<id>`, not the operations board; old chats are the operator transcript. The rail/folder action should open the operation artifacts root (`.ulmcode/operations` or an operation `deliverables/final`), never the ULMCode source tree.
-- ULMCode Desktop must share the same profile as the `~/.local/bin/ulmcode` wrapper: `XDG_CONFIG_HOME=~/.config/ulmcode-xdg`, `XDG_DATA_HOME=~/.local/share/ulmcode`, `XDG_STATE_HOME=~/.local/state/ulmcode`, `XDG_CACHE_HOME=~/.cache/ulmcode`, `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=~/.config/ulmcode`, `OPENCODE_CONFIG=~/.config/ulmcode/opencode.json`, and `OPENCODE_DB=opencode-local.db`. Do not let dev desktop fall back to a branch-named empty DB like `opencode-codex-*.db`.
-- Desktop boot depends on the SQLite/migration guard recognizing the ULM profile DB name (`opencode-local.db`) under `~/.local/share/ulmcode`; checking only `opencode.db` can leave the Electron app stuck behind the loading/migration window.
-- Every desktop UI change needs an actual Computer Use verification pass before it is called done. CDP/browser screenshots can supplement this, but do not treat them as a replacement; if Computer Use is flaky for Electron, record that clearly alongside the alternate verification.
-- Current Electron dev/CUA gotcha: after hot reloads or cold restarts, Computer Use can show a stale loading/blank compositor layer while CDP and the renderer DOM show the hydrated app. `app.disableHardwareAcceleration()` did not fix it in dev. Keep trying CUA first, but when it lies, capture CDP screenshots/text as secondary evidence and explicitly say CUA was blocked.
-- The desktop left rail should be explicit ULM/pentest app navigation, not the generic draggable OpenCode project switcher and not shortcuts into ULMCode source/package folders. Keep the primary rail about operation chat, operation control, artifacts/workspace/deliverables, and settings. The generic project tile/context-menu/drag stack can swallow clicks.
-- The desktop right-side session panel is an engagement workspace in ULM mode. It should show operation artifacts, evidence/finding counts, report readiness, runtime summary state, and operator blockers. Do not regress it to the generic OpenCode changes/all-files source tree.
-- In ULM Desktop, operator-home `action` chats intentionally submit with `tools: {"*": false}` plus an Action chat system override, and the LLM backend must honor that wildcard as a real tool-catalog deny. Turn-end ULM supervisor continuation must also skip these plain action turns. Operation command cards switch to `pentest` before seeding prompts so durable operation automation remains explicit; do not let generic chat auto-run operation tools, print fake operation tool tags, invoke pentest skills, or force supervisor resumes.
-- Existing ULM chats are commonly rooted at `/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode`, while operation artifacts live at the repo root `.ulmcode/operations`. `operationsRoot()` intentionally walks upward to the nearest `.ulmcode/operations`; do not “fix” this back to cwd-only or the desktop will split chats from operations again.
-- The TUI has a native `ulm.operations` command and `/ulm` slash entry. It opens a persistent operation dashboard route backed by the generated SDK; the route refreshes on `operation.updated` events and also polls as a fallback. The older dialog remains a compact selector/detail view.
-- TUI boot regressions are part of the ULM profile gate. Run `bun run --cwd packages/opencode test:ulm-tui-launch` or `tools/ulmcode-profile/test-profile.sh` before claiming the local harness launches.
-- ULM artifact writers emit `operation.updated` after durable writes for checkpoints, plans, evidence, findings, report outlines/renders, runtime summaries, stage gates, and operation audits. The event carries compact dashboard state (operation brief, counts, report flags, runtime-summary flag), and the TUI route applies that payload immediately before any API fallback refresh.
-- `evidence_record` writes durable evidence JSON plus optional raw text under `evidence/`; findings should cite evidence IDs/paths from this tool rather than chat-only observations.
-- `finding_record` is the evidence-backed finding state tool; validated/report-ready findings require evidence refs.
-- Native ULM agents are `action`, `pentest`, `recon`, `person-recon`, `attack-map`, `validator`, `evidence`, `report-writer`, and `report-reviewer`; prompts are artifact-contracts, not old swarm carryover. `action` is the focused one-off primary mode; `pentest` remains the plan-first engagement operator. Keep profile routing aligned when adding or renaming one.
-- K-12 org/person recon is first-class: `district_profile` writes district/system context, `person_profile` writes public professional role profiles under `profiles/people/`, and `identity_graph` connects people/accounts/groups/roles/apps/data. Keep only engagement-relevant professional/public information; exclude private-life or irrelevant personal details.
-- `report_outline` creates a long-form report page budget before drafting; the default substantial report budget is now 50 pages and includes district, people/role, and identity-graph sections. `report_lint` can require a report file, total minimum word count, outline target-page budget, required outline sections, finding sections, and per-section/per-finding minimum word counts to catch sparse deliverables. For substantial reports, prefer `report_lint` with `requireOutlineBudget: true`, `requireOutlineSections: true`, `requireFindingSections: true`, and `finalHandoff: true` instead of relying on total word count.
-- For 20h+ unattended runs that should produce a 50-80 page deliverable, `finalHandoff` report lint/audit now defaults to `minOutlineTargetPages: 50` and `minPdfPages: 50` from `plans/operation-plan.json` `timeBudget.targetHours`. You can still pass higher/lower explicit values, but do not rely on `requireOutlineBudget` alone when reviewing older artifacts or non-final gates.
-- `report_render` publishes print-ready HTML, a styled lightweight PDF, and a manifest to `.ulmcode/operations/<id>/deliverables/final/`. It preserves authored `reports/report.md` or `reports/report.html` when present. Final lint rejects the old Helvetica text-only PDF path; keep the `/ULMCodeRenderer (styled-html)` marker and do not let `%PDF-` alone count as report quality.
-- TUI rendering may keep only the newest 100 messages for performance, but transcript copy/export must fetch full session messages (`limit: 0`) and include descendant sessions. If a pasted/exported transcript starts mid-session, suspect the UI export path before blaming compaction.
-- 2h+ pentest plans require explicit Discovery Charter approval plus `timeBudget` and `coverageContract` fields. Coverage is the release source of truth: `operation_next` and `operation_supervisor` should continue coverage/reporting rather than stop just because lane statuses look done. Skipped/blocked lanes need terminal state, reason, coverage impact, and release impact; release-critical skips do not satisfy handoff unless the coverage contract allows them.
-- Internal-network templates must use network-specific lanes, not the K-12 district/person graph. The first executable lane is `network_discovery`; it should produce `evidence/raw/network-discovery/`, `evidence/raw/network-discovery/status.md`, and `commands/service-inventory/` before `recon` advances.
-- For named operation resume/continue requests, call `operation_resume` for that exact operation before broad artifact reads. A live quick-network run showed models globbing `.ulmcode/operations/**` and pulling unrelated operations into context; this is a harness failure, not acceptable exploration.
-- `operation_schedule` accepts `template`; use `template: "internal-network"` for home/LAN/internal-network runs. If rescheduling replaces a stale graph, stale `lane-complete/*.json` proofs must be archived, including same-name proofs older than the new graph creation time, so old skipped/completed lanes cannot poison the new graph.
-- `operation_run skip_lane` must not be used to launder a wrong graph. It may record a skip, but it must not downgrade a lane's `releaseRequired` or `coverageImpact`; reschedule with the right template instead.
-- In ULM profile runs, raw shell network scans are blocked from the primary session. Use `command_supervise`, `task background=true`, `runtime_scheduler`, `runtime_daemon`, or a recovered lane task so scans produce heartbeat/output artifacts and recovery metadata.
-- Raw shell mutation of `.ulmcode/operations` artifacts is blocked in the ULM profile. Do not satisfy lane proofs by `mkdir`/`cp`-ing old artifacts into expected paths; use operation tools with fresh/provenanced artifacts or block the lane.
-- Raw shell reads of `.ulmcode/operations` artifacts are also blocked in the ULM profile. Use `operation_status`, `operation_resume`, `read`, `glob`, `grep`, and operation tools for artifact inspection so transcript watchers can reason about provenance.
-- If `operation_resume recoverStaleTasks` restarts a stale lane, the primary must do one bounded `task_status wait=true` poll. ULM operation task waits are capped at 30s. If the recovered task still has no fresh lane-owned artifacts, block/skip the lane with the recovery problem instead of saying it will "wait a moment" and going idle.
-- Do not use `opencode-go/default` in ULM operation graphs; the local model registry does not expose that alias. Use a concrete OpenCode Go model such as `opencode-go/qwen3.6-plus` or an OpenAI fallback.
-- CLI-launched model lanes write stdout/stderr to `scheduler/cli-launches/*model-output-<lane>.log`; check that log when a detached lane dies or appears stuck. Command plans should pre-create artifact output directories before launching tools like `nmap -oA`.
-- Pentest kickoff questions are staged, not one giant form. Round 1 asks only missing time budget and autonomy/operator availability; then run tiny local/passive context collection; round 2 asks scope/safety/credential/report questions with unanswered prompts falling back conservatively; then open the credential vault and wait for reviewed credential submission if credentials are available; then run bounded discovery/research and ask round 3 concrete discovery-informed follow-ups. Treat “autonomous” as after kickoff, vault handoff, Discovery Charter approval, and the execution plan unless the operator explicitly says they are leaving immediately.
-- Kickoff question options should be actual answers only. Do not include `Pause/abort`, `Pause/clarify`, or similar stop choices; unanswered questions already use conservative fallback.
-- The Discovery Charter is deliberately not the final execution plan. For 2h+ runs it must be a research/recon/operator-question/time-investment strategy with candidate deep-work lanes. The full `operation_plan` should not be written until `timeBudget.durationFit.confidence` is `duration_sized`, with evidence plus overflow backlog proving there is enough safe scoped work to fill the budget.
-- `operation_plan` now accepts `planningMode: "discovery-charter"` without final-plan `phases`/`reportingCloseout`; use that for the approved Discovery Charter step, then write the full duration-aware plan later.
-- ULM operation context is session-scoped. A fresh chat must not inherit the newest active operation from `.ulmcode/operations`; it only gets ULM context after the current session creates or explicitly reads an `operation_goal`. If an operator wants to resume, they should name the operation or use the ULM resume/status tools in that session.
-- `operation_run` may omit `operationID` only inside a session already bound to an active operation; unbound/new chats must pass an explicit id and must not fall back to the latest active operation.
-- TUI operation display is chat-scoped too. Do not show a workspace/global active operation on the home screen; `/ulm` and `/operations` may list operation artifacts, but selecting one should navigate to its bound chat or create/bind a chat for legacy unbound operations. Do not invent or reference slash commands that are not implemented.
-- Use `operation_credentials` for authorized usernames/passwords/tokens. Raw secrets live in app storage and a chmod `0600` materialized env file when needed; operation artifacts should only contain the redacted credential index/records. Do not put secrets in evidence, reports, operation memory, command text, task metadata, or final deliverables.
-- If a kickoff answer says credentials are available, immediately call `operation_credentials` with `action: "open_vault"` for the active operation and wait for the vault's final submit. The question copy should tell the operator this will open/show the secure credential vault; never make them infer the vault exists after they answer yes.
-- The browser vault UI is served at `/ulm/credentials?operationID=<id>` and talks to the typed ULM credential routes under `/ulm/operation/:operationID/credentials`. Keep the vault intake out of normal chat; it may store dynamic secret types, freeform secrets, target/host notes, operator notes, and rules for model use while returning only redacted credential records to visible UI/API lists. The tool opens the browser; TUI renderers should show the fallback link but must not open it again.
-- `operation_credentials open_vault` must wait for Submit to agent even if a bad call includes `waitForSubmit: false`; use `vault_url` for link-only behavior. This keeps kickoff agents from opening the vault once, not waiting, then opening it again.
-- `operation_credentials get` is the agent-facing redacted inspection path. It should show structured metadata, notes, rules, target/url/tags, and redacted raw-note previews for raw/bulk notes while masking password/token/key/cookie values. Do not regress it back to label-only output.
-- `runtime_summary` writes `.ulmcode/operations/<id>/deliverables/runtime-summary.json` and `.md` for long-run handoff, including model-call split, token/cost budget rollups, per-agent usage, compaction pressure, repeated fetches, background task state, restart args for stale jobs, notes, and canonical artifact paths. It auto-derives model/token/cost fields, compaction count/pressure, persisted background job state, and background job session usage from current assistant messages plus child/background subagent ledgers when those fields are omitted; explicit fields are treated as operator overrides. If a terminal background lane has no readable ledger or runtime snapshot, the tool records a runtime blind-spot note so budgets are not falsely trusted. Do not treat cumulative runtime token totals as the current context window; `compact` is maintenance/recovery advice and scheduler/daemon owners should keep running afterward unless another gate stops them.
-- `eval_scorecard` writes `.ulmcode/operations/<id>/deliverables/eval-scorecard.json` and `.md` for final ULM handoff, especially benchmark, lab, and readiness runs. Use it to record target, sandbox, allowed profiles, success criteria, artifact requirements, MITRE tags, budget, validated findings, false positives, tool failures, retries, cost, and report quality so a run is objectively scored instead of report-only.
-- Observability respects operator OTEL identity: `OTEL_SERVICE_NAME` and `service.name`, `service.version`, `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` should survive wrappers for long unattended runs.
-- `task` supports `background: true` and optional `operationID`; list recoverable background jobs with `task_list` (pass `operationID` during ULM operations) and poll a returned `task_id` with `task_status` for long-running subagent lanes. Completed background task launches persist a compact runtime usage snapshot in job metadata so `runtime_summary` can still count the lane when the child session ledger is unavailable.
-- Bare-repo-backed git worktrees intentionally cache project IDs in the bare common dir but expose the checked-out tree as `project.worktree`; do not regress this or TUI/sidebar/cwd surfaces point at the bare repo.
-- Background task metadata is persisted under storage key `background_job/<task_id>` so `task_status` can recover terminal output after a service reload. If a persisted `running` job has no active fiber, it becomes `stale`; new task launches persist prompt/subagent/operation/worktree metadata so `task_status` can print restart args and `task_list` can mark stale jobs as restartable. Cancellation must interrupt the captured fiber before/while marking the job cancelled.
-- `task_list` now prints `restart_args` for stale jobs when metadata is available. Prefer `operation_resume` with `recoverStaleTasks: true` or `operation_recover` for all stale lanes in one operation, or `task_restart` with a specific stale `task_id` for single-lane recovery after a process restart loses long-running fibers.
-- `operation_recover` restarts matching stale/error/cancelled operation lanes and supervised command jobs. Command recovery depends on `command_supervise` metadata (`profileID`, variables, output prefix, manifest path, lane ID, workUnitID), so preserve those fields when launching commands. When it can resolve the operation worktree, it writes a fresh operation checkpoint recording recovered job IDs so `operation_status` immediately shows recovery activity.
-- `command_supervise` plan/build failures must preserve the underlying profile/manifest/template message, for example missing `{target}` should say the profile requires `target`. Do not let raw `Effect.tryPromise`/`orDie` surface as the generic "An error occurred in Effect.tryPromise" defect.
-- Command profiles that require elevated privileges must set `requiresPrivilege: true` with a reason. Unattended `command_supervise` rejects them before launch; the v8 recon shakedown showed `udp-top-ports-sweep` failing at runtime because `nmap -sU` needs raw-socket/root privileges.
-- `max_retries` is the config-level cap for transient session retry attempts. The bundled ULM profile sets it to 8; raise it deliberately for flaky providers, but do not leave long unattended runs able to retry forever.
-- Known-tool malformed input is classified separately from unknown tools via `invalid` metadata (`known_tool_invalid_input` vs `unknown_tool`). Preserve this distinction; it gives long-running agents a useful retry hint instead of generic tool failure noise.
-- Anthropic/Vertex-Anthropic message normalization treats client `tool-call` and `tool-result` as one group; do not split them apart when moving trailing text, or Anthropic rejects the request. Provider-executed/server-side tool pairs must stay in assistant content.
-- Moonshot/Kimi schema normalization keeps `$ref` sibling stripping and tuple-item cleanup, and flattens deeply nested complex schemas near provider depth limits so deep MCP tools do not fail before the model call.
-- MCP dynamic tools retry once after recognized transport/session errors by reconnecting the MCP client. Auth/business errors should still surface directly; do not broaden `isTransportError` without focused reconnect tests.
-- Core process handles resolve exit state on `exit` as well as `close`, and SIGKILL escalation does not wait forever for a close event. Preserve this, shell cleanup can otherwise hang after orphaned pipe holders.
-- Shell commands that broadly kill Node.js processes are blocked by `isDangerousProcessKillCommand`; preserve this runtime guard because OpenCode itself runs on Node. PID-scoped kills and project-scoped stop commands should stay allowed.
-- `Npm.add` resolves cached non-registry plugin specs from the cached install root `package.json`; do not assume `npm-package-arg` can infer names for tarballs/git/file specs.
-- `/global/event` has a shared 1024-event SSE replay ring in `server/sse-replay.ts` / `server/global-event-replay.ts`. Both legacy Hono and Effect HttpApi global event routes should continue honoring `Last-Event-ID`; do not regress reconnect catch-up for long operations.
-- ULM artifact writers await best-effort `operation.updated` publication after durable writes. Keep that ordering; fire-and-forget publication can race persistent TUI dashboards and tests after enriched event payloads read disk state.
-- Config caching tracks file fingerprints for global and instance config. Keep `Config.invalidate()` usable without an instance context; instance config should refresh from fingerprints on the next read.
-- TUI plugins can intercept prompt keydown events with `api.input.intercept(handler)`. Handlers return `true` to consume the event and are automatically disposed with the plugin scope.
-- Server plugins can transform assembled chat messages with `pre_chat.messages.transform`; preserve replacement-output semantics because image-stripping and vision-summary plugins may assign a fresh `output.messages` array instead of mutating in place.
-- Queued user messages should be cancelled with `session.deleteMessage(..., force: "true")`, not `session.abort`; abort is for the active run and should not be used to discard a queued prompt.
-- ACP prompt/command returns wait for the completed `message.updated` event before sending `end_turn`; this keeps final streamed chunks from appearing after the RPC reply.
-- Session cost rollups are served by `Session.cost` / `GET /session/:id/cost`; they include self spend plus all descendant subagent sessions and should 404 for missing root sessions.
-- Session processor does a proactive pre-stream context estimate when compaction is enabled and the model reports a context limit; this prevents subagent runs from hanging on providers that silently accept oversized prompts.
-- `InstanceState.get` must provide the resolved `InstanceRef` into `ScopedCache.get`; otherwise cache lookups can initialize under the right key but without the matching instance context.
-- Codex/OpenAI stream chunks with `server_is_overloaded` are retryable provider overloads; keep this alongside generic `server_error` handling so unattended runs do not fail on transient overload JSON.
-- Codex OAuth refresh responses may omit a new refresh token; preserve the existing token on refresh, but keep initial browser/headless OAuth flows strict so missing first-login refresh tokens fail loudly.
-- `experimental.enable_sse_json_repair` is opt-in globally but enabled in `tools/ulmcode-profile`; it repairs malformed SSE `data:` JSON after strict parsing fails and should remain off by default for baseline OpenCode behavior.
-- The bundled isolated profile lives in `tools/ulmcode-profile`; validate it with `tools/ulmcode-profile/test-profile.sh`. Its installer copies compact skills, ULM slash commands, vendored profile plugins, plugin `package.json`, and removes stale Oh My OpenAgent files from the installed profile. Keep the long-report skill pointed at `report_outline`, background report/evidence/review lanes, `report_lint`, `report_render`, `runtime_summary`, and `operation_audit`; it exists specifically to prevent sparse final reports.
-- The isolated profile includes `plugins/ulmcode-runtime-guard.js`, which injects operation-resume, background-task, runtime-summary, report-lint/render, and final-handoff guardrails through plugin hooks. It also keeps vendored Claude Code bridge source at `tools/ulmcode-profile/plugins/vendor/opencode-claude-code-plugin-0.2.2/` and full Oh My OpenAgent package source at `tools/ulmcode-profile/plugins/vendor/oh-my-openagent-3.17.12/` for audit/fork work; do not load Oh My OpenAgent in the ULM profile or copy personal/general OpenCode agents, prompts, Feature Forge, Sisyphus, or OpenCode-Builder surfaces into `~/.config/ulmcode`.
-- The isolated profile ships `tools/ulmcode-profile/tool-manifest.json` as the tool-acquisition and supervised-command catalog. Keep unattended profiles `non_destructive`, reserve destructive activity for `interactive_destructive`, include validation commands/fallbacks/artifact parsers for each tool, and validate it with `bun run --cwd packages/opencode test:ulm-tool-manifest`. The runtime tools are `tool_acquire` for validation/blocker recording and `command_supervise` for heartbeat/idle/hard-timeout command execution. `agent-browser` and `agent_browser` MCP are the preferred low-context browser automation entries in the profile; Playwright remains a fallback, and unrelated Vercel/context7 MCPs should stay out of the isolated pentest profile.
-- ULM dev/profile launch must keep `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=$HOME/.config/ulmcode`, `OPENCODE_CONFIG=$HOME/.config/ulmcode/opencode.json`, `OPENCODE_DISABLE_PROJECT_CONFIG=1`, and `OPENCODE_MCP_ALLOWLIST=websearch,agent_browser,playwright,pentestMCP`. The allowlist is enforced after plugin config hooks because Oh My OpenAgent/global config can otherwise inject personal MCPs into the ULM sidebar.
-- Long autonomous operations should call `operation_schedule` after `operation_plan` to create the required lane graph, then use `runtime_scheduler`/`runtime_daemon` as the lane-launch owner. `operation_run` records lane lifecycle state, syncs background jobs with `laneID` metadata, requires lane-completion proof with explicit non-empty artifacts, and writes `plans/operation-run.jsonl`. Terminal modes (`complete_lane`, `skip_lane`, `block_lane`, `fail_lane`) must only record lane state and return `wait`; public tool calls to `advance` also return `wait` so lane workers cannot self-launch downstream lanes. Direct scheduler/runtime code can still advance and mark lanes running. Use `operation_next` when you only need the next launch/wait/compact/stop decision without mutating lane state. The governor reads `runtime_summary` plus the graph/model catalog and returns continue/compact/stop with budget/context/model-limit blockers.
-- `operation_memory` owns per-operation `memory.md`. It is operation-local agent memory for compaction/restart/subagent continuity, not a customer deliverable and not cross-task memory. Read it before large actions and update it only with concise notes future lanes need, such as scope constraints, canonical artifact paths, stalled tool paths, or next-worker warnings.
-- After supervised command artifacts exist, use `evidence_normalize` before validation/reporting. It writes `evidence-index.json`, `leads.json`, and citable evidence records; leads are unverified signal and should not be promoted to findings until a validation lane confirms them.
-- In internal-network graphs, `evidence_normalization` must run before `finding_validation`; validation should consume normalized leads/evidence, not run first and block on missing report-ready findings.
-- `finding_validation` needs `operation_status` and should adjudicate normalized leads before running the validation gate; running the gate first just reports the obvious absence of validated findings.
-- Lane worker prompts must explicitly forbid downstream launches through `runtime_scheduler`, `runtime_daemon`, `task`, or `command_supervise`; saying the scheduler owns handoff was not strong enough.
-- Package CLI daemon lanes set `ULMCODE_LANE_ALLOWED_TOOLS` and in-app scheduler `taskParams` carry `allowedTools`; guarded launcher/mutation tools (`operation_recover`, `runtime_scheduler`, `runtime_daemon`, `task`, `command_supervise`, `bash`, `write`) must stay disabled when absent from a lane allowlist. Keep this runtime guard; prompt-only allowlists were not enough to stop blocked lanes from recovering/relaunching work, and `write` must not be a hidden artifact-mutation escape hatch.
-- Lane prompts must state that workers can use only the listed allowed tools. The v8 recon shakedown showed a model trying harmless manifest sizing through `bash` (`wc -l`) even after command-polling guidance; runtime blocked it, but prompt contracts should make bash/browser/Playwright absence explicit too.
-- CLI-launched daemon lanes must hide guarded tools from the LLM payload, not only fail them at execution time. The v8 recon shakedown exposed `playwright_browser_wait_for` still visible in `opencode run --agent recon`, then later broad `glob` searches under `/Users`, `/opt/homebrew`, and `/usr/share`; lane visibility filtering now removes guarded browser/playwright/glob tools unless the lane allowlist includes them.
-- Lane agents that advertise `task` in `allowedTools` need explicit bounded task permissions, otherwise the prompt says `task` is allowed while the runtime hides it. Recon/person-recon/validator currently allow only `evidence` as a nested helper; attack-map and report-writer keep their narrower existing nested-agent policies.
-- Daemon lane child sessions also disable browser/playwright tools unless the lane allowlist explicitly includes them. The network-discovery v7 shakedown showed `playwright_browser_wait_for` being used as a generic timer despite not belonging to that lane.
-- `report_writing` needs the `write` tool and explicit prompt text to draft `reports/report.md`; otherwise it can outline/lint/render but blocks because no authored report exists.
-- Report-writing must target the long-run gates, not just weak lane lint: for 20h runs expect roughly 12k+ words, outline-section substance, finding sections, and a rendered PDF near the 50-page handoff gate before completion.
-- Use `operation_queue` after evidence normalization to convert leads into durable `work-queue.json` command units, then `operation_queue_next` to claim queued units and get exact `command_supervise` params. Preserve the returned `workUnitID` when launching commands; `operation_run` uses it to sync completed/failed background jobs back into queue state. The queue stores profile IDs and variables only, never raw shell, and refuses destructive profiles. Manual `operation_queue_next` remains dry-run by default; the scheduler/daemon owner path flips selected queued units to `dryRun:false` and starts supervised command jobs.
-- `command_supervise` may launch the same profile multiple times in one lane with different output prefixes. Keep command state directories unique after the first `commands/<profile>/` launch; otherwise repeated `http-discovery`/`service-inventory` runs overwrite command-plan, stdout/stderr, and heartbeat artifacts.
-- A dry-run `command_supervise` plan with the same profile/outputPrefix should upgrade in place when the real launch follows; do not force that actual launch into a suffixed command directory just because the planning pass wrote `command-plan.json`.
-- Failed `command_supervise` jobs are evidence/limitations for the owning lane, not automatic lane failure. Let the lane record the failed command and decide whether to continue, block, or fail; model/task worker failures can still fail the lane automatically.
-- Empty supervised-command `stderr.log` files are valid completion proof. Do not require non-empty stderr; clean stderr usually means the command did not emit errors.
-- Lane prompts must tell workers to poll supervised command heartbeat/stdout/stderr artifacts with read/grep. Do not rely on shell sleeps, `cat`, `tail`, or foreground shell commands for command polling; runtime guards may block those tools and the worker should recover through artifacts.
-- `operation_checkpoint` updates may omit `objective` once an operation exists; preserve the existing objective instead of forcing every lane heartbeat to restate it. New checkpoints without an existing operation still need an objective.
-- Use `runtime_scheduler` for unattended progress instead of expecting the model to remember every loop step. It writes `.ulmcode/operations/<operation>/scheduler/heartbeat.json`, requeues stale claimed work units, syncs background jobs into the graph/queue, runs `operation_run`, launches prepared model lanes through background `task`, claims queued command work units into `command_supervise`, and records scheduler cycles. For real wall-clock runs, use `bun run --cwd packages/opencode ulm:runtime-daemon <operationID>`; it defaults to a 20-hour runtime window with interval sleeps, daemon lock, stale-lock recovery, stale-job recovery hooks, signal-aware shutdown, daemon heartbeats, and `scheduler/cli-launches/` records when the CLI wrapper starts scheduler-owned work. The daemon must not fake wall-clock proof by idling after `all operation lanes are complete`; if no scheduled operation work remains before the target window elapses, it stops with `no scheduled operation work remains before target runtime elapsed` so the operator can extend the plan/graph instead. Add `--detach --json` when an operator wants a non-blocking 20-hour process handoff with pid, launch, heartbeat, and log paths. For OS-owned 20-hour runs, generate service-manager files with `bun run --cwd packages/opencode ulm:runtime-daemon <operationID> --supervisor all --json`; launchd/systemd artifacts intentionally run the foreground daemon and must not include `--detach`. `bun run --cwd packages/opencode ulm:burnin <operationID> --target-hours 20 --json` creates an accelerated proof artifact, but it is only readiness evidence, not a substitute for a literal 20-hour live run. `bun run --cwd packages/opencode ulm:literal-run-readiness <operationID> --strict --json` audits the actual wall-clock proof chain and only passes when the daemon heartbeat/log prove the target elapsed time; it writes `scheduler/literal-run-readiness.json` and `.md`.
-- For daemon-owned 20h windows, supervisor review is enabled from the daemon target even if an old/accelerated operation goal is short or complete. A failing `deliverables/operation-audit.json` should surface as `continue_reporting` and the top-level daemon reason `final operation audit has unresolved blockers`, not as idle completion. In the in-app scheduler path, `continue_reporting` launches one background `report_repair` task through `report-writer` and suppresses duplicates while an active repair job with the same operation/lane metadata is running. The package CLI daemon has no `BackgroundJob` service, so it suppresses duplicate model children through live `scheduler/cli-launches/*-model-pid-<lane>.json` records instead.
-- Literal run readiness is a full handoff proof, not just uptime: it now requires wall-clock daemon runtime/work proof, `deliverables/final/manifest.json`, and a passing `deliverables/operation-audit.json` generated after the latest daemon heartbeat. If you use strict long-report gates such as `minOutlineTargetPages: 50`, regenerate `operation_audit` with those gates after the daemon finishes before expecting literal readiness to pass.
-- Literal run readiness also requires daemon heartbeat continuity: a single final heartbeat claiming `elapsedSeconds: 72000` is not enough. The daemon JSONL must contain multiple parseable heartbeat entries spanning the target window or elapsed progression.
-- Literal work proof counts both final daemon-heartbeat cycle data and package CLI launch records under `scheduler/cli-launches/`, because detached CLI model/command workers can survive heartbeat rewrites and daemon restarts. CLI launch records must fall inside the daemon heartbeat `startedAt` -> `updatedAt`/`endedAt` window; old launches from earlier aborted runs do not count as literal work proof.
-- Operation audits record final-handoff gate metadata under `checks.finalHandoff.gates`. For 20h+ plans or 20h+ literal-readiness targets, literal readiness rejects audits that do not prove `minOutlineTargetPages >= 50` and `minPdfPages >= 50`, so old or weak audits must be regenerated with current code before a real 20-hour handoff can pass.
-- For 20h+ literal-readiness targets, `tools/tool-preflight.json` and `deliverables/model-route-audit.json` are required setup proof, not optional warnings. Run tool preflight and model-route audit before expecting a literal run to pass.
-- Long-run `runtime_scheduler`/`runtime_daemon` now bootstrap those readiness proofs when missing: tool preflight writes a blocked artifact instead of crashing if the manifest is absent, and model-route audit can infer provider/model entries from the operation graph defaults.
-- Local macOS tool preflight currently expects Docker through Colima for ZAP (`docker` + `colima`, not Docker Desktop). If Docker pulls fail with missing `docker-credential-desktop`, remove the stale `credsStore: "desktop"` from `~/.docker/config.json`. `gowitness` may install to `~/go/bin`; symlink it into `~/.local/bin` or add that path before rerunning preflight.
-- Credentialed plans require final audit proof of the vault handoff. `operation_audit` writes `checks.credentialHandoff`, and literal readiness rejects credentialed runs unless the final audit proves a submitted, non-empty redacted credential review.
-- Package-script ULM daemon/readiness wrappers resolve the real repo worktree before reading or writing `.ulmcode`; do not reintroduce raw `process.cwd()` for operation artifacts, because `bun run --cwd packages/opencode ...` otherwise targets `packages/opencode/.ulmcode` instead of the repo-root operation store.
-- Package-script daemon lane launches intentionally pass subagent names such as `recon` through `opencode run --agent` when `ULMCODE_DAEMON_CHILD=1` and `ULMCODE_LANE_ID` are set. Normal CLI runs should still reject subagents as primary agents; do not remove this ULM daemon exception or scheduler-owned lane workers silently fall back to the default `pentest` agent.
-- The profile bundles the local shell non-interactive strategy at `tools/ulmcode-profile/plugins/shell-strategy/shell_strategy.md` and loads it through `opencode.json` instructions; keep it self-contained and do not point profile installs at the user's live `~/.config/opencode`.
-- `bun run --cwd packages/opencode test:ulm-skills` validates bundled ULM profile skills and commands for frontmatter, placeholder-free content, durable ULM tool references, full local workflow command coverage, shell strategy wiring, and model-routing drift.
-- `bun run --cwd packages/opencode test:ulm-smoke` runs the synthetic ULM lifecycle smoke: plan, evidence, finding, outline, validation stage gate, final checkpoint, report render, runtime summary, operation audit, final handoff lint, and status/dashboard verification.
-- `bun run --cwd packages/opencode test:ulm-lab` runs the manifest-driven lab replay harness across every `tools/ulmcode-labs/*/manifest.json`; replay final lint enforces validation stage gate, final handoff artifacts, operation audit, report outline budget, required outline sections, and optional authored report files. Current lab categories include authentication, roster/gradebook, storage/search/reset, guardian/LTI/SIS, assignment/attendance/transcript, LMS payment, family messaging, third-party integration flows, and at least one multi-finding chained portal case with an authored-report replay. The target-smoke harness should cover every lab service added under `tools/ulmcode-labs/*/service`.
-- `bun run --cwd packages/opencode test:ulm-lab-target` starts and probes every bundled HTTP lab target; Docker Compose support lives beside each lab under `tools/ulmcode-labs/<lab>/docker-compose.yml`.
-- `bun run --cwd packages/opencode test:ulm-rebuild-audit` checks the rebuild evidence checklist: upstream currency, durable ULM runtime tools, strict report gates, authored report preservation into rendered HTML/PDF, profile GPT-5.5/GPT-5.4 routing, shell strategy/local commands, profile vendoring/runtime guard, lab catalog breadth, and required gate scripts. `bun run --cwd packages/opencode script/ulm-rebuild-audit.ts --json` emits the same checklist for automation. It is a checklist verifier, not a replacement for running the actual smoke/lab/typecheck gates.
-- `bun run --cwd packages/opencode test:ulm-harness:fast` runs the ULM harness scorecard added for the rebuild. It requires coverage for ten harness gaps: model-loop eval, restart/resume chaos, installed profile runtime, CI gating, longitudinal scorecards, prompt/agent regression, provider/tool chaos, dashboard/API E2E, deep lab targets, and adversarial report quality. Scenario specs live in `tools/ulmcode-evals/scenarios/`, scorecards write to `.artifacts/ulm-harness/`, and `.github/workflows/ulm-harness.yml` is the named CI surface. Additional lanes are `test:ulm-harness:full`, `test:ulm-harness:chaos`, and `test:ulm-harness:overnight`; the overnight lane is a readiness contract, while real 20-hour lab execution remains an explicit operator-triggered run.
-- `bun run --cwd packages/opencode ulm:behavior-watch -- --scenario tools/ulmcode-behavior-scenarios/k12-sso-roster-export-chain.json --transcript <log> --output <prefix>` audits nondeterministic live model behavior for suspicious patterns: broad local searches, report drafting before evidence review, invented evidence IDs, unsupported production claims, weak chain reasoning, and missing final report gates. Keep it manual/live-eval oriented, not a default CI token furnace.
-- Invoking the package as `ulmcode` sets `OPENCODE_APP_NAME=ulmcode`; core global paths then use the `ulmcode` app name.
+- Do not paste full changelogs, old branch archaeology, exact historical run counts, or "current selected run" state. Put those in operation artifacts, memory summaries, or PR notes.
+- Do not duplicate package-specific guides unless the fact applies repo-wide. Keep detailed package guidance in the nearest `AGENTS.md`.

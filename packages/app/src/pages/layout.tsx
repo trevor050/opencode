@@ -58,6 +58,11 @@ import { setNavigate } from "@/utils/notification-click"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { isUlmDirectory, isUlmOperationsDirectory } from "@/utils/ulm-workspace"
+import {
+  operationFilesPathForSession,
+  operationFilesRootForDirectory,
+  type SessionBoundOperation,
+} from "@/utils/ulm-operation-ui"
 
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
@@ -2406,26 +2411,33 @@ export default function Layout(props: ParentProps) {
       list[0]?.worktree
     const active = currentDir() || operationDir || ""
     const chatDir = operationDir || active
-    const operationFilesDir = createMemo(() => {
-      const match = location.pathname.match(/\/operations\/([^/]+)/)
-      if (match?.[1] && operationDir) {
-        const root =
-          operationDir.endsWith("/.ulmcode/operations") || operationDir.endsWith("/operations")
-            ? operationDir
-            : operationDir.endsWith("/packages/opencode")
-              ? `${operationDir.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
-              : operationDir.endsWith("/opencode")
-                ? `${operationDir}/.ulmcode/operations`
-                : operationDir
-        return `${root}/${decodeURIComponent(match[1])}`
-      }
+    const operationRoot = () => {
       const dir = operationDir
-      if (!dir) return undefined
-      if (dir.endsWith("/packages/opencode")) return `${dir.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
-      if (dir.endsWith("/opencode")) return `${dir}/.ulmcode/operations`
-      if (isUlmOperationsDirectory(dir)) return `${dir}/.ulmcode/operations`
-      return dir
+      return operationFilesRootForDirectory(dir)
+    }
+    const operationFilesDir = createMemo(() => {
+      const root = operationRoot()
+      const match = location.pathname.match(/\/operations\/([^/]+)/)
+      if (match?.[1] && root) return `${root}/${decodeURIComponent(match[1])}`
+      return root
     })
+    const resolveOperationFilesDir = async () => {
+      const root = operationRoot()
+      if (!root) return undefined
+      const sessionID = params.id
+      if (!sessionID || !location.pathname.includes("/session")) return operationFilesDir()
+      try {
+        const directory = currentDir() || operationDir
+        if (!directory) return root
+        const result = await globalSDK
+          .createClient({ directory, throwOnError: true })
+          .ulm.operation.list({ eventLimit: "1" })
+        const operations = Array.isArray(result.data) ? (result.data as SessionBoundOperation[]) : []
+        return operationFilesPathForSession(operations, sessionID, root)
+      } catch {
+        return root
+      }
+    }
     const railClass =
       "flex size-11 items-center justify-center rounded-[9px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     const selectedClass = "border-icon-strong-base bg-surface-base-active text-text-strong"
@@ -2528,7 +2540,7 @@ export default function Layout(props: ParentProps) {
             "folder",
             "folder",
             "Open operation files",
-            () => openDirectory(operationFilesDir(), "Operation files"),
+            () => void resolveOperationFilesDir().then((dir) => openDirectory(dir, "Operation files")),
             false,
             !operationFilesDir() || !platform.openPath,
           )}

@@ -1064,6 +1064,15 @@ test("provider.sort prioritizes preferred models", () => {
   expect(sorted[sorted.length - 1].id).not.toContain("sonnet-4")
 })
 
+test("provider.sort prefers GPT-5.5 non-fast over GPT-5.5 fast", () => {
+  const sorted = Provider.sort([
+    { id: "gpt-5.5-fast", name: "GPT-5.5 Fast" },
+    { id: "gpt-5.5", name: "GPT-5.5" },
+  ] as any[])
+
+  expect(sorted[0].id).toBe("gpt-5.5")
+})
+
 test("multiple providers can be configured simultaneously", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

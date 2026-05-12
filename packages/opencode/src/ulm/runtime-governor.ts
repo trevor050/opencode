@@ -63,6 +63,10 @@ function modelCallCount(
   return 0
 }
 
+function routeProvider(route: string | undefined) {
+  return route?.split("/", 1)[0]
+}
+
 function decideFromRuntime(input: {
   operationID: string
   lane?: OperationLane
@@ -74,9 +78,13 @@ function decideFromRuntime(input: {
   const recommendedTools = ["operation_status", "runtime_summary"]
   const usage = input.runtime?.usage
   const pressure = input.runtime?.compaction?.pressure
+  const hasPositiveBudget = usage?.budgetUSD !== undefined && usage.budgetUSD > 0
   const remainingUSD =
-    usage?.remainingUSD ??
-    (usage?.budgetUSD !== undefined && usage.costUSD !== undefined ? usage.budgetUSD - usage.costUSD : undefined)
+    hasPositiveBudget && usage?.remainingUSD !== undefined
+      ? usage.remainingUSD
+      : hasPositiveBudget && usage?.costUSD !== undefined
+        ? usage.budgetUSD! - usage.costUSD
+        : undefined
   const laneBudgetUSD = input.lane?.budget.maxUSD
   const laneSpent = input.lane
     ? (usage?.byLane?.[input.lane.id]?.costUSD ?? usage?.byAgent?.[input.lane.agent]?.costUSD)
@@ -99,6 +107,16 @@ function decideFromRuntime(input: {
   if (input.lane && !model) {
     blockers.push(`model route metadata is missing for ${input.lane.modelRoute}`)
     recommendedTools.push("operation_schedule")
+  }
+  if (input.lane && routeProvider(input.lane.modelRoute) !== "openai") {
+    blockers.push(`model route provider must be openai for ${input.lane.modelRoute}`)
+    recommendedTools.push("operation_schedule")
+  }
+  for (const fallback of input.lane?.fallbackModelRoutes ?? []) {
+    if (routeProvider(fallback) !== "openai") {
+      blockers.push(`fallback model route provider must be openai for ${fallback}`)
+      recommendedTools.push("operation_schedule")
+    }
   }
   if (model?.quota?.maxCalls !== undefined && routeCalls >= model.quota.maxCalls) {
     blockers.push(`model route quota exhausted for ${model.route}`)

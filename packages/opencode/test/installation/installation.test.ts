@@ -52,12 +52,17 @@ function testLayer(
 describe("installation", () => {
   describe("latest", () => {
     test("reads release version from GitHub releases", async () => {
-      const layer = testLayer(() => jsonResponse({ tag_name: "v1.2.3" }))
+      const calls: string[] = []
+      const layer = testLayer((request) => {
+        calls.push(request.url)
+        return jsonResponse({ tag_name: "v1.2.3" })
+      })
 
       const result = await Effect.runPromise(
         Installation.Service.use((svc) => svc.latest("unknown")).pipe(Effect.provide(layer)),
       )
       expect(result).toBe("1.2.3")
+      expect(calls).toContain("https://api.github.com/repos/trevor050/ulmcode/releases/latest")
     })
 
     test("strips v prefix from GitHub release tag", async () => {
@@ -134,6 +139,8 @@ describe("installation", () => {
         () => jsonResponse({ versions: { stable: "2.0.0" } }),
         (cmd, args) => {
           // getBrewFormula: return core formula (no tap)
+          if (cmd === "brew" && args.includes("--formula") && args.includes("trevor050/ulmcode/ulmcode")) return ""
+          if (cmd === "brew" && args.includes("--formula") && args.includes("ulmcode")) return ""
           if (cmd === "brew" && args.includes("--formula") && args.includes("anomalyco/tap/opencode")) return ""
           if (cmd === "brew" && args.includes("--formula") && args.includes("opencode")) return "opencode"
           return ""
@@ -153,7 +160,7 @@ describe("installation", () => {
       const layer = testLayer(
         () => jsonResponse({}), // HTTP not used for tap formula
         (cmd, args) => {
-          if (cmd === "brew" && args.includes("anomalyco/tap/opencode") && args.includes("--formula")) return "opencode"
+          if (cmd === "brew" && args.includes("trevor050/ulmcode/ulmcode") && args.includes("--formula")) return "ulmcode"
           if (cmd === "brew" && args.includes("--json=v2")) return brewInfoJson
           return ""
         },
@@ -163,6 +170,24 @@ describe("installation", () => {
         Installation.Service.use((svc) => svc.latest("brew")).pipe(Effect.provide(layer)),
       )
       expect(result).toBe("2.1.0")
+    })
+  })
+
+  describe("upgrade", () => {
+    test("curl upgrades from ULMCode GitHub release assets", async () => {
+      const calls: string[] = []
+      const layer = testLayer(
+        () => jsonResponse({}),
+        (cmd, args) => {
+          calls.push([cmd, ...args].join(" "))
+          return ""
+        },
+      )
+
+      await Effect.runPromise(Installation.Service.use((svc) => svc.upgrade("curl", "1.4.0")).pipe(Effect.provide(layer)))
+
+      expect(calls[0]).toContain("https://github.com/trevor050/ulmcode/releases/download/v\\${target}")
+      expect(calls[0]).toContain("for prefix in ulmcode opencode")
     })
   })
 })

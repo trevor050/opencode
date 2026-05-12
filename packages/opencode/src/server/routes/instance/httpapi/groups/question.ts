@@ -15,6 +15,7 @@ const ReplyPayload = Schema.Struct({
 })
 const TouchPayload = Schema.Struct({
   holdMillis: Schema.optional(Schema.Number),
+  answers: Schema.optional(Schema.Array(Question.Answer)),
 })
 
 export const QuestionApi = HttpApi.make("question")

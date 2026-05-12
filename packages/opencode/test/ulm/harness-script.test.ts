@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
+import { runHarnessScenarios } from "@/ulm/harness"
 
 const packageRoot = path.join(__dirname, "../..")
 const repoRoot = path.join(packageRoot, "../..")
 
 describe("ULM harness runner script", () => {
+  test("allocates unique scorecard run ids for concurrent starts with the same timestamp", async () => {
+    const now = new Date("2026-05-10T01:49:01.955Z")
+    const first = await runHarnessScenarios([], { now })
+    const second = await runHarnessScenarios([], { now })
+
+    expect(first.runID).not.toBe(second.runID)
+    expect(first.runID).toStartWith("ulm-harness-2026-05-10T01-49-01-955Z-")
+    expect(second.runID).toStartWith("ulm-harness-2026-05-10T01-49-01-955Z-")
+  })
+
   test("lists the required harness scenarios as JSON", async () => {
     const proc = Bun.spawn(["bun", "run", "--silent", "script/ulm-harness-run.ts", "--list", "--json"], {
       cwd: packageRoot,
@@ -115,6 +126,9 @@ describe("ULM harness runner script", () => {
     expect(packageJson.scripts?.["ulm:tool-preflight"]).toBe(
       "bun run script/ulm-tool-manifest.ts --preflight --operation-id tool-preflight",
     )
+    expect(packageJson.scripts?.["ulm:laptop-preflight"]).toBe("bun run script/ulm-laptop-preflight.ts")
+    expect(packageJson.scripts?.["ulm:credential-review"]).toBe("bun run script/ulm-credential-review.ts")
+    expect(packageJson.scripts?.["ulm:first-run-launch-packet"]).toBe("bun run script/ulm-first-run-launch-packet.ts")
     expect(packageJson.scripts?.["test:ulm-tool-manifest"]).toBe("bun run script/ulm-tool-manifest.ts")
 
     const profileVerifier = await fs.readFile(path.join(repoRoot, "tools/ulmcode-profile/test-profile.sh"), "utf8")
@@ -151,5 +165,7 @@ describe("ULM harness runner script", () => {
     expect(overnight?.checks?.some((check) => check.id?.includes("burnin-proof.json") && check.status === "passed")).toBe(true)
     expect(overnight?.checks?.some((check) => check.id?.includes("runtime-supervisor.ts") && check.status === "passed")).toBe(true)
     expect(overnight?.checks?.some((check) => check.id?.includes("supervisor-install.md") && check.status === "passed")).toBe(true)
+    expect(overnight?.checks?.some((check) => check.id?.includes("laptop-preflight.ts") && check.status === "passed")).toBe(true)
+    expect(overnight?.checks?.some((check) => check.id?.includes("laptop-preflight.json") && check.status === "passed")).toBe(true)
   })
 })

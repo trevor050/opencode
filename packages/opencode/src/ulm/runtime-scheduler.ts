@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug, writeRuntimeSummary } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import { readOperationGoal } from "./operation-goal"
 import {
   superviseOperation,
@@ -18,6 +19,7 @@ import {
 import { writeRuntimeGovernorRouteAudit } from "./runtime-governor"
 import { acquireManifestTools } from "./tool-acquisition"
 import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNextResult } from "./work-queue"
+import { generateOperationBacklog, type OperationBacklogResult } from "./operation-backlog"
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
 type SchedulerCommandParams = WorkQueueNextResult["units"][number]["commandSupervise"]
@@ -63,6 +65,7 @@ export type RuntimeSchedulerCycle = {
   sync: OperationRuntimeSyncResult
   supervisor?: RuntimeSchedulerSupervisorSummary
   run?: OperationRunResult
+  backlog?: OperationBacklogResult
   governor: GovernorDecision
   requeuedWorkUnits: string[]
   launchedJobs: string[]
@@ -107,6 +110,7 @@ function supervisorBlocks(action: OperationSupervisorAction | undefined) {
     action !== "continue_execution" &&
     action !== "continue_coverage" &&
     action !== "continue_reporting" &&
+    action !== "queue_work" &&
     action !== "handoff_ready" &&
     action !== "release_handoff"
   )
@@ -126,25 +130,55 @@ function reportRepairTaskParams(
   supervisor: RuntimeSchedulerSupervisorSummary,
 ): SchedulerLaunchParams {
   const nextTool = supervisor.requiredNextTool ?? "report_lint"
+  const finalizationMode = supervisor.reason?.includes("finalization window is open") ?? false
   const prompt = [
-    `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
+    finalizationMode
+      ? `Operation ${operationID} is inside its protected finalization window. Start the reporting closeout instead of launching new broad discovery.`
+      : `Operation ${operationID} has a failed final operation audit. Repair the reporting closeout instead of idling.`,
     supervisor.modelPrompt,
     `Required next tool: ${nextTool}.`,
-    "Read deliverables/operation-audit.json first, then fix every listed blocker.",
+    finalizationMode
+      ? "Read operation_status, preserve limitations, validate or reject remaining candidates, then build the final report pipeline from durable evidence."
+      : "Read deliverables/operation-audit.json first, then fix every listed blocker.",
     "Use the report pipeline tools as needed: report_outline for page/section budget issues, report_lint for content gaps, report_render for final HTML/PDF packaging, runtime_summary for accounting, and operation_audit to prove the final gates.",
     "Do not mark the operation ready until operation_audit passes with the same strict handoff gates.",
   ]
     .filter((line): line is string => !!line)
     .join("\n\n")
   return {
-    description: "Repair final report audit",
+    description: finalizationMode ? "Start finalization report closeout" : "Repair final report audit",
     prompt,
     subagent_type: "report-writer",
     operationID,
     laneID: REPORT_REPAIR_LANE_ID,
-    modelRoute: "openai/gpt-5.5-fast",
+    modelRoute: "openai/gpt-5.5",
     allowedTools: ["report_outline", "write", "report_lint", "report_render", "runtime_summary", "operation_audit"],
     background: true,
+  }
+}
+
+function emptyRuntimeSync(input: { operationID: string; graphPath: string; now: Date }): OperationRuntimeSyncResult {
+  return {
+    operationID: input.operationID,
+    graph: {
+      operationID: input.operationID,
+      safetyMode: "non_destructive",
+      trustLevel: "moderate",
+      scanProfile: "balanced",
+      maxConcurrentLanes: 1,
+      createdAt: input.now.toISOString(),
+      updatedAt: input.now.toISOString(),
+      lanes: [],
+    },
+    graphPath: input.graphPath,
+    completedLanes: [],
+    skippedLanes: [],
+    blockedLanes: [],
+    failedLanes: [],
+    syncedJobs: [],
+    syncedWorkUnits: [],
+    completedWorkUnits: [],
+    failedWorkUnits: [],
   }
 }
 
@@ -182,6 +216,14 @@ async function shouldEnsureReadinessProof(worktree: string, operationID: string,
   return (plan?.timeBudget?.targetHours ?? 0) >= 20
 }
 
+async function goalRuntimeRemainingSeconds(worktree: string, operationID: string, now: Date) {
+  const goal = (await readOperationGoal(worktree, operationID)).goal
+  if (!goal || goal.status !== "active" || goal.targetDurationHours === undefined) return undefined
+  const createdAt = Date.parse(goal.createdAt)
+  if (!Number.isFinite(createdAt)) return undefined
+  return Math.max(0, Math.floor(goal.targetDurationHours * 60 * 60 - (now.getTime() - createdAt) / 1000))
+}
+
 async function ensureReadinessProofArtifacts(
   worktree: string,
   input: { operationID: string; toolManifestPath?: string; enabled?: boolean },
@@ -216,7 +258,10 @@ async function ensureReadinessProofArtifacts(
       }),
     )
   }
-  await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  const graphPath = path.join(root, "plans", "operation-graph.json")
+  if (await exists(graphPath)) {
+    await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  }
   if (!(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
     const graph = await readJson<{ lanes?: Array<{ budget?: { maxUSD?: number } }> }>(
       path.join(root, "plans", "operation-graph.json"),
@@ -279,6 +324,14 @@ export async function runRuntimeScheduler(
   worktree: string,
   input: RuntimeSchedulerInput,
 ): Promise<RuntimeSchedulerResult> {
+  if (
+    containsRawCredentialSecret({
+      operationID: input.operationID,
+      toolManifestPath: input.toolManifestPath,
+    })
+  ) {
+    throw new Error("runtime scheduler inputs must not contain raw credential secrets")
+  }
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const schedulerDir = path.join(root, "scheduler")
@@ -303,10 +356,13 @@ export async function runRuntimeScheduler(
       leaseSeconds: input.leaseSeconds,
       now,
     })
-    const sync = await syncOperationRuntimeState(worktree, {
-      operationID,
-      backgroundJobs: input.backgroundJobs,
-    })
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const sync = (await exists(graphPath))
+      ? await syncOperationRuntimeState(worktree, {
+          operationID,
+          backgroundJobs: input.backgroundJobs,
+        })
+      : emptyRuntimeSync({ operationID, graphPath, now })
     const supervisor = await maybeRunSupervisor(worktree, {
       ...input,
       operationID,
@@ -316,6 +372,7 @@ export async function runRuntimeScheduler(
     if (supervisor?.generatedAt) lastSupervisorReviewAt = new Date(supervisor.generatedAt)
 
     let run: OperationRunResult | undefined
+    let backlog: OperationBacklogResult | undefined
     let launchedJobs: string[] = []
     let launchedCommandJobs: string[] = []
     if (supervisor?.action === "continue_reporting" && input.launchModelLane) {
@@ -327,7 +384,16 @@ export async function runRuntimeScheduler(
       run = await runOperationStep(worktree, {
         operationID,
         backgroundJobs: input.backgroundJobs,
+        now,
       })
+      if (run.action === "expand_work") {
+        backlog = await generateOperationBacklog(worktree, {
+          operationID,
+          toolManifestPath: input.toolManifestPath,
+          maxUnits: input.commandWorkUnitLimit ?? 25,
+          runtimeRemainingSeconds: await goalRuntimeRemainingSeconds(worktree, operationID, now),
+        })
+      }
       const launched = run.taskParams && input.launchModelLane ? await input.launchModelLane(run.taskParams) : undefined
       launchedJobs = launched?.jobID ? [launched.jobID] : []
     }
@@ -358,6 +424,7 @@ export async function runRuntimeScheduler(
       sync,
       supervisor,
       run,
+      backlog,
       governor,
       requeuedWorkUnits: lease.requeuedUnits,
       launchedJobs,
@@ -373,7 +440,9 @@ export async function runRuntimeScheduler(
       supervisorReason: supervisor?.reason,
       supervisorRan: supervisor?.ran ?? false,
       lastAction: run?.action ?? (supervisor?.blocking ? "supervisor_blocked" : undefined),
-      lastReason: run?.reason ?? supervisor?.reason,
+      lastReason: backlog
+        ? `expanded operation backlog: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
+        : run?.reason ?? supervisor?.reason,
       governorAction: governor.action,
       governorReason: governor.reason,
       requeuedWorkUnits: lease.requeuedUnits,
@@ -403,6 +472,16 @@ export async function runRuntimeScheduler(
       reason = governor.action === "stop" ? governor.reason : run.reason
       break
     }
+    if (run.action === "expand_work") {
+      reason = backlog
+        ? `expanded operation backlog before target runtime elapsed: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
+        : run.reason
+      continue
+    }
+    if (run.action === "research_charter") {
+      reason = run.reason
+      break
+    }
     if (run.action === "wait" || run.action === "schedule") {
       reason = run.reason
       break
@@ -417,7 +496,9 @@ export async function runRuntimeScheduler(
     supervisorReason: cycles.at(-1)?.supervisor?.reason,
     supervisorRan: cycles.at(-1)?.supervisor?.ran ?? false,
     lastAction: cycles.at(-1)?.run?.action ?? (cycles.at(-1)?.supervisor?.blocking ? "supervisor_blocked" : undefined),
-    lastReason: cycles.at(-1)?.run?.reason ?? cycles.at(-1)?.supervisor?.reason,
+    lastReason: cycles.at(-1)?.backlog
+      ? `expanded operation backlog: lanes=${cycles.at(-1)?.backlog?.generatedLanes.length ?? 0}, work_units=${cycles.at(-1)?.backlog?.generatedWorkUnits ?? 0}`
+      : cycles.at(-1)?.run?.reason ?? cycles.at(-1)?.supervisor?.reason,
     governorAction: cycles.at(-1)?.governor.action,
     governorReason: cycles.at(-1)?.governor.reason,
     launchedJobs: cycles.at(-1)?.launchedJobs ?? [],

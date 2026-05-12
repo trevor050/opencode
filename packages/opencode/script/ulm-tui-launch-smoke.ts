@@ -34,7 +34,6 @@ const proc = spawn("bun", ["run", "--conditions=browser", "./src/index.ts"], {
     ...Bun.env,
     CI: "1",
     NO_COLOR: "1",
-    OMO_DISABLE_POSTHOG: "1",
     OPENCODE_DISABLE_AUTO_UPDATE: "1",
     TERM: "xterm-256color",
   },

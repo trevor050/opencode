@@ -343,7 +343,7 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "type": "string",
     },
     "modelRoute": {
-      "description": "Optional provider/model route override for operation lanes, for example openai/gpt-5.5-fast.",
+      "description": "Optional provider/model route override for operation lanes, for example openai/gpt-5.5.",
       "type": "string",
     },
     "operationID": {

@@ -620,6 +620,108 @@
   }
 }
 
+[data-component="ulm-tool-card"] {
+  width: 100%;
+  padding: 8px 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--font-family-sans);
+}
+
+[data-slot="ulm-tool-rows"] {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: 6px;
+  background: var(--border-weaker-base);
+}
+
+[data-slot="ulm-tool-row"] {
+  display: contents;
+}
+
+[data-slot="ulm-tool-row-label"],
+[data-slot="ulm-tool-row-value"] {
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--surface-base);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-normal);
+}
+
+[data-slot="ulm-tool-row-label"] {
+  color: var(--text-weak);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+}
+
+[data-slot="ulm-tool-row-value"] {
+  color: var(--text-base);
+  overflow-wrap: anywhere;
+}
+
+[data-slot="ulm-tool-section"] {
+  border: 1px solid var(--border-weaker-base);
+  border-radius: 6px;
+  background: var(--surface-base);
+  overflow: hidden;
+}
+
+[data-slot="ulm-tool-section-title"] {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  color: var(--text-strong);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+}
+
+[data-slot="ulm-tool-section-rows"] {
+  display: flex;
+  flex-direction: column;
+}
+
+[data-slot="ulm-tool-section-row"] {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--border-weaker-base);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-normal);
+}
+
+[data-slot="ulm-tool-section-row"]:first-child {
+  border-top: 0;
+}
+
+[data-slot="ulm-tool-section-index"] {
+  color: var(--text-weak);
+}
+
+[data-slot="ulm-tool-section-value"] {
+  min-width: 0;
+  color: var(--text-base);
+  overflow-wrap: anywhere;
+}
+
+[data-slot="ulm-tool-preview"] {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: 6px;
+  background: var(--surface-base);
+  color: var(--text-base);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-large);
+  white-space: pre-wrap;
+}
+
 [data-component="context-tool-group-trigger"] {
   width: 100%;
   min-height: 24px;

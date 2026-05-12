@@ -106,6 +106,12 @@ const OperationRecord = Schema.Struct({
   notes: Schema.optional(Schema.String),
   time: OperationTime,
 }).annotate({ identifier: "UlmOperationRecord" })
+const OperationSessionBinding = Schema.Struct({
+  sessionID: Schema.String,
+  operationID: Schema.String,
+  boundAt: Schema.String,
+  source: Schema.optional(Schema.String),
+}).annotate({ identifier: "UlmOperationSessionBinding" })
 const FindingCounts = Schema.Struct({
   total: Schema.Finite,
   byState: Schema.Record(Schema.Literals(FINDING_STATES), Schema.Finite),
@@ -151,6 +157,7 @@ const ToolInventoryStatus = Schema.Struct({
 const OperationStatusSummary = Schema.Struct({
   operationID: Schema.String,
   root: Schema.String,
+  sessions: Schema.optional(Schema.Array(OperationSessionBinding)),
   operation: Schema.optional(OperationRecord),
   goal: Schema.optional(OperationGoalStatus),
   supervisor: Schema.optional(SupervisorStatus),
@@ -352,11 +359,13 @@ const CredentialRecord = Schema.Struct({
 const CredentialListResult = Schema.Struct({
   operationID: Schema.String,
   index: Schema.String,
+  expectedServices: Schema.Array(Schema.String),
   credentials: Schema.Array(CredentialRecord),
 }).annotate({ identifier: "UlmCredentialListResult" })
 const CredentialReviewSubmitResult = Schema.Struct({
   operationID: Schema.String,
   submittedAt: Schema.String,
+  expectedServices: Schema.Array(Schema.String),
   file: Schema.String,
   credentials: Schema.Array(CredentialRecord),
 }).annotate({ identifier: "UlmCredentialReviewSubmitResult" })

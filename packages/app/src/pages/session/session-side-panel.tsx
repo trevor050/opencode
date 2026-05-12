@@ -8,7 +8,7 @@ import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Mark } from "@opencode-ai/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
+import type { SnapshotFileDiff, VcsFileDiff, UlmOperationStatusSummary } from "@opencode-ai/sdk/v2"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useNavigate, useParams } from "@solidjs/router"
@@ -30,7 +30,7 @@ import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { artifactGroups, currentOperationFilesPath } from "@/utils/ulm-operation-ui"
+import { artifactGroups, currentOperationFilesPath, operationForSession, reportPackageState } from "@/utils/ulm-operation-ui"
 import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 type WorkspaceTone = "ready" | "attention" | "blocked" | "neutral"
@@ -57,6 +57,33 @@ function operationTitle(item: ReturnType<typeof useUlm>["store"]["operations"][n
   return item?.operation?.objective || item?.goal?.objective || item?.operationID || "No active operation"
 }
 
+function updatedAt(item: UlmOperationStatusSummary) {
+  return item.operation?.time.updated || item.goal?.updatedAt || item.operation?.time.created
+}
+
+function timeAgo(value: string | undefined) {
+  if (!value) return "never"
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return value
+  const minutes = Math.max(0, Math.floor((Date.now() - parsed) / 60_000))
+  if (minutes < 1) return "now"
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+function eventLabel(event: unknown) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return "operation updated"
+  const record = event as Record<string, unknown>
+  return typeof record.type === "string" ? record.type.replaceAll("_", " ") : "operation updated"
+}
+
+function toolInventoryLabel(item: UlmOperationStatusSummary) {
+  if (!item.toolInventory) return "not recorded"
+  return `${item.toolInventory.installed}/${item.toolInventory.total} installed`
+}
+
 function EngagementWorkspacePanel() {
   const ulm = useUlm()
   const navigate = useNavigate()
@@ -64,18 +91,15 @@ function EngagementWorkspacePanel() {
   const platform = usePlatform()
   const [artifacts, setArtifacts] = createSignal<UlmArtifactFile[]>([])
   const [preview, setPreview] = createSignal<{ file: string; content: string }>()
+  const [selectedArtifact, setSelectedArtifact] = createSignal<string>()
   const operations = createMemo(() => ulm.store.operations)
-  const active = createMemo(
-    () =>
-      operations().find((item) => item.operation?.status === "running") ??
-      operations().find((item) => item.operation?.status !== "complete") ??
-      operations()[0],
-  )
+  const active = createMemo(() => operationForSession(operations(), params.id))
   const groups = createMemo(() => artifactGroups(artifacts()))
   const base = createMemo(() => `/${params.dir}`)
   const previewable = (item: UlmArtifactFile) =>
     item.kind === "markdown" || item.kind === "json" || item.kind === "text" || item.kind === "html"
   const openFile = async (item: UlmArtifactFile) => {
+    setSelectedArtifact(item.file)
     if (previewable(item) && platform.readTextFile) {
       const content = await platform.readTextFile(item.path)
       setPreview({ file: item.file, content })
@@ -88,6 +112,8 @@ function EngagementWorkspacePanel() {
     const root = currentOperationFilesPath(active())
     if (!root || !platform.listUlmArtifacts) {
       setArtifacts([])
+      setSelectedArtifact()
+      setPreview()
       return
     }
     void platform.listUlmArtifacts(root).then(setArtifacts).catch(() => setArtifacts([]))
@@ -97,7 +123,7 @@ function EngagementWorkspacePanel() {
     <div class="h-full overflow-y-auto bg-background-stronger px-3 py-3">
       <div class="mb-3 flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <div class="text-11-medium uppercase tracking-normal text-text-weak">Operation files</div>
+          <div class="text-11-medium uppercase tracking-normal text-text-weak">Chat operation</div>
           <div class="mt-1 truncate text-13-medium text-text-strong">{operationTitle(active())}</div>
         </div>
         <Show when={active()}>
@@ -116,19 +142,83 @@ function EngagementWorkspacePanel() {
       <Show
         when={active()}
         fallback={
-          <div class="rounded-[8px] border border-border-weaker-base bg-surface-base p-4 text-12-regular text-text-weak">
-            No engagement artifacts found yet. Start a scoped pentest lane to create the operation workspace.
+          <div class="rounded-[8px] border border-dashed border-border-weak-base bg-surface-base p-4">
+            <div class="text-13-medium text-text-strong">No operation for this chat</div>
+            <div class="mt-2 text-12-regular leading-5 text-text-weak">
+              When a model starts a scoped operation in this conversation, the workspace, files, and latest updates will appear here.
+            </div>
           </div>
         }
       >
         {(item) => (
           <div class="flex flex-col gap-3">
             <div class={`rounded-[8px] border p-3 ${workspaceToneClass(statusTone(item().operation?.status))}`}>
-              <div class="text-12-medium text-text-strong">{item().operation?.status ?? "untracked"}</div>
-              <div class="mt-1 text-12-regular text-text-weak">
-                {item().findings.total} findings / {item().evidence.total} evidence / {artifacts().length} files
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-12-medium uppercase text-text-weak">{item().operation?.status ?? "untracked"}</div>
+                <div class="text-11-medium text-text-weak">updated {timeAgo(updatedAt(item()))}</div>
+              </div>
+              <div class="mt-2 line-clamp-3 text-13-regular leading-5 text-text-base">
+                {item().operation?.summary || item().operation?.nextActions[0] || "No operation summary recorded yet."}
               </div>
             </div>
+
+            <div class="grid grid-cols-3 gap-2">
+              <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-3 py-2">
+                <div class="text-16-medium text-text-strong">{item().evidence.total}</div>
+                <div class="text-11-medium uppercase text-text-weak">evidence</div>
+              </div>
+              <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-3 py-2">
+                <div class="text-16-medium text-text-strong">{item().findings.total}</div>
+                <div class="text-11-medium uppercase text-text-weak">findings</div>
+              </div>
+              <div class="rounded-[8px] border border-border-weaker-base bg-surface-base px-3 py-2">
+                <div class="text-16-medium text-text-strong">{artifacts().length}</div>
+                <div class="text-11-medium uppercase text-text-weak">files</div>
+              </div>
+            </div>
+
+            <section class="rounded-[8px] border border-border-weaker-base bg-surface-base p-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-12-medium text-text-strong">Readiness</div>
+                <div class="text-11-medium uppercase text-text-weak">{reportPackageState(item())}</div>
+              </div>
+              <div class="mt-3 grid gap-2 text-12-regular text-text-base">
+                <div class="flex items-center justify-between">
+                  <span>plan</span>
+                  <span class={item().plans.operation ? "text-text-strong" : "text-text-weak"}>
+                    {item().plans.operation ? "ready" : "missing"}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span>tool inventory</span>
+                  <span class={item().toolInventory ? "text-text-strong" : "text-text-weak"}>
+                    {toolInventoryLabel(item())}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span>runtime summary</span>
+                  <span class={item().runtimeSummary ? "text-text-strong" : "text-text-weak"}>
+                    {item().runtimeSummary ? "ready" : "missing"}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section class="rounded-[8px] border border-border-weaker-base bg-surface-base p-3">
+              <div class="text-12-medium text-text-strong">Recent updates</div>
+              <div class="mt-2 flex flex-col gap-1">
+                <For each={item().lastEvents.slice(-5).reverse()}>
+                  {(event) => (
+                    <div class="rounded-[6px] bg-background-base px-2 py-1.5 text-12-regular text-text-base">
+                      {eventLabel(event)}
+                    </div>
+                  )}
+                </For>
+                <Show when={item().lastEvents.length === 0}>
+                  <div class="rounded-[6px] bg-background-base px-2 py-1.5 text-12-regular text-text-weak">No updates recorded yet.</div>
+                </Show>
+              </div>
+            </section>
 
             <Show
               when={groups().length > 0}
@@ -147,8 +237,15 @@ function EngagementWorkspacePanel() {
                         {(artifact) => (
                           <button
                             type="button"
-                            class="rounded-[6px] px-2 py-1.5 text-left text-12-regular text-text-base hover:bg-background-base"
+                            class="rounded-[6px] border px-2 py-1.5 text-left text-12-regular transition-colors"
+                            classList={{
+                              "border-border-weak-base bg-background-base text-text-strong shadow-[inset_2px_0_0_var(--border-strong-base)]":
+                                selectedArtifact() === artifact.file,
+                              "border-transparent text-text-base hover:border-border-weaker-base hover:bg-background-base":
+                                selectedArtifact() !== artifact.file,
+                            }}
                             onClick={() => void openFile(artifact)}
+                            aria-current={selectedArtifact() === artifact.file ? "true" : undefined}
                           >
                             <div class="truncate">{artifact.file}</div>
                           </button>

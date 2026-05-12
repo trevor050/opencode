@@ -82,7 +82,7 @@
       "kind": "http_response",
       "summary": "The integration config endpoint returns a live synthetic vendor OAuth token to unauthenticated callers.",
       "url": "http://127.0.0.1/api/integrations/vendor/config",
-      "content": "{\"vendor\":\"assessment-sync\",\"oauthAccessToken\":\"vendor-token-demo-5521\",\"scopes\":[\"roster:read\",\"roster:sync\"],\"labFinding\":\"third_party_oauth_token_exposure\"}"
+      "content": "{\"vendor\":\"assessment-sync\",\"oauthAccessToken\":\"********\",\"scopes\":[\"roster:read\",\"roster:sync\"],\"labFinding\":\"third_party_oauth_token_exposure\"}"
     },
     {
       "evidenceID": "ev-integration-roster-preview",

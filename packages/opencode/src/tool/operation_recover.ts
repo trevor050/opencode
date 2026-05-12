@@ -3,6 +3,7 @@ import DESCRIPTION from "./operation_recover.txt"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
 import { commandRestartArgs, taskRestartArgs } from "./task_restart_args"
+import { backgroundJobWorktree, relevantBackgroundJobs } from "./background_job_scope"
 import { TaskTool } from "./task"
 import { CommandSuperviseTool } from "./command_supervise"
 import { readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
@@ -20,14 +21,8 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-function operationID(job: BackgroundJob.Info) {
-  const value = job.metadata?.operationID
-  return typeof value === "string" && value ? value : undefined
-}
-
 function metadataWorktree(job: BackgroundJob.Info) {
-  const value = job.metadata?.worktree
-  return typeof value === "string" && value ? value : undefined
+  return backgroundJobWorktree(job)
 }
 
 function currentWorktree() {
@@ -59,8 +54,8 @@ export const OperationRecoverTool = Tool.define(
           assertLaneToolAllowed("operation_recover")
           const dryRun = params.dryRun === true
           const maxTasks = params.maxTasks === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(params.maxTasks))
-          const candidates = (yield* jobs.list())
-            .filter((job) => operationID(job) === params.operationID)
+          const worktree = currentWorktree()
+          const candidates = relevantBackgroundJobs({ operationID: params.operationID, jobs: yield* jobs.list(), worktree })
             .filter((job) => recoverableStatus(job.status))
             .map((job) => ({ job, taskArgs: taskRestartArgs(job), commandArgs: commandRestartArgs(job) }))
           const restartable = candidates.filter((item) => item.taskArgs !== undefined || item.commandArgs !== undefined).slice(0, maxTasks)
@@ -69,9 +64,13 @@ export const OperationRecoverTool = Tool.define(
 
           if (!dryRun) {
             for (const item of restartable) {
+              const recoveryContext = {
+                ...ctx,
+                extra: { ...ctx.extra, recoverExistingOperationJob: true },
+              }
               const restarted = item.taskArgs
-                ? yield* taskDef.execute(item.taskArgs, ctx)
-                : yield* commandDef.execute(item.commandArgs!, ctx)
+                ? yield* taskDef.execute(item.taskArgs, recoveryContext)
+                : yield* commandDef.execute(item.commandArgs!, recoveryContext)
               results.push(
                 [
                   item.job.type === "task" ? `task_id: ${item.job.id}` : `command_job_id: ${item.job.id}`,
@@ -84,18 +83,18 @@ export const OperationRecoverTool = Tool.define(
           }
           const checkpointUpdated = yield* Effect.gen(function* () {
             if (dryRun || restartable.length === 0) return false
-            const worktree = currentWorktree() ?? restartable.map((item) => metadataWorktree(item.job)).find(Boolean)
-            if (!worktree) return false
-            const status = yield* Effect.tryPromise(() => readOperationStatus(worktree, params.operationID)).pipe(
+            const checkpointWorktree = worktree ?? restartable.map((item) => metadataWorktree(item.job)).find(Boolean)
+            if (!checkpointWorktree) return false
+            const status = yield* Effect.tryPromise(() => readOperationStatus(checkpointWorktree, params.operationID)).pipe(
               Effect.catch(() => Effect.succeed(undefined)),
             )
             if (!status?.operation) return false
             const operation = status.operation
             yield* Effect.tryPromise(() =>
-              markRecoveredLanesRunning(worktree, { operationID: params.operationID, jobs: restartable.map((item) => item.job) }),
+              markRecoveredLanesRunning(checkpointWorktree, { operationID: params.operationID, jobs: restartable.map((item) => item.job) }),
             ).pipe(Effect.ignore)
             yield* Effect.tryPromise(() =>
-              writeOperationCheckpoint(worktree, {
+              writeOperationCheckpoint(checkpointWorktree, {
                 operationID: operation.operationID,
                 objective: operation.objective,
                 stage: operation.stage,

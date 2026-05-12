@@ -14,6 +14,9 @@ import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
+import { useUlm } from "@/context/ulm"
+import { operationStatusGroups } from "@/utils/ulm-operation-ui"
+import { isUlmDirectory } from "@/utils/ulm-workspace"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 import { mcpQueryKey } from "@/context/global-sync"
 
@@ -160,6 +163,8 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const sync = useSync()
   const server = useServer()
   const platform = usePlatform()
+  const sdk = useSDK()
+  const ulm = useUlm()
   const dialog = useDialog()
   const language = useLanguage()
   const navigate = useNavigate()
@@ -203,6 +208,8 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   )
   const pluginCount = createMemo(() => plugins().length)
   const pluginEmpty = createMemo(() => pluginEmptyMessage(language.t("dialog.plugins.empty"), "opencode.json"))
+  const ulmWorkspace = createMemo(() => isUlmDirectory(sdk.directory))
+  const ulmGroups = createMemo(() => operationStatusGroups(ulm.store.operations))
 
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-xl shadow-[var(--shadow-lg-border-base)]">
@@ -236,6 +243,22 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
         <Tabs.Content value="servers">
           <div class="flex flex-col px-2 pb-2">
             <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
+              <Show when={ulmWorkspace() && ulm.store.operations.length > 0}>
+                <div class="mb-3 grid grid-cols-3 gap-2 rounded-md border border-border-weaker-base bg-surface-base p-2">
+                  <div>
+                    <div class="text-14-medium text-text-strong">{ulmGroups().active.length}</div>
+                    <div class="text-11-regular text-text-weak">active</div>
+                  </div>
+                  <div>
+                    <div class="text-14-medium text-text-strong">{ulmGroups().paused.length}</div>
+                    <div class="text-11-regular text-text-weak">paused</div>
+                  </div>
+                  <div>
+                    <div class="text-14-medium text-text-strong">{ulmGroups().completed.length}</div>
+                    <div class="text-11-regular text-text-weak">done</div>
+                  </div>
+                </div>
+              </Show>
               <For each={sortedServers()}>
                 {(s) => {
                   const key = ServerConnection.key(s)

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Deferred, Effect, Exit, Fiber, Layer, Option } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -16,7 +16,7 @@ import { OperationResumeTool } from "@/tool/operation_resume"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import { TaskListTool } from "@/tool/task_list"
 import { TaskRestartTool } from "@/tool/task_restart"
-import { TaskStatusTool, taskStatusWaitTimeout } from "@/tool/task_status"
+import { TaskStatusTool, taskStatusWaitTimeout, unknownTaskText } from "@/tool/task_status"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
@@ -555,6 +555,110 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("rejects raw credential secrets in operation-scoped task prompts", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const task = yield* TaskTool
+      const taskDef = yield* task.init()
+      const promptOps = stubOps()
+      const exit = yield* Effect.exit(
+        taskDef.execute(
+          {
+            description: "inspect credentials",
+            prompt: "Use Genesis admin password: Summer2026! to continue validation.",
+            subagent_type: "general",
+            background: true,
+            operationID: "school",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(String(Cause.squash(exit.cause))).toContain("operation-scoped task inputs must not contain raw credential secrets")
+      }
+    }),
+  )
+
+  it.instance("rejects default credential guessing in operation-scoped task prompts", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const task = yield* TaskTool
+      const taskDef = yield* task.init()
+      const exit = yield* Effect.exit(
+        taskDef.execute(
+          {
+            description: "guess router",
+            prompt: "Try admin/password and vendor defaults against the router login.",
+            subagent_type: "general",
+            background: true,
+            operationID: "school",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("credential guessing is blocked")
+    }),
+  )
+
+  it.instance("prepends operation-scoped artifact guidance to child prompts", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const task = yield* TaskTool
+      const taskDef = yield* task.init()
+      let seen: SessionPrompt.PromptInput | undefined
+      const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
+
+      yield* taskDef.execute(
+        {
+          description: "inspect lane",
+          prompt: "Review the internal web evidence lane.",
+          subagent_type: "general",
+          operationID: "synthetic-closeout",
+          laneID: "web_inventory",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      const text = seen?.parts.find((part) => part.type === "text")?.text ?? ""
+      expect(text).toContain("existing ULMCode operation: synthetic-closeout")
+      expect(text).toContain("Operation lane: web_inventory.")
+      expect(text).toContain("Do not create, edit, or delete project-level AGENTS.md")
+      expect(text).toContain("use operation tools and artifacts under .ulmcode/operations/")
+      expect(text).toContain("Review the internal web evidence lane.")
+    }),
+  )
+
   it.effect("caps ULM operation task_status waits", () =>
     Effect.sync(() => {
     expect(
@@ -570,6 +674,37 @@ describe("tool.task", () => {
         },
       }),
     ).toBe(30_000)
+    }),
+  )
+
+  it.effect("formats unknown task_status ids with likely background task candidates", () =>
+    Effect.sync(() => {
+      const text = unknownTaskText({
+        taskID: "ses_1ee8ec841ffe1Vj5IstXfMxsJJt",
+        jobs: [
+          {
+            id: "ses_1ee8ec821ffeIxOQTMSi8GUP9x",
+            type: "task",
+            title: "Review report gaps",
+            status: "running",
+            startedAt: 1000,
+            metadata: { operationID: "synthetic-subagent-fanout-drill", laneID: "report_review" },
+          },
+          {
+            id: "ses_1ee8ec841ffeVj5IstXfMxsJJt",
+            type: "task",
+            title: "Synthesize access evidence",
+            status: "running",
+            startedAt: 900,
+            metadata: { operationID: "synthetic-subagent-fanout-drill", laneID: "recon" },
+          },
+        ],
+      })
+
+      expect(text).toContain("Unknown task_id: ses_1ee8ec841ffe1Vj5IstXfMxsJJt")
+      expect(text).toContain("ses_1ee8ec841ffeVj5IstXfMxsJJt")
+      expect(text).toContain("operationID=synthetic-subagent-fanout-drill")
+      expect(text).toContain("Retry task_status with the exact task_id")
     }),
   )
 
@@ -744,8 +879,9 @@ describe("tool.task", () => {
         const listed = yield* listDef.execute({ status: "stale" }, ctx)
         expect(listed.output).toContain(taskSession.id)
         expect(listed.output).toContain("restartable: true")
-        expect(listed.output).toContain('"prompt":"continue validating the stale operation lane"')
-        expect(listed.output).toContain('"subagent_type":"validator"')
+        expect(listed.output).toContain("restart_args: available via task_status or task_restart")
+        expect(listed.output).not.toContain('"prompt":"continue validating the stale operation lane"')
+        expect(listed.output).not.toContain('"subagent_type":"validator"')
         return yield* statusDef.execute({ task_id: taskSession.id }, ctx)
       }).pipe(Effect.provide(Layer.fresh(BackgroundJob.layer)))
 

@@ -11,3 +11,5 @@ Use `action="read"` after compaction, resume, or when a supervisor lane needs to
 Use `action="complete"` only after the operation has real handoff artifacts. `operationID` is required. Completion is evidence-gated: the tool checks runtime summary, final render manifest, operation audit, and the required stage gate before marking the goal complete. If artifacts are missing, it writes `goals/completion-blockers.json` and keeps the goal active.
 
 Do not treat chat text, todo state, or a promise tag as goal completion.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in objectives, operation IDs, completion policy, or continuation notes.

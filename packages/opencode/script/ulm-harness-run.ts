@@ -485,8 +485,18 @@ const scenarios: HarnessScenario[] = [
         ...(await fileIncludes("packages/opencode/src/ulm/runtime-daemon.ts", [
           "runRuntimeDaemon",
           "daemon.lock.json",
+          "requireLaptopPreflight",
+          "laptop-preflight.json",
           "cycleIntervalSeconds",
           "launchCommandWorkUnit",
+        ])),
+        ...(await fileIncludes("packages/opencode/script/ulm-runtime-daemon.ts", [
+          "ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS",
+          "laptop-preflight-bypass.json",
+        ])),
+        ...(await fileIncludes("packages/opencode/test/ulm/runtime-daemon.test.ts", [
+          "CLI refuses long laptop preflight bypass unless the explicit bypass env is set",
+          "CLI records an audit artifact when a controlled long preflight bypass is allowed",
         ])),
         ...(await fileIncludes("packages/opencode/src/ulm/runtime-supervisor.ts", [
           "writeRuntimeSupervisor",
@@ -498,6 +508,58 @@ const scenarios: HarnessScenario[] = [
         ...(await fileIncludes("packages/opencode/script/ulm-runtime-daemon.ts", ["--detach", "daemon-launch.json"])),
         ...(await fileIncludes("packages/opencode/script/ulm-runtime-daemon.ts", ["--supervisor", "writeRuntimeSupervisor"])),
         ...(await fileIncludes("packages/opencode/script/ulm-burnin.ts", ["--target-hours", "runBurnInHarness"])),
+        ...(await fileIncludes("packages/opencode/script/ulm-laptop-preflight.ts", [
+          "--strict",
+          "--prepare",
+          "--confirm",
+          "auditLaptopPreflight",
+        ])),
+        ...(await fileIncludes("packages/opencode/src/ulm/wall-clock-canary.ts", [
+          "runWallClockCanary",
+          "targetElapsedSeconds + intervalSeconds * 2",
+          "auditLiteralRunReadiness",
+        ])),
+        ...(await fileIncludes("packages/opencode/script/ulm-wall-clock-canary.ts", [
+          "--target-seconds",
+          "--strict",
+          "runWallClockCanary",
+        ])),
+        ...(await fileIncludes("packages/opencode/src/ulm/first-run-rehearsal.ts", [
+          "runFirstRunRehearsal",
+          "school-laptop-48h",
+          "writeRuntimeSupervisor",
+          "auditLaptopPreflight",
+          "runWallClockCanary",
+        ])),
+        ...(await fileIncludes("packages/opencode/script/ulm-first-run-rehearsal.ts", [
+          "--canary-target-seconds",
+          "--strict",
+          "runFirstRunRehearsal",
+        ])),
+        ...(await fileIncludes("packages/opencode/src/ulm/first-run-objective-audit.ts", [
+          "auditFirstRunObjective",
+          "Prompt-to-Artifact Checklist",
+          "literal-48h-proof",
+        ])),
+        ...(await fileIncludes("packages/opencode/script/ulm-first-run-objective-audit.ts", [
+          "--operation-id",
+          "--strict",
+          "auditFirstRunObjective",
+        ])),
+        ...(await fileIncludes("packages/opencode/src/tool/laptop_preflight.ts", [
+          "LaptopPreflightTool",
+          "auditLaptopPreflight",
+          "preparePrerequisites",
+          "laptop_preflight_json",
+        ])),
+        ...(await fileIncludes("packages/opencode/src/ulm/laptop-preflight.ts", [
+          "prepareLaptopPreflightPrerequisites",
+          "laptop-preflight.json",
+          "report-outline.md",
+          "operator-sleep",
+          "credential-vault",
+          "model-route-audit.json",
+        ])),
         ...(await fileIncludes("packages/opencode/src/ulm/burnin-harness.ts", [
           "burnin-proof.json",
           "burnin-supervisor-scenario.json",
@@ -559,8 +621,8 @@ if (hasArg("--list")) {
 const tier = (readArg("--tier") ?? "fast") as HarnessTier
 const selected = selectedScenarios(tier)
 const started = new Date()
-const outputDir = path.join(packageRoot, ".artifacts", "ulm-harness", started.toISOString().replace(/[:.]/g, "-"))
-const result = await runHarnessScenarios(selected, { outputDir, now: started })
+const result = await runHarnessScenarios(selected, { now: started })
+const outputDir = path.join(packageRoot, ".artifacts", "ulm-harness", result.runID)
 const output = await writeHarnessScorecard(outputDir, result)
 
 if (hasArg("--json")) {

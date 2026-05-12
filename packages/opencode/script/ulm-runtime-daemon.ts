@@ -25,10 +25,12 @@ type Args = {
   supervisorEnabled?: boolean
   supervisorIntervalMinutes?: number
   supervisorReviewKind?: "startup" | "heartbeat" | "pre_compaction" | "post_compaction" | "pre_handoff" | "manual"
+  skipLaptopPreflight: boolean
   detach: boolean
   detachLog?: string
   supervisor?: RuntimeSupervisorKind
   json: boolean
+  full: boolean
 }
 
 function usage() {
@@ -48,10 +50,12 @@ function usage() {
     "  --supervisor-interval-minutes <n>  Supervisor review cadence for long operations. Defaults to 30.",
     "  --supervisor-review-kind <kind>    startup, heartbeat, pre_compaction, post_compaction, pre_handoff, or manual.",
     "  --disable-operation-supervisor     Disable scheduler supervisor reviews even for long operations.",
+    "  --skip-laptop-preflight       Bypass the long-run laptop-preflight launch guard for controlled tests.",
     "  --detach                    Launch the 20-hour daemon in the background and return pid/log paths.",
     "  --detach-log <path>          Log file for detached stdout/stderr. Defaults under the operation scheduler dir.",
     "  --supervisor <kind>          Write OS supervisor artifacts: launchd, systemd, or all. Does not start the daemon.",
     "  --json                      Print machine-readable result JSON.",
+    "  --full                      With --json, print full daemon internals including scheduler cycles.",
   ].join("\n")
 }
 
@@ -81,15 +85,19 @@ function parseArgs(argv: string[]): Args {
   let supervisorEnabled: boolean | undefined
   let supervisorIntervalMinutes: number | undefined
   let supervisorReviewKind: Args["supervisorReviewKind"]
+  let skipLaptopPreflight = false
   let detach = false
   let detachLog: string | undefined
   let supervisor: RuntimeSupervisorKind | undefined
   let json = false
+  let full = false
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
     if (arg === "--json") {
       json = true
+    } else if (arg === "--full") {
+      full = true
     } else if (arg === "--detach") {
       detach = true
     } else if (arg === "--detach-log") {
@@ -103,6 +111,8 @@ function parseArgs(argv: string[]): Args {
       supervisor = value
     } else if (arg === "--disable-operation-supervisor") {
       supervisorEnabled = false
+    } else if (arg === "--skip-laptop-preflight") {
+      skipLaptopPreflight = true
     } else if (arg === "--supervisor-interval-minutes") {
       supervisorIntervalMinutes = numberOption(arg, args[++index])
     } else if (arg === "--supervisor-review-kind") {
@@ -154,10 +164,12 @@ function parseArgs(argv: string[]): Args {
     supervisorEnabled,
     supervisorIntervalMinutes,
     supervisorReviewKind,
+    skipLaptopPreflight,
     detach,
     detachLog,
     supervisor,
     json,
+    full,
   }
 }
 
@@ -165,6 +177,33 @@ const args = parseArgs(process.argv.slice(2))
 const operationID = slug(args.operationID, "operation")
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..")
 const worktree = resolveScriptWorktree()
+const longRunPreflightBypass = args.skipLaptopPreflight && args.durationSeconds >= 20 * 60 * 60
+
+if (longRunPreflightBypass && process.env.ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS !== "1") {
+  console.error(
+    "--skip-laptop-preflight is blocked for 20h+ daemon launches. Run ulm:laptop-preflight or set ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS=1 for a controlled test bypass.",
+  )
+  process.exit(1)
+}
+
+if (longRunPreflightBypass) {
+  const bypassPath = path.join(operationPath(worktree, operationID), "scheduler", "laptop-preflight-bypass.json")
+  mkdirSync(path.dirname(bypassPath), { recursive: true })
+  writeFileSync(
+    bypassPath,
+    JSON.stringify(
+      {
+        operationID,
+        durationSeconds: args.durationSeconds,
+        createdAt: new Date().toISOString(),
+        reason: "ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS=1 controlled test bypass",
+        command: process.argv.slice(2),
+      },
+      null,
+      2,
+    ) + "\n",
+  )
+}
 
 if (args.supervisor) {
   const result = await writeRuntimeSupervisor({
@@ -261,6 +300,24 @@ function formatDetachedLaunch(launch: {
     `- heartbeat: ${launch.heartbeatPath}`,
     `- scheduler_log: ${launch.schedulerLogPath}`,
   ].join("\n")
+}
+
+function compactRuntimeDaemon(result: Awaited<ReturnType<typeof runRuntimeDaemon>>) {
+  return {
+    operationID: result.operationID,
+    stopped: result.stopped,
+    reason: result.reason,
+    elapsedSeconds: result.elapsedSeconds,
+    startedAt: result.startedAt,
+    endedAt: result.endedAt,
+    lockPath: result.lockPath,
+    heartbeatPath: result.heartbeatPath,
+    logPath: result.logPath,
+    cycleCount: result.cycles.length,
+    launchedJobs: result.cycles.flatMap((cycle) => cycle.launchedJobs),
+    launchedCommandJobs: result.cycles.flatMap((cycle) => cycle.launchedCommandJobs),
+    recoveredJobs: result.recoveredJobs,
+  }
 }
 
 function launchRecordPath(kind: string, id: string) {
@@ -446,7 +503,7 @@ async function recoverCliModelJob(job: BackgroundJob.Info) {
     subagent_type: subagentType,
     operationID,
     laneID,
-    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "opencode-go/qwen3.6-plus",
+    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "openai/gpt-5.5",
     allowedTools,
     background: true,
   })
@@ -515,13 +572,15 @@ try {
     supervisorEnabled: args.supervisorEnabled,
     supervisorIntervalMinutes: args.supervisorIntervalMinutes,
     supervisorReviewKind: args.supervisorReviewKind,
+    requireLaptopPreflight: args.skipLaptopPreflight ? false : undefined,
+    includeInstalledModelRouteAudit: true,
     backgroundJobProvider: async () => cliModelBackgroundJobs(),
     recoverBackgroundJob: recoverCliModelJob,
     launchModelLane,
     launchCommandWorkUnit,
     signal: controller.signal,
   })
-  console.log(args.json ? JSON.stringify(result, null, 2) : formatRuntimeDaemon(result))
+  console.log(args.json ? JSON.stringify(args.full ? result : compactRuntimeDaemon(result), null, 2) : formatRuntimeDaemon(result))
   process.exit(result.stopped && result.reason !== "signal" ? 2 : 0)
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))

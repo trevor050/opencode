@@ -42,6 +42,27 @@ describe("ULM operation recovery graph sync", () => {
     )
   })
 
+  test("rejects raw credential secrets before marking recovered lanes running", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+
+    await expect(
+      markRecoveredLanesRunning(dir.path, {
+        operationID: "School",
+        jobs: [
+          {
+            id: "task_recovered",
+            type: "task",
+            title: "Recon password: Summer2026!",
+            status: "stale",
+            startedAt: Date.now(),
+            metadata: { operationID: "school", laneID: "recon" },
+          },
+        ],
+      }),
+    ).rejects.toThrow("operation recovery inputs must not contain raw credential secrets")
+  })
+
   test("selects only restartable stale operation jobs for daemon-owned recovery", () => {
     const restartable = restartableOperationJobs({
       operationID: "School",

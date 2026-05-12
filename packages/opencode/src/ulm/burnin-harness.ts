@@ -130,13 +130,35 @@ function virtualTime(startedAt: string, elapsedSeconds: number) {
   return new Date(Date.parse(startedAt) + elapsedSeconds * 1000).toISOString()
 }
 
+function executionBlocksForBurnIn(input: { targetDurationHours: number; finalizationWindowHours: number }) {
+  const executionMinutes = Math.max(15, Math.round((input.targetDurationHours - input.finalizationWindowHours) * 60))
+  const blockMinutes = input.targetDurationHours >= 8 ? 60 : 30
+  const count = Math.ceil(executionMinutes / blockMinutes)
+  return Array.from({ length: count }, (_, index) => ({
+    id: `burnin-block-${index + 1}`,
+    stage: "recon" as const,
+    laneID: "recon",
+    title: `Burn-in supervised execution block ${index + 1}`,
+    startMinute: index * blockMinutes,
+    durationMinutes: Math.min(blockMinutes, Math.max(15, executionMinutes - index * blockMinutes)),
+    objective: `Exercise supervised burn-in work block ${index + 1}.`,
+    actions: [`Run bounded supervised discovery or recovery validation for burn-in block ${index + 1}.`],
+    successCriteria: [`Block ${index + 1} records a heartbeat, artifact, blocker, or safe fallback.`],
+    fallbackWork: [`Record a safe fallback note for burn-in block ${index + 1} if primary work cannot proceed.`],
+    subagents: ["recon", "supervisor"],
+    expectedArtifacts: [`work-blocks/burnin-block-${index + 1}.md`],
+  }))
+}
+
 async function writeSupervisorScenario(worktree: string, input: { operationID: string; targetElapsedSeconds: number; completed: boolean }) {
   const operationID = slug(input.operationID, "operation")
   const targetDurationHours = Math.round((input.targetElapsedSeconds / 60 / 60) * 100) / 100
+  const finalizationWindowHours = Math.max(1, Math.min(4, Math.round(targetDurationHours * 0.15)))
   const root = operationPath(worktree, operationID)
   const scenarioPath = path.join(root, "burnin", "burnin-supervisor-scenario.json")
   const scenarioWorktree = path.join(root, "burnin", "scenario-worktree")
   await fs.rm(scenarioWorktree, { recursive: true, force: true })
+  await fs.mkdir(path.join(scenarioWorktree, ".ulmcode", "operations"), { recursive: true })
   const goal = await createOperationGoal(scenarioWorktree, {
     operationID,
     objective: "Accelerated proof for authorized overnight ULM supervisor operation.",
@@ -158,6 +180,57 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   )
   await writeOperationPlan(scenarioWorktree, {
     operationID,
+    planningApproval: {
+      status: targetDurationHours >= 2 ? "approved" : "not_required",
+      discoveryCharterPath: path.join(scenarioRoot, "plans", "discovery-charter.md"),
+      notes: ["Burn-in scenario uses an isolated synthetic approval record."],
+    },
+    discoveryCharter: {
+      purpose: "Size the long-running assessment before unattended execution.",
+      researchQuestions: ["Which discovery lanes should run first?", "Which final-report gates must block handoff?"],
+      reconInvestments: ["Passive inventory", "Credential-safe tool preflight"],
+      operatorQuestions: ["Confirm authorized scope before credentialed testing."],
+      candidateDeepWorkLanes: ["web_inventory", "identity_review", "reporting"],
+      decisionCriteriaForFullPlan: ["Discovery artifacts exist", "Supervisor and final audit gates are active"],
+    },
+    timeBudget: {
+      targetHours: targetDurationHours,
+      finalizationWindowHours,
+      durationFit: {
+        confidence: "duration_sized",
+        evidence: [`Burn-in scenario target is ${targetDurationHours}h.`],
+        overflowBacklog: ["Defer non-critical follow-up questions after the final handoff gate."],
+      },
+      allocations: [
+        {
+          stage: "recon",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.6).toFixed(2))),
+          work: "Bounded inventory and tool readiness.",
+        },
+        {
+          stage: "reporting",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.25).toFixed(2))),
+          work: "Evidence-backed report drafting and review.",
+        },
+        {
+          stage: "handoff",
+          hours: Math.max(0.25, Number((targetDurationHours * 0.15).toFixed(2))),
+          work: "Final audit, runtime summary, and package assembly.",
+        },
+      ],
+      executionBlocks: executionBlocksForBurnIn({ targetDurationHours, finalizationWindowHours }),
+    },
+    coverageContract: {
+      status: "met",
+      goals: ["Exercise supervisor recovery and final handoff gates."],
+      minimumEvidence: ["Daemon heartbeats", "Scheduler heartbeats", "Runtime summary", "Final operation audit"],
+      requiredLanes: ["recon", "supervisor", "reporting"],
+      allowedSkippedLanes: ["Credentialed probes when credentials are unavailable."],
+      fallbackRules: ["Record blockers with operator-safe fallback commands."],
+      retryRules: ["Recover stale command lanes before launching replacements."],
+      subagentOpportunities: ["Recon", "supervisor review", "report reviewer"],
+      reportGates: ["report_lint", "report_render", "runtime_summary", "operation_audit"],
+    },
     phases: [
       {
         stage: "recon",
@@ -193,7 +266,7 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       agent: "pentest",
       status: "complete",
       dependsOn: [],
-      modelRoute: "openai/gpt-5.5-fast",
+      modelRoute: "openai/gpt-5.5",
       fallbackModelRoutes: ["openai/gpt-5.4-mini-fast"],
       allowedTools: ["operation_supervise", "operation_resume", "runtime_summary", "operation_audit"],
       expectedArtifacts: ["supervisor/latest.md"],

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">ULMCode capability map</title>
+  <desc id="desc">A control-room capability map showing ULMCode surfaces: profile isolation, runtime, command supervision, evidence factory, report factory, desktop, labs, and release systems.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080c12"/>
+      <stop offset="0.55" stop-color="#0b1820"/>
+      <stop offset="1" stop-color="#17101f"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#28f2ff"/>
+      <stop offset="1" stop-color="#ff7ad9"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#cdf7ff" opacity="0.12"/>
+    </pattern>
+    <style>
+      .sans { font-family: "Inter", "Segoe UI", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", "Cascadia Code", Menlo, monospace; }
+      .white { fill: #f0f7ff; }
+      .muted { fill: #94a8b4; }
+      .cyan { fill: #28f2ff; }
+      .green { fill: #79ff88; }
+      .amber { fill: #ffd166; }
+      .pink { fill: #ff7ad9; }
+    </style>
+  </defs>
+  <rect width="1280" height="640" rx="34" fill="url(#bg)"/>
+  <rect width="1280" height="640" rx="34" fill="url(#dots)"/>
+  <text class="mono pink" x="58" y="70" font-size="14" letter-spacing="2">CONTROL SURFACES</text>
+  <text class="sans white" x="58" y="118" font-size="42" font-weight="850">What makes it more than a wrapper</text>
+  <text class="sans muted" x="58" y="151" font-size="18">The fork adds a security operation layer on top of OpenCode's agent runtime, not just a new prompt.</text>
+
+  <g transform="translate(56 204)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#0d1b24" stroke="#28f2ff" stroke-opacity="0.36"/>
+    <text class="mono cyan" x="24" y="36" font-size="13">PROFILE</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">Isolated ULM runtime</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Dedicated config, commands, K-12 skills,</text>
+    <text class="sans muted" x="24" y="126" font-size="15">tool manifest, and runtime guard plugin.</text>
+  </g>
+
+  <g transform="translate(463 204)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#0d201a" stroke="#79ff88" stroke-opacity="0.36"/>
+    <text class="mono green" x="24" y="36" font-size="13">RUNTIME</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">Scheduler and daemon</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Long-run ownership, lane launch, stale</text>
+    <text class="sans muted" x="24" y="126" font-size="15">job recovery, and literal readiness checks.</text>
+  </g>
+
+  <g transform="translate(870 204)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#211b0f" stroke="#ffd166" stroke-opacity="0.42"/>
+    <text class="mono amber" x="24" y="36" font-size="13">COMMANDS</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">Supervised execution</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Non-destructive profiles, heartbeat logs,</text>
+    <text class="sans muted" x="24" y="126" font-size="15">timeouts, artifacts, and restart metadata.</text>
+  </g>
+
+  <g transform="translate(56 388)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#0d201a" stroke="#79ff88" stroke-opacity="0.36"/>
+    <text class="mono green" x="24" y="36" font-size="13">EVIDENCE</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">Finding factory</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Normalize leads, validate claims, preserve</text>
+    <text class="sans muted" x="24" y="126" font-size="15">links, reject unsupported findings.</text>
+  </g>
+
+  <g transform="translate(463 388)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#201326" stroke="#ff7ad9" stroke-opacity="0.42"/>
+    <text class="mono pink" x="24" y="36" font-size="13">REPORTING</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">No-padding handoff</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Report lint, render, manifest integrity,</text>
+    <text class="sans muted" x="24" y="126" font-size="15">runtime summary, and operation audit.</text>
+  </g>
+
+  <g transform="translate(870 388)" filter="url(#shadow)">
+    <rect x="0" y="0" width="354" height="150" rx="20" fill="#0d1b24" stroke="#28f2ff" stroke-opacity="0.36"/>
+    <text class="mono cyan" x="24" y="36" font-size="13">OPERATOR UX</text>
+    <text class="sans white" x="24" y="72" font-size="24" font-weight="800">App, desktop, labs</text>
+    <text class="sans muted" x="24" y="105" font-size="15">Chat-bound operations, deliverables views,</text>
+    <text class="sans muted" x="24" y="126" font-size="15">synthetic labs, harness tiers, releases.</text>
+  </g>
+
+  <path d="M410 279H463M817 279H870M410 463H463M817 463H870M232 354V388M641 354V388M1048 354V388" stroke="url(#edge)" stroke-width="2" stroke-opacity="0.45"/>
+</svg>

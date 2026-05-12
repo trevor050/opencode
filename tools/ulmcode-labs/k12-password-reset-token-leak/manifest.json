@@ -89,7 +89,7 @@
       "kind": "http_response",
       "summary": "An unauthenticated support audit-log endpoint returned the active password-reset token in clear text.",
       "url": "http://127.0.0.1/api/support/audit-log?account=teacher-reset@district.test",
-      "content": "{\"authenticated\":false,\"events\":[{\"type\":\"password_reset_requested\",\"account\":\"teacher-reset@district.test\",\"resetToken\":\"reset-lab-token-7142\"}],\"labFinding\":\"password_reset_token_leak\"}"
+      "content": "{\"authenticated\":false,\"events\":[{\"type\":\"password_reset_requested\",\"account\":\"teacher-reset@district.test\",\"resetToken\":\"********\"}],\"labFinding\":\"password_reset_token_leak\"}"
     },
     {
       "evidenceID": "ev-reset-token-use",

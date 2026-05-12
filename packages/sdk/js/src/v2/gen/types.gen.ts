@@ -1790,6 +1790,13 @@ export type EventTuiSessionSelect2 = {
   }
 }
 
+export type UlmOperationSessionBinding = {
+  sessionID: string
+  operationID: string
+  boundAt: string
+  source?: string
+}
+
 export type UlmEvidenceRef = {
   id: string
   path?: string
@@ -1899,6 +1906,7 @@ export type UlmRuntimeSnapshot = {
 export type UlmOperationStatusSummary = {
   operationID: string
   root: string
+  sessions?: Array<UlmOperationSessionBinding>
   operation?: UlmOperationRecord
   goal?: UlmOperationGoalStatus
   supervisor?: UlmSupervisorStatus
@@ -2109,12 +2117,14 @@ export type UlmCredentialRecord = {
 export type UlmCredentialListResult = {
   operationID: string
   index: string
+  expectedServices: Array<string>
   credentials: Array<UlmCredentialRecord>
 }
 
 export type UlmCredentialReviewSubmitResult = {
   operationID: string
   submittedAt: string
+  expectedServices: Array<string>
   file: string
   credentials: Array<UlmCredentialRecord>
 }
@@ -5403,6 +5413,7 @@ export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejec
 export type QuestionTouchData = {
   body?: {
     holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    answers?: Array<QuestionAnswer>
   }
   path: {
     requestID: string

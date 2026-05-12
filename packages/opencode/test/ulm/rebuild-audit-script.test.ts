@@ -18,8 +18,7 @@ async function makeAuditFixture() {
     "tools/ulmcode-profile/package.json",
     JSON.stringify({
       dependencies: {
-        "oh-my-openagent": "file:plugins/vendor/oh-my-openagent-3.17.12",
-        "oh-my-opencode": "file:plugins/vendor/oh-my-openagent-3.17.12",
+        "@opencode-ai/plugin": "1.14.38",
       },
     }),
   )
@@ -40,8 +39,21 @@ async function makeAuditFixture() {
   )
   await writeFixtureFile(
     root,
-    "tools/ulmcode-profile/plugins/vendor/oh-my-openagent-3.17.12/dist/index.js",
-    "module.exports = {}",
+    "tools/ulmcode-profile/README.md",
+    [
+      "# ULMCode Profile",
+      "",
+      "## First School Laptop Run",
+      "- Use the `school-laptop-48h` operation template.",
+      "- Run `ulm:first-run-rehearsal` before creating the real operation.",
+      "- Run `ulm:first-run-objective-audit` before calling the system ready.",
+      "- Run `ulm:laptop-preflight` before launch.",
+      "- Run `ulm:wall-clock-canary` on the laptop before trusting the long window.",
+      "- Run `launchReadiness` with `--require-launch-ready` immediately before daemon launch.",
+      "- Start the daemon with `--duration-hours 48`.",
+      "- Check literal readiness with `ulm:literal-run-readiness`.",
+      "- Run bounded live probes with `ulm:behavior-probe`.",
+    ].join("\n"),
   )
   await writeFixtureFile(
     root,
@@ -133,6 +145,41 @@ async function writeToolManifest(root: string, commandProfiles: unknown[]) {
   )
 }
 
+async function git(root: string, args: string[]) {
+  const proc = Bun.spawn(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (exit !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr || stdout}`)
+  return stdout.trim()
+}
+
+async function makeUpstreamFixture(commitMessage: string) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ulm-rebuild-upstream-"))
+  await git(root, ["init", "-b", "main"])
+  await git(root, ["config", "user.email", "test@example.com"])
+  await git(root, ["config", "user.name", "Test User"])
+  await writeFixtureFile(root, "README.md", "base\n")
+  await git(root, ["add", "README.md"])
+  await git(root, ["commit", "-m", "base"])
+  await git(root, ["checkout", "-b", "upstream/dev"])
+  await writeFixtureFile(root, "UPSTREAM.md", `${commitMessage}\n`)
+  await git(root, ["add", "UPSTREAM.md"])
+  await git(root, ["commit", "-m", commitMessage])
+  await git(root, ["checkout", "main"])
+  return root
+}
+
+async function addUpstreamCommit(root: string, commitMessage: string, file: string) {
+  await git(root, ["checkout", "upstream/dev"])
+  await writeFixtureFile(root, file, `${commitMessage}\n`)
+  await git(root, ["add", file])
+  await git(root, ["commit", "-m", commitMessage])
+  await git(root, ["checkout", "main"])
+}
+
 describe("ULM rebuild audit script", () => {
   test("validates the rebuild evidence checklist", async () => {
     const proc = Bun.spawn(["bun", "run", "--silent", "test:ulm-rebuild-audit"], {
@@ -188,8 +235,221 @@ describe("ULM rebuild audit script", () => {
       "lab_catalog",
       "required_gates",
       "harness_scheduler",
+      "behavior_scenarios",
     ])
     expect(result.checks?.every((check) => check.status === "ok" && typeof check.detail === "string")).toBe(true)
+  })
+
+  test("requires rebuild audit coverage for operation scope rules in lane prompts", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain('requireText("packages/opencode/src/ulm/operation-run.ts", operationRun')
+    expect(source).toContain('requireText("packages/opencode/src/ulm/operation-next.ts", operationNext')
+    expect(source).toContain("readOperationScopeRules")
+    expect(source).toContain("Operation scope rules:")
+    expect(source).toContain("includes operation plan scope rules in launched lane prompts")
+    expect(source).toContain("includes operation plan scope rules in next lane prompts")
+  })
+
+  test("requires rebuild audit coverage for refreshed credential service expectations", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain('requireText("packages/opencode/src/ulm/operation-credentials.ts"')
+    expect(source).toContain("expectedServices: expectedServices.length ? expectedServices : submission.expectedServices")
+    expect(source).toContain('requireText("packages/opencode/test/ulm/operation-credentials.test.ts"')
+    expect(source).toContain("refreshes expected credential services when the plan changes after review submission")
+  })
+
+  test("requires rebuild audit coverage for negated credential service labels", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("hasNonNegatedCredentialService")
+    expect(source).toContain("does not treat negated service labels as credential coverage")
+  })
+
+  test("requires rebuild audit coverage for current credential checks in selected preflight proof", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("current_credential_gaps")
+    expect(source).toContain("does not accept a ready selected laptop preflight when current credential coverage is missing")
+  })
+
+  test("requires rebuild audit coverage for objective-audit launch next actions", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("first-run-next-actions.json")
+    expect(source).toContain("writes operator next actions for launch blockers")
+    expect(source).toContain("operationNextActionsMarkdown")
+    expect(source).toContain("blockedBy")
+    expect(source).toContain("Blocked by:")
+    expect(source).toContain("launchDecision")
+    expect(source).toContain("canStartDaemon")
+    expect(source).toContain("ready-to-launch")
+    expect(source).toContain("Launch Decision")
+    expect(source).toContain("--require-launch-ready")
+    expect(source).toContain("operator script can require launch-ready state before the daemon starts")
+    expect(source).toContain("submit-credential-vault")
+    expect(source).toContain("repair-selected-operation-plan")
+    expect(source).toContain("--force --strict --json")
+    expect(source).toContain("open the local ULMCode vault route")
+    expect(source).toContain("/ulm/credentials?operationID=")
+    expect(source).toContain("Genesis, Google, and Clever credential services are expected")
+    expect(source).toContain("--duration-hours 72")
+    expect(source).toContain("run-laptop-preflight")
+    expect(source).toContain("run-literal-target-hours")
+    expect(source).toContain("writes an explicit objective requirement matrix beside check-level evidence")
+    expect(source).toContain("Objective Completion Matrix")
+    expect(source).toContain("nextActionIds")
+    expect(source).toContain("school-surface-private-wifi-launch")
+    expect(source).toContain("professional-role-dossiers")
+    expect(source).toContain("massive-modern-final-report-package")
+    expect(source).toContain("selected-real-run-proof")
+  })
+
+  test("requires the profile handoff README to document the launch readiness gate", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+    const blockStart = source.indexOf('requireText("tools/ulmcode-profile/README.md", profileReadme, [')
+    const blockEnd = source.indexOf("  ])", blockStart)
+    const profileReadmePins = source.slice(blockStart, blockEnd)
+
+    expect(blockStart).toBeGreaterThanOrEqual(0)
+    expect(profileReadmePins).toContain("launchReadiness")
+    expect(profileReadmePins).toContain("--require-launch-ready")
+  })
+
+  test("requires rebuild audit coverage for current scope checks in selected launch packets", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("missingScopeRequirementRules")
+    expect(source).toContain("target_hours_matches")
+    expect(source).toContain("accepts selected launch packet commands that match a longer plan time budget")
+    expect(source).toContain("does not accept selected launch packet daemon commands that undershoot the plan time budget")
+    expect(source).toContain("unexpected_required_items")
+    expect(source).toContain("does not accept selected launch packet checklist rows that are duplicated or unknown")
+    expect(source).toContain("does not accept a selected launch packet whose scope requirements are stale")
+    expect(source).toContain("does not accept selected launch packet scope requirements that are stale, noncanonical, or duplicated")
+  })
+
+  test("requires rebuild audit coverage for current credential checklist checks in selected launch packets", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("credential_checklist_services_current")
+    expect(source).toContain("does not accept a selected launch packet whose structured credential requirements name stale services")
+    expect(source).toContain("does not accept selected launch packet credential requirements that are noncanonical or duplicated")
+    expect(source).toContain("does not accept a selected launch packet whose credential checklist names stale services")
+    expect(source).toContain("accepts selected launch packet credential checklist services when SIS or vendor are explicit targets")
+  })
+
+  test("requires rebuild audit coverage for baseline scope rules in selected school laptop plans", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("missing_scope_baselines")
+    expect(source).toContain("does not accept a selected school laptop plan without baseline scope rules")
+  })
+
+  test("requires rebuild audit coverage for canonical selected school laptop credential targets", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("credential_target_gaps")
+    expect(source).toContain("does not accept selected school laptop plan credential targets that are noncanonical or duplicated")
+  })
+
+  test("requires rebuild audit coverage for canonical selected school laptop scope rules", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("scope_rule_gaps")
+    expect(source).toContain("does not accept selected school laptop scope rules that are blank, padded, or duplicated")
+  })
+
+  test("requires rebuild audit coverage for role-focused identity boundaries in selected school laptop plans", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("identity-boundary")
+    expect(source).toContain("does not accept a selected school laptop plan without role-focused identity research boundaries")
+  })
+
+  test("requires rebuild audit coverage for selected person and identity graph lanes", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("operation-graph-identity-lanes")
+    expect(source).toContain("does not accept selected school laptop preflight without person and identity graph lanes")
+  })
+
+  test("requires rebuild audit coverage for stale selected preflight plan timestamps", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("preflight_stale_plan")
+    expect(source).toContain("does not accept a selected laptop preflight older than the current operation plan")
+  })
+
+  test("requires rebuild audit coverage for selected preflight plan fingerprints", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("preflight_plan_fingerprint_current")
+    expect(source).toContain("does not accept a selected laptop preflight whose plan fingerprint is stale")
+  })
+
+  test("requires rebuild audit coverage for laptop preflight plan freshness checks", async () => {
+    const source = await fs.readFile(path.join(packageRoot, "script/ulm-rebuild-audit.ts"), "utf8")
+
+    expect(source).toContain("plan-freshness")
+    expect(source).toContain("blocks when the laptop clock would write preflight proof older than the plan")
+  })
+
+  test("allows explicitly blocked upstream research commits without failing readiness", async () => {
+    const root = await makeUpstreamFixture("research: delete Hono backend (do not merge)")
+
+    const proc = Bun.spawn(
+      ["bun", "run", "--silent", "script/ulm-rebuild-audit.ts", "--repo-root", root, "--check", "upstream_current"],
+      { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    expect(stdout).toContain("blocked upstream commit deferred")
+  })
+
+  test("defers an upstream range rooted on a blocked research commit", async () => {
+    const root = await makeUpstreamFixture("research: delete Hono backend (do not merge)")
+    await addUpstreamCommit(root, "fix(server): later upstream fix", "LATER.md")
+
+    const proc = Bun.spawn(
+      ["bun", "run", "--silent", "script/ulm-rebuild-audit.ts", "--repo-root", root, "--check", "upstream_current"],
+      { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    expect(stdout).toContain("upstream range deferred")
+    expect(stdout).toContain("2 missing commits")
+  })
+
+  test("still fails upstream audit for ordinary missing upstream commits", async () => {
+    const root = await makeUpstreamFixture("fix(server): ordinary upstream fix")
+
+    const proc = Bun.spawn(
+      ["bun", "run", "--silent", "script/ulm-rebuild-audit.ts", "--repo-root", root, "--check", "upstream_current"],
+      { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).not.toBe(0)
+    expect(stdout).toBe("")
+    expect(stderr).toContain("branch is behind upstream/dev by 1 commits")
   })
 
   test("fails profile runtime audit when the tool manifest has no supervised command profiles", async () => {

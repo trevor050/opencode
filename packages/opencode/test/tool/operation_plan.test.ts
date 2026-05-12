@@ -11,7 +11,77 @@ import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
 
+function executionBlocks(input: { minutes: number; laneID?: string; stage?: "recon" | "validation" | "reporting" | "handoff" }) {
+  const laneID = input.laneID ?? "recon"
+  const stage = input.stage ?? "recon"
+  const blockMinutes = input.minutes >= 480 ? 60 : 30
+  const count = Math.ceil(input.minutes / blockMinutes)
+  return Array.from({ length: count }, (_, index) => ({
+    id: `block-${index + 1}`,
+    stage,
+    laneID,
+    title: `Bounded ${stage} work block ${index + 1}`,
+    startMinute: index * blockMinutes,
+    durationMinutes: blockMinutes,
+    objective: `Complete bounded ${stage} work block ${index + 1}.`,
+    actions: [`Run the scoped ${stage} action for block ${index + 1}.`],
+    successCriteria: [`Block ${index + 1} records evidence, blockers, or a safe fallback.`],
+    fallbackWork: [`If the primary action stalls, run the narrower safe fallback for block ${index + 1}.`],
+    subagents: stage === "reporting" ? ["report-writer"] : [laneID],
+    expectedArtifacts: [`work-blocks/block-${index + 1}.md`],
+  }))
+}
+
 describe("tool.operation_plan", () => {
+  test("rejects durable plan rewrites after execution has started", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const operationRoot = `${dir.path}/.ulmcode/operations/school`
+            yield* Effect.promise(() => fs.mkdir(`${operationRoot}/lane-complete`, { recursive: true }))
+            yield* Effect.promise(() => fs.writeFile(`${operationRoot}/lane-complete/recon.json`, "{}\n"))
+            const tool = yield* OperationPlanTool
+            const def = yield* tool.init()
+            const exit = yield* def
+              .execute(
+                {
+                  operationID: "school",
+                  phases: [
+                    {
+                      stage: "recon",
+                      objective: "Rewrite after execution started.",
+                      actions: ["Do not allow this."],
+                      successCriteria: ["Plan is rejected."],
+                      subagents: [],
+                      noSubagents: [],
+                    },
+                  ],
+                  reportingCloseout: ["operation_audit finalHandoff=true"],
+                },
+                {
+                  sessionID: SessionID.make("session-1"),
+                  messageID: MessageID.ascending(),
+                  agent: "build",
+                  abort: new AbortController().signal,
+                  messages: [],
+                  metadata: () => Effect.void,
+                  ask: () => Effect.void,
+                },
+              )
+              .pipe(Effect.exit)
+
+            expect(exit._tag).toBe("Failure")
+            if (exit._tag !== "Failure") return
+            const message = Cause.pretty(exit.cause)
+            expect(message).toContain("operation_plan cannot rewrite the durable plan after operation execution has started")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
   test("accepts Discovery Charter calls before final plan fields exist", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
@@ -114,6 +184,66 @@ describe("tool.operation_plan", () => {
     })
   })
 
+  test("rejects coverage contracts with lane ids that operation_schedule cannot create", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationPlanTool
+            const def = yield* tool.init()
+            const exit = yield* def
+              .execute(
+                {
+                  operationID: "synthetic-privileged-access-drill",
+                  planningMode: "compact",
+                  reportingCloseout: ["report_lint", "report_render", "runtime_summary"],
+                  coverageContract: {
+                    status: "partial",
+                    goals: ["Complete a synthetic privileged access report drill."],
+                    minimumEvidence: ["Synthetic evidence recorded."],
+                    requiredLanes: ["attack-chain", "report-lint-render-runtime-audit"],
+                    allowedSkippedLanes: [],
+                    fallbackRules: ["Name blockers instead of weakening the claim."],
+                    retryRules: ["Retry report_render once after lint cleanup."],
+                    subagentOpportunities: ["No subagents for compact drill."],
+                    reportGates: ["report_lint", "report_render", "operation_audit"],
+                  },
+                  phases: [
+                    {
+                      stage: "reporting",
+                      objective: "Create final report deliverables.",
+                      actions: ["Render report package."],
+                      successCriteria: ["Report artifacts exist."],
+                      subagents: [],
+                      noSubagents: ["Compact synthetic drill stays local."],
+                    },
+                  ],
+                },
+                {
+                  sessionID: SessionID.make("session-1"),
+                  messageID: MessageID.ascending(),
+                  agent: "build",
+                  abort: new AbortController().signal,
+                  messages: [],
+                  metadata: () => Effect.void,
+                  ask: () => Effect.void,
+                },
+              )
+              .pipe(Effect.exit)
+
+            expect(exit._tag).toBe("Failure")
+            if (exit._tag !== "Failure") return
+            const message = String(Cause.squash(exit.cause))
+            expect(message).toContain("coverageContract.requiredLanes must use operation_schedule lane ids")
+            expect(message).toContain("attack-chain")
+            expect(message).toContain("report_writing")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
   test("accepts full-duration plans whose approved charter purpose describes discovery work", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
@@ -184,12 +314,13 @@ describe("tool.operation_plan", () => {
                     { stage: "reporting", hours: 0.75, work: "Evidence normalization, report draft, lint, and render." },
                     { stage: "handoff", hours: 0.45, work: "Runtime summary, audit, and final handoff." },
                   ],
+                  executionBlocks: executionBlocks({ minutes: 156 }),
                 },
                 coverageContract: {
                   status: "unmet",
                   goals: ["Discover authorized hosts/services.", "Validate or reject all candidate findings."],
                   minimumEvidence: ["Tool inventory.", "Local passive baseline.", "Service discovery outputs or blockers."],
-                  requiredLanes: ["lan-discovery", "service-inventory", "finding-validation", "report-review"],
+                  requiredLanes: ["network_discovery", "service_inventory", "finding_validation", "report_review"],
                   allowedSkippedLanes: ["Gateway auth if mapping/login fails."],
                   fallbackRules: ["Use installed fallbacks only.", "Narrow slow scans instead of waiting foreground."],
                   retryRules: ["Retry timeouts once with narrower scope."],
@@ -343,12 +474,13 @@ describe("tool.operation_plan", () => {
                     { stage: "reporting", hours: 1.25, work: "Evidence normalization, report outline, report drafting, report review, lint, and render." },
                     { stage: "handoff", hours: 0.35, work: "Runtime summary, eval scorecard, operation audit, handoff gate, and final handoff." },
                   ],
+                  executionBlocks: executionBlocks({ minutes: 198 }),
                 },
                 coverageContract: {
                   status: "unmet",
                   goals: ["Safely assess Middlesex K12 public web/CMS, email/domain security, SaaS exposure, org context, and bounded internal feasibility."],
                   minimumEvidence: ["Public domain inventory and canonical-domain evidence."],
-                  requiredLanes: ["lane-public-dns-email"],
+                  requiredLanes: ["district_profile", "recon", "web_inventory", "saas_cloud_review", "finding_validation", "report_review"],
                   allowedSkippedLanes: ["Internal active service sampling may be skipped if no clearly server-only targets can be identified safely."],
                   fallbackRules: ["Skip ambiguous targets and document coverage impact."],
                   retryRules: ["Low-impact DNS/HTTP metadata retries only with short timeouts and low counts."],

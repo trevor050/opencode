@@ -21,8 +21,8 @@ Do not port the old swarm, report monolith, stale Zod tool definitions, or sessi
 - `#25728` codex overload retry matters for provider instability during long operations; adopted locally.
 - `#25765` ChatGPT OAuth refresh token preservation matters for Codex Gold/long operations; adopted locally so refresh responses that omit `refresh_token` keep the existing token while initial OAuth success still requires one.
 - `#25493` pre-chat message transforms matter for ULM profile plugins that need to strip images, inject vision summaries, or normalize message history before inference; adopted locally with replacement-output semantics instead of mutation-only behavior.
-- `#25492` Moonshot/Kimi schema-depth limiting matters for tool-heavy Kimi lanes; adopted locally by flattening deeply nested complex schema nodes while preserving primitive schemas and existing `$ref`/tuple-item fixes.
-- `#25385` malformed SSE JSON repair matters for local/OpenAI-compatible Qwen/GLM-style providers during long runs; adopted locally as an opt-in config flag, enabled in the isolated ULM profile.
+- Non-OpenAI provider compatibility fixes from upstream remain part of the forked codebase, but they are not ULM profile routing policy.
+- Malformed SSE JSON repair is available as an opt-in compatibility guard, but the isolated ULM profile should still route models through OpenAI only.
 - `#25762` broad Node-process kill prevention matters because OpenCode itself runs on Node; adopted locally with system/tool prompt warnings plus a runtime shell command guard that still allows PID/project-scoped stops.
 - `#25805` session retry caps matter for unattended operations; adopted locally as `max_retries`.
 - `#25658` SSE reconnect replay matters for long-running operation visibility; adopted locally for global event streams.
@@ -89,17 +89,17 @@ Do not port the old swarm, report monolith, stale Zod tool definitions, or sessi
 - Queued user messages now show a `Cancel` action that force-deletes only that queued message via the delete-message route, leaving the active assistant run alone.
 - ACP prompt and command calls now wait for the corresponding assistant `message.updated` completion event before returning `end_turn`, with a bounded timeout, so clients do not receive trailing chunks after the turn is marked done.
 - Session cost rollups now expose parent/session spend plus transitive descendant subagent spend through `GET /session/:id/cost`, generated SDK support, TUI sidebar cost lines, and completed Task footers.
-- Session processing now estimates outgoing prompt size before opening the LLM stream and returns `compact` early when the estimate exceeds 85% of the model's reported context limit; extra z.ai/GLM-style overflow strings also classify as context overflow instead of retryable generic API errors.
+- Session processing now estimates outgoing prompt size before opening the LLM stream and returns `compact` early when the estimate exceeds 85% of the model's reported context limit; known provider overflow strings also classify as context overflow instead of retryable generic API errors.
 - `InstanceState.get` now passes the resolved `InstanceRef` into `ScopedCache.get`, keeping lazy cache initialization aligned with the selected instance context.
 - Codex/OpenAI `server_is_overloaded` stream chunks now parse as retryable API errors, and retry classification recognizes nested overloaded/rate-limit codes instead of only top-level provider codes.
 - Codex OAuth refresh now preserves the current refresh token when the token endpoint only rotates the access token. Browser/headless initial OAuth success still requires an explicit refresh token, so a broken first login fails loudly instead of storing unusable auth.
 - Server plugins can use `pre_chat.messages.transform` to inspect or replace assembled chat messages before the LLM call. The legacy `experimental.chat.messages.transform` hook remains available and now receives the same contextual input, but should be treated as deprecated.
-- Moonshot/Kimi tool schema normalization now flattens deeply nested complex schema nodes before provider depth limits are hit, while preserving primitive schemas, `$ref` sibling cleanup, and tuple-array item normalization.
+- Provider schema normalization now flattens deeply nested complex schema nodes before provider depth limits are hit, while preserving primitive schemas, `$ref` sibling cleanup, and tuple-array item normalization.
 - `experimental.enable_sse_json_repair` wraps text/event-stream responses and repairs malformed `data:` JSON payloads only after strict parsing fails. The ULM profile enables it for local OpenAI-compatible providers; default OpenCode behavior remains off.
 - The shell tool blocks broad Node.js process killers such as `pkill node`, `killall node`, `taskkill /IM node.exe`, and PowerShell `Stop-Process` against node, while allowing PID-scoped and project-scoped shutdown commands.
-- `tools/ulmcode-profile` provides an isolated K-12 pentest profile, compact skill pack, plugin dependency manifest, Oh My OpenAgent routing file, vetted local OpenCode commands, vendored profile plugins, and the local OMO markdown layer. The isolated profile now carries over the useful local OMO routing lanes: backend architect/builder, frontend taste/builder, product taste pass, sparse human-taste review, test coverage, background concurrency, runtime fallback, auto-resume, aggressive truncation, and tmux layout settings. The skill pack includes a dedicated long-report production workflow so dense report drafting uses outline budgets, background report/evidence/review lanes, lint, render, runtime summary, and audit instead of chat-only prose.
+- `tools/ulmcode-profile` provides an isolated K-12 pentest profile, compact skill pack, plugin dependency manifest, vetted local OpenCode commands, and profile plugins. The isolated profile keeps all model routes OpenAI-only. The skill pack includes a dedicated long-report production workflow so dense report drafting uses outline budgets, background report/evidence/review lanes, lint, render, runtime summary, and audit instead of chat-only prose.
 - The isolated profile also bundles the local shell non-interactive strategy and workflow commands (`btw`, `commit-msg`, `explain-diff`, `frontend-polish`, `handoff`, `review`, `ship`, `test-plan`) so fresh installs preserve prompt-safe shell behavior and common operator routines without reading the user's live `~/.config/opencode`.
-- The isolated profile ships a local `ulmcode-runtime-guard` server plugin that injects operation-resume, background-task, report-lint, runtime-summary, and final-handoff guardrails through OpenCode plugin hooks; it also vendors `@khalilgharbaoui/opencode-claude-code-plugin@0.2.2` and `oh-my-openagent@3.17.12` source for audit/fork work, with OMO profile dependencies and plugin config pointed at the vendored copy instead of `@latest`.
+- The isolated profile ships a local `ulmcode-runtime-guard` server plugin that injects operation-resume, background-task, report-lint, runtime-summary, and final-handoff guardrails through OpenCode plugin hooks. Third-party model-routing plugins are intentionally not installed or vendored.
 - ULM artifact writers now await best-effort `operation.updated` publication after durable writes, preserving event ordering for persistent dashboards; `runtime_summary` also computes `remainingUSD` automatically when derived cost and a budget are available.
 - `bun run --cwd packages/opencode test:ulm-skills` validates the bundled profile skills/commands for frontmatter, placeholder-free content, durable ULM tool references, full local workflow command coverage, shell strategy wiring, and model-routing drift.
 - `bun run --cwd packages/opencode test:ulm-smoke` exercises a synthetic ULM lifecycle outside the unit-test helpers: operation plan, evidence, finding, report outline, validation stage gate, final render, runtime summary, operation audit, final handoff lint, and status dashboard.
@@ -114,12 +114,10 @@ Do not port the old swarm, report monolith, stale Zod tool definitions, or sessi
 
 Source checked on 2026-05-05 from `~/.config/opencode` without copying secrets.
 
-- Installed plugin deps: `oh-my-openagent`, legacy `oh-my-opencode`, `@khalilgharbaoui/opencode-claude-code-plugin`, and `@opencode-ai/plugin`.
+- Installed plugin deps: `@opencode-ai/plugin`.
 - Configured MCPs: Playwright local MCP, disabled Vercel remote MCP, disabled Context7 remote MCP.
-- Configured LAN provider: LM Studio at `http://192.168.1.151:1234/v1` with Qwen/Qwopus local models.
 - Custom global commands: `btw`, `commit-msg`, `explain-diff`, `frontend-polish`, `handoff`, `review`, `ship`, `test-plan`.
-- OMO/custom-agent doctrine: GPT-5.5 for orchestration/backend/debug/review, GPT-5.4 Mini Fast for repo/docs/quick lanes, Kimi for frontend build/taste, Gemini for product/taste/writing, Claude Sonnet for sparse human-touch review, GLM as fallback orchestrator.
-- Important current local rule: OpenCode markdown agents are for manual `@agent` use; automated Feature Forge style work should route through OMO category aliases.
+- Profile doctrine: GPT-5.5 for orchestration/backend/debug/review, frontend/product taste, and sparse human-touch review; GPT-5.4 Mini Fast for repo/docs/quick lanes.
 
 ## Known Remaining Limits
 

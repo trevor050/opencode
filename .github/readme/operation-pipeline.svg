@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" role="img" aria-labelledby="title desc">
+  <title id="title">ULMCode operation pipeline</title>
+  <desc id="desc">A visual pipeline showing ULMCode flow from authorization and planning through scheduler lanes, evidence validation, report rendering, runtime summary, and audit.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071116"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="rail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#28f2ff"/>
+      <stop offset="0.45" stop-color="#79ff88"/>
+      <stop offset="0.75" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff7ad9"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M30 0H0V30" fill="none" stroke="#b7f5ff" stroke-opacity="0.055"/>
+    </pattern>
+    <style>
+      .sans { font-family: "Inter", "Segoe UI", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", "Cascadia Code", Menlo, monospace; }
+      .white { fill: #f0f7ff; }
+      .muted { fill: #91a8b5; }
+      .cyan { fill: #28f2ff; }
+      .green { fill: #79ff88; }
+      .amber { fill: #ffd166; }
+      .pink { fill: #ff7ad9; }
+    </style>
+  </defs>
+  <rect width="1280" height="620" rx="34" fill="url(#bg)"/>
+  <rect width="1280" height="620" rx="34" fill="url(#grid)"/>
+  <text class="mono cyan" x="60" y="68" font-size="14" letter-spacing="2">THE RUN IS A LEDGER, NOT A CHAT TRANSCRIPT</text>
+  <text class="sans white" x="60" y="116" font-size="42" font-weight="800">Operation pipeline</text>
+  <text class="sans muted" x="60" y="148" font-size="18">Every phase leaves artifacts behind. If the artifacts do not pass, the handoff does not ship.</text>
+
+  <path d="M88 315H1192" stroke="url(#rail)" stroke-width="5" stroke-linecap="round" filter="url(#glow)"/>
+
+  <g transform="translate(52 218)">
+    <g transform="translate(0 0)">
+      <rect width="168" height="188" rx="18" fill="#0d1b24" stroke="#28f2ff" stroke-opacity="0.4"/>
+      <text class="mono cyan" x="22" y="36" font-size="13">01 / AUTH</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Scope</text>
+      <text class="sans muted" x="22" y="106" font-size="14">ROE, targets,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">credentials, and</text>
+      <text class="sans muted" x="22" y="146" font-size="14">operator intent.</text>
+    </g>
+    <g transform="translate(184 0)">
+      <rect width="168" height="188" rx="18" fill="#0d201a" stroke="#79ff88" stroke-opacity="0.4"/>
+      <text class="mono green" x="22" y="36" font-size="13">02 / PLAN</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Charter</text>
+      <text class="sans muted" x="22" y="106" font-size="14">Discovery Charter,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">full plan, graph,</text>
+      <text class="sans muted" x="22" y="146" font-size="14">success criteria.</text>
+    </g>
+    <g transform="translate(368 0)">
+      <rect width="168" height="188" rx="18" fill="#0d1b24" stroke="#28f2ff" stroke-opacity="0.4"/>
+      <text class="mono cyan" x="22" y="36" font-size="13">03 / RUNTIME</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Lanes</text>
+      <text class="sans muted" x="22" y="106" font-size="14">Scheduler, daemon,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">subagents, queue,</text>
+      <text class="sans muted" x="22" y="146" font-size="14">recovery.</text>
+    </g>
+    <g transform="translate(552 0)">
+      <rect width="168" height="188" rx="18" fill="#211b0f" stroke="#ffd166" stroke-opacity="0.45"/>
+      <text class="mono amber" x="22" y="36" font-size="13">04 / COMMAND</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Supervise</text>
+      <text class="sans muted" x="22" y="106" font-size="14">Safe profiles,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">heartbeats, logs,</text>
+      <text class="sans muted" x="22" y="146" font-size="14">restart args.</text>
+    </g>
+    <g transform="translate(736 0)">
+      <rect width="168" height="188" rx="18" fill="#0d201a" stroke="#79ff88" stroke-opacity="0.4"/>
+      <text class="mono green" x="22" y="36" font-size="13">05 / PROOF</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Evidence</text>
+      <text class="sans muted" x="22" y="106" font-size="14">Normalize leads,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">validate findings,</text>
+      <text class="sans muted" x="22" y="146" font-size="14">reject noise.</text>
+    </g>
+    <g transform="translate(920 0)">
+      <rect width="168" height="188" rx="18" fill="#201326" stroke="#ff7ad9" stroke-opacity="0.48"/>
+      <text class="mono pink" x="22" y="36" font-size="13">06 / HANDOFF</text>
+      <text class="sans white" x="22" y="72" font-size="22" font-weight="800">Report</text>
+      <text class="sans muted" x="22" y="106" font-size="14">Lint, render,</text>
+      <text class="sans muted" x="22" y="126" font-size="14">runtime summary,</text>
+      <text class="sans muted" x="22" y="146" font-size="14">final audit.</text>
+    </g>
+  </g>
+
+  <g class="mono" font-size="13">
+    <text class="muted" x="64" y="510">canonical root</text>
+    <text class="white" x="64" y="536">.ulmcode/operations/&lt;operation-id&gt;/</text>
+    <text class="muted" x="498" y="510">final package</text>
+    <text class="white" x="498" y="536">deliverables/final/report.{html,pdf} + manifest.json</text>
+    <text class="muted" x="974" y="510">no proof, no ship</text>
+    <text class="white" x="974" y="536">report_lint + operation_audit</text>
+  </g>
+</svg>

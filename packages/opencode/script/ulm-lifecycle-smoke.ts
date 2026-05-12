@@ -27,6 +27,10 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
+function section(title: string, word: string, count: number) {
+  return [`## ${title}`, "", `${word} `.repeat(count)].join("\n")
+}
+
 async function completeGraphForHandoff(worktree: string, operationID: string) {
   const graph = await writeOperationGraph(worktree, { operationID, budgetUSD: 5 })
   const parsed = JSON.parse(await fs.readFile(graph.json, "utf8")) as { lanes: Array<{ id: string; status: string; expectedArtifacts: string[] }> }
@@ -156,6 +160,28 @@ await writeReportOutline(worktree, {
   targetPages: 40,
   includeAppendix: true,
 })
+
+const root = path.join(worktree, ".ulmcode", "operations", operationID)
+await fs.mkdir(path.join(root, "reports"), { recursive: true })
+await fs.writeFile(
+  path.join(root, "reports", "report.md"),
+  [
+    "# ULMCode Smoke Assessment Report",
+    "",
+    section("Executive Summary", "executive-summary", 1200),
+    section("Scope, Authorization, and Methodology", "methodology", 1200),
+    section("Environment Overview", "environment", 1200),
+    section("Attack Path Narrative", "attack-path", 1200),
+    section("Findings Detail", "finding-detail", 1200),
+    section("Weak MFA coverage", "weak-mfa-coverage", 300),
+    section("Risk Register and Prioritized Roadmap", "roadmap", 1200),
+    section("Coverage, Browser Evidence, and Testing Limits", "coverage", 1200),
+    section("Validation Limits and Known Unknowns", "validation-limit", 1200),
+    section("Evidence Map", "evidence-map", 1200),
+    section("Operator Handoff Checklist", "handoff", 1200),
+    section("Appendix: Raw Evidence Index", "appendix", 1200),
+  ].join("\n\n"),
+)
 
 const validationGate = await buildOperationStageGate(worktree, operationID, { stage: "validation" })
 assert(validationGate.ok, `validation stage gate failed: ${validationGate.gaps.join("; ")}`)

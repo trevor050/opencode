@@ -10,6 +10,7 @@ import {
   WINDOW_TITLE,
   getDesktopAppId,
   getDesktopAppName,
+  getDesktopPublishConfig,
   getSidecarEnvDefaults,
   getUlmOperationsDirectory,
   isDesktopDeepLink,
@@ -44,6 +45,22 @@ describe("desktop branding", () => {
   test("uses ULMCode window title and settings store", () => {
     expect(WINDOW_TITLE).toBe("ULMCode Desktop")
     expect(SETTINGS_STORE).toBe("ulmcode.settings")
+  })
+
+  test("publishes desktop updates from the ULMCode GitHub release channel", () => {
+    expect(getDesktopPublishConfig("prod")).toEqual({
+      provider: "github",
+      owner: "trevor050",
+      repo: "ulmcode",
+      channel: "latest",
+    })
+    expect(getDesktopPublishConfig("beta")).toEqual({
+      provider: "github",
+      owner: "trevor050",
+      repo: "ulmcode",
+      channel: "latest",
+    })
+    expect(getDesktopPublishConfig("dev")).toBeUndefined()
   })
 
   test("renderer HTML titles match the desktop window title", async () => {

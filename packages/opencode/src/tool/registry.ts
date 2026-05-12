@@ -18,6 +18,7 @@ import { SkillTool } from "./skill"
 import { OperationAuditTool } from "./operation_audit"
 import { OperationCheckpointTool } from "./operation_checkpoint"
 import { OperationCredentialsTool } from "./operation_credentials"
+import { OperationGapAuditTool } from "./operation_gap_audit"
 import { OperationGoalTool } from "./operation_goal"
 import { OperationGovernorTool } from "./operation_governor"
 import { OperationMemoryTool } from "./operation_memory"
@@ -47,6 +48,7 @@ import { ReportOutlineTool } from "./report_outline"
 import { ReportRenderTool } from "./report_render"
 import { RuntimeSummaryTool } from "./runtime_summary"
 import { EvalScorecardTool } from "./eval_scorecard"
+import { LaptopPreflightTool } from "./laptop_preflight"
 import { RuntimeSchedulerTool } from "./runtime_scheduler"
 import { RuntimeDaemonTool } from "./runtime_daemon"
 import { CommandSuperviseTool } from "./command_supervise"
@@ -180,6 +182,7 @@ export const layer: Layer.Layer<
     const operationAudit = yield* OperationAuditTool
     const operationCheckpoint = yield* OperationCheckpointTool
     const operationCredentials = yield* OperationCredentialsTool
+    const operationGapAudit = yield* OperationGapAuditTool
     const operationGoal = yield* OperationGoalTool
     const operationGovernor = yield* OperationGovernorTool
     const operationMemory = yield* OperationMemoryTool
@@ -209,6 +212,7 @@ export const layer: Layer.Layer<
     const reportRender = yield* ReportRenderTool
     const runtimeSummary = yield* RuntimeSummaryTool
     const evalScorecard = yield* EvalScorecardTool
+    const laptopPreflight = yield* LaptopPreflightTool
     const runtimeScheduler = yield* RuntimeSchedulerTool
     const runtimeDaemon = yield* RuntimeDaemonTool
     const commandSupervise = yield* CommandSuperviseTool
@@ -318,6 +322,7 @@ export const layer: Layer.Layer<
           operationAudit: Tool.init(operationAudit),
           operationCheckpoint: Tool.init(operationCheckpoint),
           operationCredentials: Tool.init(operationCredentials),
+          operationGapAudit: Tool.init(operationGapAudit),
           operationGoal: Tool.init(operationGoal),
           operationGovernor: Tool.init(operationGovernor),
           operationMemory: Tool.init(operationMemory),
@@ -347,6 +352,7 @@ export const layer: Layer.Layer<
           reportRender: Tool.init(reportRender),
           runtimeSummary: Tool.init(runtimeSummary),
           evalScorecard: Tool.init(evalScorecard),
+          laptopPreflight: Tool.init(laptopPreflight),
           runtimeScheduler: Tool.init(runtimeScheduler),
           runtimeDaemon: Tool.init(runtimeDaemon),
           commandSupervise: Tool.init(commandSupervise),
@@ -383,6 +389,7 @@ export const layer: Layer.Layer<
             tool.operationAudit,
             tool.operationCheckpoint,
             tool.operationCredentials,
+            tool.operationGapAudit,
             tool.operationGoal,
             tool.operationGovernor,
             tool.operationMemory,
@@ -412,6 +419,7 @@ export const layer: Layer.Layer<
             tool.reportRender,
             tool.runtimeSummary,
             tool.evalScorecard,
+            tool.laptopPreflight,
             tool.runtimeScheduler,
             tool.runtimeDaemon,
             tool.commandSupervise,

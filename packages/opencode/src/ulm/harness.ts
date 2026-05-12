@@ -1,5 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
+import { randomUUID } from "crypto"
 
 export const ULM_HARNESS_REQUIRED_CAPABILITIES = [
   {
@@ -136,7 +137,7 @@ export async function runHarnessScenarios(
   options: { runID?: string; outputDir?: string; now?: Date } = {},
 ): Promise<HarnessRunResult> {
   const started = options.now ?? new Date()
-  const runID = options.runID ?? `ulm-harness-${started.toISOString().replace(/[:.]/g, "-")}`
+  const runID = options.runID ?? `ulm-harness-${started.toISOString().replace(/[:.]/g, "-")}-${process.pid}-${randomUUID().slice(0, 8)}`
   const context: HarnessScenarioContext = {
     runID,
     startedAt: started.toISOString(),

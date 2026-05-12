@@ -60,6 +60,7 @@ type Metadata = {
   operationID: string
   ok: boolean
   gaps: string[]
+  repairHints: string[]
 }
 
 export const ReportLintTool = Tool.define<typeof Parameters, Metadata, never>(
@@ -95,6 +96,7 @@ export const ReportLintTool = Tool.define<typeof Parameters, Metadata, never>(
             operationID: result.operationID,
             ok: result.ok,
             gaps: result.gaps,
+            repairHints: result.repairHints,
           },
         }
       }),
