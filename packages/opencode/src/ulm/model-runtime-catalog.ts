@@ -100,7 +100,6 @@ const DEFAULTS: ModelRuntimeCatalog = {
 }
 
 function providerKind(providerID: string, provider: { source?: string }) {
-  if (providerID === "opencode-go" || providerID.includes("pro")) return "subscription"
   if (provider.source === "env" || provider.source === "api" || provider.source === "config") return "api"
   if (provider.source === "custom") return "unknown"
   return "unknown"
@@ -140,8 +139,7 @@ export function resolveModelRuntime(route: string, catalog: ModelRuntimeCatalog 
   const parsed = splitModelRoute(route)
   if (!parsed) return undefined
   const merged = { ...DEFAULTS[route], ...catalog[route] }
-  const providerKind =
-    merged.providerKind ?? (parsed.providerID === "opencode-go" || parsed.providerID.includes("pro") ? "subscription" : "unknown")
+  const providerKind = merged.providerKind ?? "unknown"
   const contextLimit = merged.contextLimit
   const outputLimit = merged.outputLimit
   if (!contextLimit || !outputLimit) return undefined

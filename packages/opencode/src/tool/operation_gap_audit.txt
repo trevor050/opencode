@@ -1,0 +1,5 @@
+Audit an active ULM operation for machine-readable coverage gaps, queue pressure, validation debt, identity/attack-chain gaps, and report finalization risk.
+
+Use this before expanding long-running work, after base lanes drain, when queue depth reaches zero, or when the daemon needs to prove that stopping is not yet justified.
+
+The tool writes `plans/gap-audit.json` and `plans/gap-audit.md`, then returns a compact markdown summary plus the raw JSON. It is read-only except for those audit artifacts and must not include raw secrets.

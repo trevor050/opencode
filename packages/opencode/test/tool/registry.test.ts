@@ -70,6 +70,7 @@ describe("tool.registry", () => {
       const registry = yield* ToolRegistry.Service
       const ids = yield* registry.ids()
       expect(ids).toContain("operation_memory")
+      expect(ids).toContain("operation_gap_audit")
       expect(ids).toContain("operation_template")
       expect(ids).toContain("asset_graph")
       expect(ids).toContain("attack_chain")

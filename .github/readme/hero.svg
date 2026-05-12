@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">ULMCode security operations workbench hero</title>
+  <desc id="desc">A dark futuristic command center graphic for ULMCode, showing operation status panels, evidence flow, agent lanes, report gates, and final handoff.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#061016"/>
+      <stop offset="0.45" stop-color="#091923"/>
+      <stop offset="1" stop-color="#130f1f"/>
+    </linearGradient>
+    <radialGradient id="glowCyan" cx="48%" cy="34%" r="58%">
+      <stop offset="0" stop-color="#24f2ff" stop-opacity="0.34"/>
+      <stop offset="0.45" stop-color="#24f2ff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#24f2ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowGreen" cx="80%" cy="18%" r="44%">
+      <stop offset="0" stop-color="#70ff7e" stop-opacity="0.28"/>
+      <stop offset="0.5" stop-color="#70ff7e" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#70ff7e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101f29" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#071117" stop-opacity="0.94"/>
+    </linearGradient>
+    <linearGradient id="hotline" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#28f2ff"/>
+      <stop offset="0.5" stop-color="#79ff88"/>
+      <stop offset="1" stop-color="#ffd166"/>
+    </linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#9fe8ff" stroke-opacity="0.075" stroke-width="1"/>
+    </pattern>
+    <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+      <path d="M0 0H4" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <style>
+      .mono { font-family: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Menlo", monospace; }
+      .sans { font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+      .tiny { font-size: 13px; letter-spacing: 1.4px; text-transform: uppercase; }
+      .label { fill: #9fb6c3; }
+      .white { fill: #edf7ff; }
+      .muted { fill: #8ba2af; }
+      .cyan { fill: #28f2ff; }
+      .green { fill: #79ff88; }
+      .amber { fill: #ffd166; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect width="1280" height="720" fill="url(#glowCyan)"/>
+  <rect width="1280" height="720" fill="url(#glowGreen)"/>
+  <rect width="1280" height="720" fill="url(#grid)"/>
+  <rect width="1280" height="720" fill="url(#scan)"/>
+
+  <path d="M80 622C224 514 329 494 488 532C651 571 738 640 916 599C1036 571 1124 507 1208 414" fill="none" stroke="#28f2ff" stroke-opacity="0.16" stroke-width="2"/>
+  <path d="M58 515C252 420 391 436 542 469C711 506 841 553 1041 454C1110 420 1164 376 1216 319" fill="none" stroke="#79ff88" stroke-opacity="0.14" stroke-width="2"/>
+
+  <g transform="translate(74 70)">
+    <text class="mono tiny cyan" x="0" y="0">AUTHORIZED SECURITY OPS</text>
+    <text class="sans white" x="0" y="58" font-size="72" font-weight="800">ULMCode</text>
+    <text class="sans white" x="3" y="101" font-size="25" font-weight="700">OpenCode, rebuilt as an operation engine.</text>
+    <text class="sans muted" x="3" y="139" font-size="20">Plan-first pentest workflows with durable evidence, supervised lanes,</text>
+    <text class="sans muted" x="3" y="168" font-size="20">credential-safe handoff, runtime accounting, and report gates that bite.</text>
+
+    <g transform="translate(3 214)">
+      <rect x="0" y="0" width="158" height="34" rx="17" fill="#14323a" stroke="#2df2ff" stroke-opacity="0.45"/>
+      <circle cx="22" cy="17" r="6" fill="#79ff88"/>
+      <text class="mono white" x="42" y="22" font-size="13">durable state</text>
+      <rect x="174" y="0" width="166" height="34" rx="17" fill="#142b22" stroke="#79ff88" stroke-opacity="0.42"/>
+      <circle cx="196" cy="17" r="6" fill="#28f2ff"/>
+      <text class="mono white" x="216" y="22" font-size="13">agent lanes</text>
+      <rect x="356" y="0" width="167" height="34" rx="17" fill="#332515" stroke="#ffd166" stroke-opacity="0.42"/>
+      <circle cx="378" cy="17" r="6" fill="#ffd166"/>
+      <text class="mono white" x="398" y="22" font-size="13">final audit</text>
+    </g>
+  </g>
+
+  <g transform="translate(700 66)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="500" height="344" rx="24" fill="url(#panel)" stroke="#5ee7ff" stroke-opacity="0.26"/>
+    <rect x="22" y="22" width="456" height="38" rx="10" fill="#061016" stroke="#223845"/>
+    <circle cx="45" cy="41" r="6" fill="#ff5d73"/>
+    <circle cx="67" cy="41" r="6" fill="#ffd166"/>
+    <circle cx="89" cy="41" r="6" fill="#79ff88"/>
+    <text class="mono label" x="116" y="47" font-size="13">operation://school-surface-48h</text>
+
+    <text class="mono tiny green" x="32" y="98">RUNTIME DAEMON</text>
+    <text class="sans white" x="32" y="132" font-size="34" font-weight="800">48h supervised run</text>
+    <text class="sans muted" x="32" y="160" font-size="16">heartbeat ok / queue healthy / finalization protected</text>
+
+    <g transform="translate(32 195)">
+      <rect x="0" y="0" width="120" height="82" rx="14" fill="#0b1820" stroke="#28f2ff" stroke-opacity="0.36"/>
+      <text class="mono cyan" x="16" y="30" font-size="14">17</text>
+      <text class="mono muted" x="16" y="57" font-size="12">profiles</text>
+      <rect x="138" y="0" width="120" height="82" rx="14" fill="#0b1820" stroke="#79ff88" stroke-opacity="0.36"/>
+      <text class="mono green" x="154" y="30" font-size="14">11</text>
+      <text class="mono muted" x="154" y="57" font-size="12">skills</text>
+      <rect x="276" y="0" width="148" height="82" rx="14" fill="#0b1820" stroke="#ffd166" stroke-opacity="0.36"/>
+      <text class="mono amber" x="292" y="30" font-size="14">strict</text>
+      <text class="mono muted" x="292" y="57" font-size="12">handoff gates</text>
+    </g>
+  </g>
+
+  <g transform="translate(85 413)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="1096" height="198" rx="22" fill="#071117" stroke="#ffffff" stroke-opacity="0.12"/>
+    <path d="M64 100H1032" stroke="url(#hotline)" stroke-width="3" stroke-linecap="round" filter="url(#softGlow)"/>
+    <g class="mono" text-anchor="middle" font-size="12">
+      <g transform="translate(90 100)">
+        <circle r="27" fill="#0e222b" stroke="#28f2ff" stroke-width="2"/>
+        <text class="cyan" y="5">SCOPE</text>
+        <text class="muted" y="62">authorize</text>
+      </g>
+      <g transform="translate(238 100)">
+        <circle r="27" fill="#10251d" stroke="#79ff88" stroke-width="2"/>
+        <text class="green" y="-3">PLAN</text>
+        <text class="green" y="11">FIRST</text>
+        <text class="muted" y="62">charter</text>
+      </g>
+      <g transform="translate(386 100)">
+        <circle r="27" fill="#0e222b" stroke="#28f2ff" stroke-width="2"/>
+        <text class="cyan" y="5">LANES</text>
+        <text class="muted" y="62">agents</text>
+      </g>
+      <g transform="translate(534 100)">
+        <circle r="27" fill="#332515" stroke="#ffd166" stroke-width="2"/>
+        <text class="amber" y="-3">CMD</text>
+        <text class="amber" y="11">SAFE</text>
+        <text class="muted" y="62">supervise</text>
+      </g>
+      <g transform="translate(682 100)">
+        <circle r="27" fill="#10251d" stroke="#79ff88" stroke-width="2"/>
+        <text class="green" y="5">PROOF</text>
+        <text class="muted" y="62">evidence</text>
+      </g>
+      <g transform="translate(830 100)">
+        <circle r="27" fill="#0e222b" stroke="#28f2ff" stroke-width="2"/>
+        <text class="cyan" y="5">REPORT</text>
+        <text class="muted" y="62">render</text>
+      </g>
+      <g transform="translate(978 100)">
+        <circle r="31" fill="#20162d" stroke="#ff7ad9" stroke-width="2"/>
+        <text fill="#ff9be5" y="-3">AUDIT</text>
+        <text fill="#ff9be5" y="11">PASS</text>
+        <text class="muted" y="62">handoff</text>
+      </g>
+    </g>
+  </g>
+
+  <g class="mono" font-size="13" opacity="0.9">
+    <text class="label" x="84" y="665">.ulmcode/operations/&lt;id&gt;</text>
+    <text class="label" x="358" y="665">command_supervise</text>
+    <text class="label" x="575" y="665">runtime_summary</text>
+    <text class="label" x="786" y="665">report_lint</text>
+    <text class="label" x="943" y="665">deliverables/final</text>
+  </g>
+</svg>

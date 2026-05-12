@@ -192,7 +192,7 @@ const report = await runProbe({
   outputPrefix,
   timeoutMs: parseTimeout(argValue("--timeout-ms")),
   runnerCommand: argValue("--runner-command"),
-  model: argValue("--model") ?? "opencode-go/qwen3.6-plus",
+  model: argValue("--model") ?? "openai/gpt-5.5",
   agent: argValue("--agent") ?? "pentest",
 })
 

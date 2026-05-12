@@ -522,6 +522,196 @@ describe("ULM operation run controller", () => {
     expect(proof.evidenceRefs).toEqual(["ev-report"])
   })
 
+  test("does not auto-complete report lanes while planned duration work is incomplete", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    const finalDir = path.join(operationRoot, "deliverables", "final")
+    await fs.mkdir(path.join(operationRoot, "evidence"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "reports"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "deliverables"), { recursive: true })
+    await fs.mkdir(finalDir, { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "evidence", "ev-report.json"), "{}\n")
+    await fs.writeFile(path.join(operationRoot, "evidence-index.json"), "{}\n")
+    await fs.writeFile(path.join(operationRoot, "reports", "report-outline.md"), "# Outline\n")
+    await fs.writeFile(path.join(operationRoot, "reports", "report.md"), "# Report\n")
+    for (const file of [
+      "evidence-index.json",
+      "report.html",
+      "report.pdf",
+      "findings.json",
+      "operator-review.md",
+      "executive-summary.md",
+      "technical-appendix.md",
+      "runtime-summary.md",
+      "manifest.json",
+      "README.md",
+    ]) {
+      await fs.writeFile(path.join(finalDir, file), `${file}\n`)
+    }
+    const record = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    record.lanes.splice(record.lanes.findIndex((lane: { id: string }) => lane.id === "report_evidence_index"), 0, {
+      id: "planned_work_recon_1",
+      title: "Planned recon block",
+      agent: "recon",
+      status: "pending",
+      dependsOn: [],
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "operation_run"],
+      expectedArtifacts: ["work-blocks/recon-1.md"],
+      budget: {},
+      restartPolicy: { restartable: true, maxAttempts: 2, staleAfterMinutes: 60 },
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: "school",
+    })
+    for (const lane of record.lanes) {
+      if (!lane.id.startsWith("planned_work_") && !lane.id.startsWith("report_")) {
+        lane.status = "complete"
+        lane.terminalState = "complete"
+      }
+      if (lane.id === "evidence_normalization" || lane.id === "finding_validation") lane.status = "complete"
+      if (lane.id === "report_evidence_index") lane.status = "ready"
+    }
+    await fs.writeFile(graph.json, JSON.stringify(record, null, 2) + "\n")
+
+    const result = await runOperationStep(dir.path, { operationID: "School" })
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+
+    expect(result.completedLanes).not.toContain("report_evidence_index")
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe("running")
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "report_evidence_index")?.status).toBe("ready")
+  })
+
+  test("rejects planned work completion before the lane wall-clock floor", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "work-blocks"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "evidence"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "work-blocks", "recon-1.md"), "# Recon block\n")
+    await fs.writeFile(path.join(operationRoot, "evidence", "ev-recon-1.json"), "{}\n")
+    const record = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    record.lanes.splice(0, 0, {
+      id: "planned_work_recon_1",
+      title: "Planned recon block",
+      agent: "recon",
+      status: "running",
+      dependsOn: [],
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "operation_run"],
+      expectedArtifacts: ["work-blocks/recon-1.md"],
+      budget: {},
+      restartPolicy: { restartable: true, maxAttempts: 2, staleAfterMinutes: 60 },
+      startedAt: "2026-05-05T00:00:00.000Z",
+      plannedDurationMinutes: 30,
+      minRuntimeMinutes: 20,
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: "school",
+    })
+    await fs.writeFile(graph.json, JSON.stringify(record, null, 2) + "\n")
+
+    const early = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "planned_work_recon_1",
+      now: "2026-05-05T00:05:00.000Z",
+      summary: "Recon block finished.",
+      artifacts: ["work-blocks/recon-1.md"],
+      evidenceRefs: ["ev-recon-1"],
+    })
+    const afterEarly = JSON.parse(await fs.readFile(graph.json, "utf8"))
+
+    expect(early.blockers.join("\n")).toContain("requires at least 20m before completion")
+    expect(afterEarly.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe("running")
+
+    const accepted = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "planned_work_recon_1",
+      now: "2026-05-05T00:21:00.000Z",
+      summary: "Recon block finished after the wall-clock floor.",
+      artifacts: ["work-blocks/recon-1.md"],
+      evidenceRefs: ["ev-recon-1"],
+    })
+    const afterAccepted = JSON.parse(await fs.readFile(graph.json, "utf8"))
+
+    expect(accepted.blockers).toEqual([])
+    expect(afterAccepted.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe("complete")
+  })
+
+  test("rejects planned work terminal blockers that do not leave durable fallback proof", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    const record = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    record.lanes.splice(0, 0, {
+      id: "planned_work_recon_1",
+      title: "Planned recon block",
+      agent: "recon",
+      status: "running",
+      dependsOn: [],
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "operation_run"],
+      expectedArtifacts: ["work-blocks/recon-1.md"],
+      budget: {},
+      restartPolicy: { restartable: true, maxAttempts: 2, staleAfterMinutes: 60 },
+      startedAt: "2026-05-05T00:00:00.000Z",
+      plannedDurationMinutes: 30,
+      minRuntimeMinutes: 20,
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: "school",
+    })
+    await fs.writeFile(graph.json, JSON.stringify(record, null, 2) + "\n")
+
+    const emptyBlock = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "block_lane",
+      laneID: "planned_work_recon_1",
+      now: "2026-05-05T00:10:00.000Z",
+      summary: "Blocked.",
+    })
+
+    expect(emptyBlock.blockers.join("\n")).toContain("planned work blocked proof requires artifacts")
+    expect(emptyBlock.blockers.join("\n")).toContain("planned work blocked proof requires evidenceRefs")
+
+    await fs.mkdir(path.join(operationRoot, "work-blocks"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "work-blocks", "recon-1.md"), "# Recon fallback\n")
+    const recordedBlock = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "block_lane",
+      laneID: "planned_work_recon_1",
+      now: "2026-05-05T00:12:00.000Z",
+      summary: "Primary recon profile blocked; fallback limitations were recorded.",
+      artifacts: ["work-blocks/recon-1.md"],
+      evidenceRefs: ["ev-recon-limitation"],
+    })
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+
+    expect(recordedBlock.blockers).toEqual([])
+    expect(updated.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe("blocked")
+  })
+
   test("records skipped lanes with release impact and does not treat them as complete", async () => {
     await using dir = await tmpdir({ git: true })
     const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

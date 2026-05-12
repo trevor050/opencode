@@ -18,6 +18,7 @@ import { SkillTool } from "./skill"
 import { OperationAuditTool } from "./operation_audit"
 import { OperationCheckpointTool } from "./operation_checkpoint"
 import { OperationCredentialsTool } from "./operation_credentials"
+import { OperationGapAuditTool } from "./operation_gap_audit"
 import { OperationGoalTool } from "./operation_goal"
 import { OperationGovernorTool } from "./operation_governor"
 import { OperationMemoryTool } from "./operation_memory"
@@ -181,6 +182,7 @@ export const layer: Layer.Layer<
     const operationAudit = yield* OperationAuditTool
     const operationCheckpoint = yield* OperationCheckpointTool
     const operationCredentials = yield* OperationCredentialsTool
+    const operationGapAudit = yield* OperationGapAuditTool
     const operationGoal = yield* OperationGoalTool
     const operationGovernor = yield* OperationGovernorTool
     const operationMemory = yield* OperationMemoryTool
@@ -320,6 +322,7 @@ export const layer: Layer.Layer<
           operationAudit: Tool.init(operationAudit),
           operationCheckpoint: Tool.init(operationCheckpoint),
           operationCredentials: Tool.init(operationCredentials),
+          operationGapAudit: Tool.init(operationGapAudit),
           operationGoal: Tool.init(operationGoal),
           operationGovernor: Tool.init(operationGovernor),
           operationMemory: Tool.init(operationMemory),
@@ -386,6 +389,7 @@ export const layer: Layer.Layer<
             tool.operationAudit,
             tool.operationCheckpoint,
             tool.operationCredentials,
+            tool.operationGapAudit,
             tool.operationGoal,
             tool.operationGovernor,
             tool.operationMemory,

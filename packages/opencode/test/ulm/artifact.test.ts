@@ -42,6 +42,27 @@ async function tmpdir() {
   return fs.mkdtemp(path.join(os.tmpdir(), "ulm-artifact-"))
 }
 
+function executionBlocks(input: { minutes: number; laneID?: string; stage?: "recon" | "validation" | "reporting" | "handoff" }) {
+  const laneID = input.laneID ?? "recon"
+  const stage = input.stage ?? "recon"
+  const blockMinutes = input.minutes >= 480 ? 60 : 30
+  const count = Math.ceil(input.minutes / blockMinutes)
+  return Array.from({ length: count }, (_, index) => ({
+    id: `block-${index + 1}`,
+    stage,
+    laneID,
+    title: `Bounded ${stage} work block ${index + 1}`,
+    startMinute: index * blockMinutes,
+    durationMinutes: blockMinutes,
+    objective: `Complete bounded ${stage} work block ${index + 1}.`,
+    actions: [`Run the scoped ${stage} action for block ${index + 1}.`],
+    successCriteria: [`Block ${index + 1} records evidence, blockers, or a safe fallback.`],
+    fallbackWork: [`If the primary action stalls, run the narrower safe fallback for block ${index + 1}.`],
+    subagents: stage === "reporting" ? ["report-writer"] : [laneID],
+    expectedArtifacts: [`work-blocks/block-${index + 1}.md`],
+  }))
+}
+
 async function completeGraphForHandoff(worktree: string, operationID = "school") {
   const graph = await writeOperationGraph(worktree, { operationID, budgetUSD: 10 })
   const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
@@ -1152,6 +1173,90 @@ describe("ULM artifact ledger", () => {
     )
   })
 
+  test("counts child subsections toward authored outline section budgets", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "reporting",
+      status: "running",
+      summary: "Reporting started.",
+    })
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "IdP policy export",
+      kind: "file",
+      summary: "MFA policy export.",
+      path: "evidence/raw/idp-policy.json",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Weak MFA coverage",
+      state: "report_ready",
+      severity: "high",
+      confidence: 0.9,
+      affectedAssets: ["IdP"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/idp-policy.json" }],
+      description: "MFA is not enforced for administrators.",
+      impact: "Administrator takeover is more likely after password compromise.",
+      remediation: "Require phishing-resistant MFA for privileged accounts.",
+    })
+
+    const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 4 })
+    const filler = (label: string) => `${label} ${"evidence backed narrative ".repeat(20)}`
+    await fs.writeFile(
+      path.join(outline.root, "reports", "report.md"),
+      [
+        "# Report",
+        "",
+        "## Executive Summary",
+        filler("Executive summary"),
+        "",
+        "## Scope, Authorization, and Methodology",
+        filler("Methodology"),
+        "",
+        "## Environment Overview",
+        filler("Environment"),
+        "",
+        "## Attack Path Narrative",
+        filler("Attack path"),
+        "",
+        "## Findings Detail",
+        "Intro.",
+        "",
+        "### weak-mfa-coverage: Weak MFA coverage",
+        filler("Finding detail"),
+        "",
+        "## Risk Register and Prioritized Roadmap",
+        filler("Roadmap"),
+        "",
+        "## Coverage, Browser Evidence, and Testing Limits",
+        filler("Coverage"),
+        "",
+        "## Validation Limits and Known Unknowns",
+        filler("Validation"),
+        "",
+        "## Evidence Map",
+        filler("Evidence"),
+        "",
+        "## Operator Handoff Checklist",
+        filler("Handoff"),
+        "",
+        "## Appendix: Raw Evidence Index",
+        filler("Appendix"),
+      ].join("\n"),
+    )
+
+    const result = await lintReport(worktree, "school", {
+      requireReport: true,
+      requireOutlineSections: true,
+      minOutlineSectionWords: 25,
+    })
+    expect(result.gaps).not.toContain("Findings Detail: outline section is too sparse: 1 words, expected at least 25")
+    expect(result.ok).toBe(true)
+  })
+
   test("lints sparse per-finding report sections even when total report is long", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {
@@ -1487,6 +1592,13 @@ describe("ULM artifact ledger", () => {
     expect(html).toContain("Weak MFA coverage")
     expect(html).toContain("Evidence Index")
     expect(html).toContain("Legacy TLS suspicion")
+    expect(html).toContain('role="doc-toc"')
+    expect(html).toContain("Table Of Contents")
+    expect(html).toContain("report-cover")
+    expect(html).toContain("metric-card")
+    expect(html).toContain("roadmap-card")
+    expect(html).toContain("evidence-card")
+    expect(html).not.toContain("<thead><tr><th>Candidate</th>")
     const pdf = await fs.readFile(result.pdf, "utf8")
     expect(pdf).toStartWith("%PDF-")
     expect(pdf).toContain("Scope, Authorization, and Methodology")
@@ -2063,6 +2175,7 @@ describe("ULM artifact ledger", () => {
           evidence: ["Synthetic long-report proof exercises a 50-page final handoff gate."],
           overflowBacklog: ["Continue lower-priority validation lanes only after protected finalization starts."],
         },
+        executionBlocks: executionBlocks({ minutes: 44 * 60, laneID: "finding_validation", stage: "validation" }),
       },
       coverageContract: {
         status: "released",
@@ -2115,6 +2228,8 @@ describe("ULM artifact ledger", () => {
     })
     const outline = await writeReportOutline(worktree, { operationID: "school", targetPages: 50 })
     const outlineBody = await fs.readFile(outline.file, "utf8")
+    expect(outlineBody).toContain("- design_profile: premium")
+    expect(outlineBody).toContain("Tables are for compact comparable data")
     const sectionTitles = Array.from(outlineBody.matchAll(/^\s*-\s+(.+):\s*\d+\s+pages?\b/gim)).map(
       (match) => match[1]!,
     )
@@ -2232,6 +2347,12 @@ describe("ULM artifact ledger", () => {
         "## Custom Risk Narrative",
         "",
         "This authored report should survive report_render instead of being replaced by the synthetic template.",
+        "",
+        "## Findings Detail",
+        "",
+        "### weak-mfa-coverage: Weak MFA coverage",
+        "",
+        "This authored finding section should render as a designed finding card, not as plain loose prose.",
       ].join("\n"),
     )
 
@@ -2241,6 +2362,9 @@ describe("ULM artifact ledger", () => {
 
     expect(html).toContain("Custom Risk Narrative")
     expect(html).toContain("This authored report should survive report_render")
+    expect(html).toContain("authored-section authored-general")
+    expect(html).toContain("authored-section authored-findings-detail")
+    expect(html).toContain("finding authored-finding")
     expect(pdf).toContain("Custom Risk Narrative")
   })
 
@@ -3842,6 +3966,7 @@ describe("ULM artifact ledger", () => {
           { stage: "validation", hours: 1.25, work: "Validate evidence-backed findings and retry timed-out chunks." },
           { stage: "reporting", hours: 0.5, work: "Report lint, render, and audit gates." },
         ],
+        executionBlocks: executionBlocks({ minutes: 150 }),
       },
       coverageContract: {
         status: "unmet",

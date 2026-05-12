@@ -19,6 +19,7 @@ import {
 import { writeRuntimeGovernorRouteAudit } from "./runtime-governor"
 import { acquireManifestTools } from "./tool-acquisition"
 import { bindWorkUnitJob, nextWorkUnits, requeueStaleWorkUnits, type WorkQueueNextResult } from "./work-queue"
+import { generateOperationBacklog, type OperationBacklogResult } from "./operation-backlog"
 
 type SchedulerLaunchParams = NonNullable<OperationRunResult["taskParams"]>
 type SchedulerCommandParams = WorkQueueNextResult["units"][number]["commandSupervise"]
@@ -64,6 +65,7 @@ export type RuntimeSchedulerCycle = {
   sync: OperationRuntimeSyncResult
   supervisor?: RuntimeSchedulerSupervisorSummary
   run?: OperationRunResult
+  backlog?: OperationBacklogResult
   governor: GovernorDecision
   requeuedWorkUnits: string[]
   launchedJobs: string[]
@@ -108,6 +110,7 @@ function supervisorBlocks(action: OperationSupervisorAction | undefined) {
     action !== "continue_execution" &&
     action !== "continue_coverage" &&
     action !== "continue_reporting" &&
+    action !== "queue_work" &&
     action !== "handoff_ready" &&
     action !== "release_handoff"
   )
@@ -154,6 +157,31 @@ function reportRepairTaskParams(
   }
 }
 
+function emptyRuntimeSync(input: { operationID: string; graphPath: string; now: Date }): OperationRuntimeSyncResult {
+  return {
+    operationID: input.operationID,
+    graph: {
+      operationID: input.operationID,
+      safetyMode: "non_destructive",
+      trustLevel: "moderate",
+      scanProfile: "balanced",
+      maxConcurrentLanes: 1,
+      createdAt: input.now.toISOString(),
+      updatedAt: input.now.toISOString(),
+      lanes: [],
+    },
+    graphPath: input.graphPath,
+    completedLanes: [],
+    skippedLanes: [],
+    blockedLanes: [],
+    failedLanes: [],
+    syncedJobs: [],
+    syncedWorkUnits: [],
+    completedWorkUnits: [],
+    failedWorkUnits: [],
+  }
+}
+
 async function defaultSupervisorEnabled(worktree: string, operationID: string, configured: boolean | undefined) {
   if (configured !== undefined) return configured
   const goal = (await readOperationGoal(worktree, operationID)).goal
@@ -186,6 +214,14 @@ async function shouldEnsureReadinessProof(worktree: string, operationID: string,
     path.join(operationPath(worktree, operationID), "plans", "operation-plan.json"),
   )
   return (plan?.timeBudget?.targetHours ?? 0) >= 20
+}
+
+async function goalRuntimeRemainingSeconds(worktree: string, operationID: string, now: Date) {
+  const goal = (await readOperationGoal(worktree, operationID)).goal
+  if (!goal || goal.status !== "active" || goal.targetDurationHours === undefined) return undefined
+  const createdAt = Date.parse(goal.createdAt)
+  if (!Number.isFinite(createdAt)) return undefined
+  return Math.max(0, Math.floor(goal.targetDurationHours * 60 * 60 - (now.getTime() - createdAt) / 1000))
 }
 
 async function ensureReadinessProofArtifacts(
@@ -222,7 +258,10 @@ async function ensureReadinessProofArtifacts(
       }),
     )
   }
-  await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  const graphPath = path.join(root, "plans", "operation-graph.json")
+  if (await exists(graphPath)) {
+    await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID })
+  }
   if (!(await exists(path.join(root, "deliverables", "runtime-summary.json")))) {
     const graph = await readJson<{ lanes?: Array<{ budget?: { maxUSD?: number } }> }>(
       path.join(root, "plans", "operation-graph.json"),
@@ -317,10 +356,13 @@ export async function runRuntimeScheduler(
       leaseSeconds: input.leaseSeconds,
       now,
     })
-    const sync = await syncOperationRuntimeState(worktree, {
-      operationID,
-      backgroundJobs: input.backgroundJobs,
-    })
+    const graphPath = path.join(root, "plans", "operation-graph.json")
+    const sync = (await exists(graphPath))
+      ? await syncOperationRuntimeState(worktree, {
+          operationID,
+          backgroundJobs: input.backgroundJobs,
+        })
+      : emptyRuntimeSync({ operationID, graphPath, now })
     const supervisor = await maybeRunSupervisor(worktree, {
       ...input,
       operationID,
@@ -330,6 +372,7 @@ export async function runRuntimeScheduler(
     if (supervisor?.generatedAt) lastSupervisorReviewAt = new Date(supervisor.generatedAt)
 
     let run: OperationRunResult | undefined
+    let backlog: OperationBacklogResult | undefined
     let launchedJobs: string[] = []
     let launchedCommandJobs: string[] = []
     if (supervisor?.action === "continue_reporting" && input.launchModelLane) {
@@ -341,7 +384,16 @@ export async function runRuntimeScheduler(
       run = await runOperationStep(worktree, {
         operationID,
         backgroundJobs: input.backgroundJobs,
+        now,
       })
+      if (run.action === "expand_work") {
+        backlog = await generateOperationBacklog(worktree, {
+          operationID,
+          toolManifestPath: input.toolManifestPath,
+          maxUnits: input.commandWorkUnitLimit ?? 25,
+          runtimeRemainingSeconds: await goalRuntimeRemainingSeconds(worktree, operationID, now),
+        })
+      }
       const launched = run.taskParams && input.launchModelLane ? await input.launchModelLane(run.taskParams) : undefined
       launchedJobs = launched?.jobID ? [launched.jobID] : []
     }
@@ -372,6 +424,7 @@ export async function runRuntimeScheduler(
       sync,
       supervisor,
       run,
+      backlog,
       governor,
       requeuedWorkUnits: lease.requeuedUnits,
       launchedJobs,
@@ -387,7 +440,9 @@ export async function runRuntimeScheduler(
       supervisorReason: supervisor?.reason,
       supervisorRan: supervisor?.ran ?? false,
       lastAction: run?.action ?? (supervisor?.blocking ? "supervisor_blocked" : undefined),
-      lastReason: run?.reason ?? supervisor?.reason,
+      lastReason: backlog
+        ? `expanded operation backlog: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
+        : run?.reason ?? supervisor?.reason,
       governorAction: governor.action,
       governorReason: governor.reason,
       requeuedWorkUnits: lease.requeuedUnits,
@@ -417,6 +472,16 @@ export async function runRuntimeScheduler(
       reason = governor.action === "stop" ? governor.reason : run.reason
       break
     }
+    if (run.action === "expand_work") {
+      reason = backlog
+        ? `expanded operation backlog before target runtime elapsed: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
+        : run.reason
+      continue
+    }
+    if (run.action === "research_charter") {
+      reason = run.reason
+      break
+    }
     if (run.action === "wait" || run.action === "schedule") {
       reason = run.reason
       break
@@ -431,7 +496,9 @@ export async function runRuntimeScheduler(
     supervisorReason: cycles.at(-1)?.supervisor?.reason,
     supervisorRan: cycles.at(-1)?.supervisor?.ran ?? false,
     lastAction: cycles.at(-1)?.run?.action ?? (cycles.at(-1)?.supervisor?.blocking ? "supervisor_blocked" : undefined),
-    lastReason: cycles.at(-1)?.run?.reason ?? cycles.at(-1)?.supervisor?.reason,
+    lastReason: cycles.at(-1)?.backlog
+      ? `expanded operation backlog: lanes=${cycles.at(-1)?.backlog?.generatedLanes.length ?? 0}, work_units=${cycles.at(-1)?.backlog?.generatedWorkUnits ?? 0}`
+      : cycles.at(-1)?.run?.reason ?? cycles.at(-1)?.supervisor?.reason,
     governorAction: cycles.at(-1)?.governor.action,
     governorReason: cycles.at(-1)?.governor.reason,
     launchedJobs: cycles.at(-1)?.launchedJobs ?? [],

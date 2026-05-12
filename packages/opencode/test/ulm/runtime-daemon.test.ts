@@ -129,8 +129,11 @@ describe("ULM runtime daemon", () => {
       sleep: async () => {},
     })
 
-    expect(result.reason).toBe("no scheduled operation work remains before target runtime elapsed")
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toContain("expanded operation backlog before target runtime elapsed")
     expect(result.reason).not.toContain("laptop preflight blocked")
+    const expanded = JSON.parse(await fs.readFile(written.json, "utf8"))
+    expect(expanded.lanes.some((lane: { id: string }) => lane.id === "planned_work_expansion_1")).toBe(true)
   })
 
   test("blocks school-laptop daemon launches until first-run launch readiness is true", async () => {
@@ -319,8 +322,10 @@ describe("ULM runtime daemon", () => {
       sleep: async () => {},
     })
 
-    expect(result.stopped).toBe(true)
-    expect(result.reason).toBe("no scheduled operation work remains before target runtime elapsed")
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toContain("expanded operation backlog before target runtime elapsed")
+    const expanded = JSON.parse(await fs.readFile(written.json, "utf8"))
+    expect(expanded.lanes.some((lane: { id: string }) => lane.id === "planned_work_expansion_1")).toBe(true)
   })
 
   test("enables supervisor review from the daemon target window even when the stored goal is short", async () => {

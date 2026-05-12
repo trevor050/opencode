@@ -2,7 +2,7 @@
 
 ## What Was Researched
 
-- OpenCode Go currently exposes models through the `opencode-go/<model-id>` provider route and publishes subscription/usage-limit behavior separately from raw model metadata.
+- ULM model routing is OpenAI-only. The runtime governor should treat non-OpenAI routes as invalid for ULM lanes rather than as fallback throughput lanes.
 - ChatGPT Pro currently grants higher ChatGPT and Codex allowances, but the help center explicitly frames access as subscription usage, not a permission to programmatically extract or resell capacity.
 - OpenHands-style agent systems separate runtime/control state from the model transcript so long tasks survive context churn.
 

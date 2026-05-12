@@ -503,7 +503,7 @@ async function recoverCliModelJob(job: BackgroundJob.Info) {
     subagent_type: subagentType,
     operationID,
     laneID,
-    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "opencode-go/qwen3.6-plus",
+    modelRoute: typeof job.metadata?.modelRoute === "string" ? job.metadata.modelRoute : "openai/gpt-5.5",
     allowedTools,
     background: true,
   })

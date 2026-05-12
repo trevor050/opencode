@@ -697,6 +697,21 @@ export type OperationPlanPhase = {
   noSubagents: string[]
 }
 
+export type OperationExecutionBlock = {
+  id?: string
+  stage: Stage
+  laneID: string
+  title: string
+  startMinute: number
+  durationMinutes: number
+  objective: string
+  actions: string[]
+  successCriteria: string[]
+  fallbackWork: string[]
+  subagents: string[]
+  expectedArtifacts?: string[]
+}
+
 export type PlanningApproval = {
   status: "not_required" | "pending" | "approved" | "rejected"
   discoveryCharterPath?: string
@@ -727,6 +742,7 @@ export type OperationTimeBudget = {
     hours: number
     work: string
   }>
+  executionBlocks?: OperationExecutionBlock[]
 }
 
 export type CoverageContractStatus = "unmet" | "partial" | "met" | "released"
@@ -2156,6 +2172,31 @@ function operationPlanMarkdown(record: OperationPlanRecord) {
           "",
           "## Time Budget",
           ...record.timeBudget.allocations.map((item) => `- ${item.stage}: ${item.hours}h - ${item.work}`),
+          ...(record.timeBudget.executionBlocks?.length
+            ? [
+                "",
+                "### Execution Blocks",
+                "",
+                ...record.timeBudget.executionBlocks.flatMap((block, index) => [
+                  `#### ${block.id ?? `block-${index + 1}`}: ${block.title}`,
+                  "",
+                  `- stage: ${block.stage}`,
+                  `- lane_id: ${block.laneID}`,
+                  `- starts_at_minute: ${block.startMinute}`,
+                  `- duration_minutes: ${block.durationMinutes}`,
+                  `- objective: ${block.objective}`,
+                  `- subagents: ${block.subagents.length ? block.subagents.join(", ") : "none"}`,
+                  `- expected_artifacts: ${block.expectedArtifacts?.length ? block.expectedArtifacts.join(", ") : "none recorded"}`,
+                  "- actions:",
+                  ...block.actions.map((item) => `  - ${item}`),
+                  "- success_criteria:",
+                  ...block.successCriteria.map((item) => `  - ${item}`),
+                  "- fallback_work:",
+                  ...block.fallbackWork.map((item) => `  - ${item}`),
+                  "",
+                ]),
+              ]
+            : []),
           ...(record.timeBudget.durationFit
             ? [
                 "",
@@ -2561,6 +2602,12 @@ export function validateOperationPlan(input: OperationPlanInput) {
     }
     if (!input.timeBudget?.allocations.length) gaps.push("2h+ operation plan requires timeBudget.allocations")
     if (!input.timeBudget?.finalizationWindowHours) gaps.push("2h+ operation plan requires timeBudget.finalizationWindowHours")
+    const finalizationHours = input.timeBudget?.finalizationWindowHours ?? 0
+    const plannedExecutionHours = Math.max(0, (targetHours ?? 0) - finalizationHours)
+    const allocationHours = input.timeBudget?.allocations.reduce((sum, allocation) => sum + allocation.hours, 0) ?? 0
+    if (Number.isFinite(targetHours) && allocationHours + 0.05 < plannedExecutionHours) {
+      gaps.push("2h+ operation plan timeBudget.allocations must cover non-finalization targetHours")
+    }
     if (input.timeBudget?.durationFit?.confidence !== "duration_sized") {
       gaps.push("2h+ operation plan requires timeBudget.durationFit.confidence=duration_sized")
     }
@@ -2586,6 +2633,39 @@ export function validateOperationPlan(input: OperationPlanInput) {
       (allocation) => allocation.stage === "reporting" || allocation.stage === "handoff",
     )
     if (!hasReportingAllocation) gaps.push("2h+ operation plan requires reporting or handoff finalization allocation")
+    const executionBlocks = input.timeBudget?.executionBlocks ?? []
+    if (!executionBlocks.length) {
+      gaps.push("2h+ operation plan requires timeBudget.executionBlocks")
+    } else {
+      const executionWindowMinutes = Math.max(0, Math.round(((targetHours ?? 0) - finalizationHours) * 60))
+      const maxBlockMinutes = (targetHours ?? 0) >= 8 ? 60 : 30
+      const minBlockMinutes = 15
+      const requiredBlocks = Math.max(1, Math.ceil(executionWindowMinutes / maxBlockMinutes))
+      const totalBlockMinutes = executionBlocks.reduce((sum, block) => sum + block.durationMinutes, 0)
+      if (executionBlocks.length < requiredBlocks) {
+        gaps.push(`2h+ operation plan requires at least ${requiredBlocks} execution blocks for the target duration`)
+      }
+      if (totalBlockMinutes < executionWindowMinutes) {
+        gaps.push("2h+ operation plan executionBlocks must cover the non-finalization time budget")
+      }
+      executionBlocks.forEach((block, index) => {
+        const label = block.id?.trim() || `execution block ${index + 1}`
+        if (!block.laneID.trim()) gaps.push(`${label}: laneID is required`)
+        if (!block.title.trim()) gaps.push(`${label}: title is required`)
+        if (!Number.isFinite(block.startMinute) || block.startMinute < 0) gaps.push(`${label}: startMinute must be non-negative`)
+        if (
+          !Number.isFinite(block.durationMinutes) ||
+          block.durationMinutes < minBlockMinutes ||
+          block.durationMinutes > maxBlockMinutes
+        ) {
+          gaps.push(`${label}: durationMinutes must be between ${minBlockMinutes} and ${maxBlockMinutes}`)
+        }
+        if (!block.objective.trim()) gaps.push(`${label}: objective is required`)
+        if (!block.actions.some((action) => action.trim())) gaps.push(`${label}: actions are required`)
+        if (!block.successCriteria.some((criterion) => criterion.trim())) gaps.push(`${label}: successCriteria are required`)
+        if (!block.fallbackWork.some((fallback) => fallback.trim())) gaps.push(`${label}: fallbackWork is required`)
+      })
+    }
   }
   return gaps
 }
@@ -3566,7 +3646,7 @@ export async function writeFinding(worktree: string, input: FindingInput) {
   return { root, record }
 }
 
-async function readFindings(root: string) {
+export async function readFindings(root: string) {
   let findings: FindingRecord[] = []
   try {
     const files = await fs.readdir(path.join(root, "findings"))
@@ -3583,7 +3663,7 @@ async function readFindings(root: string) {
   return findings
 }
 
-async function readEvidenceRecords(root: string) {
+export async function readEvidenceRecords(root: string) {
   let records: EvidenceRecord[] = []
   try {
     const files = await fs.readdir(path.join(root, "evidence"))
@@ -3672,13 +3752,59 @@ function markdownInline(input: string) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
 }
 
+function authoredSectionClass(title: string) {
+  const normalized = normalizeSectionTitle(title)
+  if (normalized.includes("executive summary")) return "authored-executive-summary"
+  if (normalized.includes("methodology") || normalized.includes("scope")) return "authored-methodology"
+  if (normalized.includes("environment")) return "authored-environment"
+  if (normalized.includes("attack path")) return "authored-attack-path"
+  if (normalized.includes("finding")) return "authored-findings-detail"
+  if (normalized.includes("roadmap") || normalized.includes("risk register")) return "authored-roadmap"
+  if (normalized.includes("coverage") || normalized.includes("testing limits")) return "authored-coverage"
+  if (normalized.includes("validation") || normalized.includes("known unknowns")) return "authored-validation-limits"
+  if (normalized.includes("evidence")) return "authored-evidence-map"
+  if (normalized.includes("handoff")) return "authored-handoff"
+  if (normalized.includes("appendix")) return "authored-appendix"
+  return "authored-general"
+}
+
+function authoredCardForSection(sectionTitle: string) {
+  const normalized = normalizeSectionTitle(sectionTitle)
+  if (normalized.includes("finding")) return { open: '<section class="finding authored-finding">', close: "</section>" }
+  if (normalized.includes("roadmap") || normalized.includes("risk register")) {
+    return { open: '<article class="roadmap-card authored-roadmap-card">', close: "</article>" }
+  }
+  if (normalized.includes("validation") || normalized.includes("known unknowns")) {
+    return { open: '<article class="validation-card authored-validation-card">', close: "</article>" }
+  }
+  if (normalized.includes("evidence") || normalized.includes("appendix")) {
+    return { open: '<article class="evidence-card authored-evidence-card">', close: "</article>" }
+  }
+  return undefined
+}
+
 function markdownReportToHtml(input: string) {
   const blocks: string[] = []
   let paragraph: string[] = []
+  let sectionOpen = false
+  let sectionTitle = ""
+  let cardClose: string | undefined
   const flushParagraph = () => {
     if (!paragraph.length) return
     blocks.push(`<p>${markdownInline(paragraph.join(" "))}</p>`)
     paragraph = []
+  }
+  const closeCard = () => {
+    if (!cardClose) return
+    blocks.push(cardClose)
+    cardClose = undefined
+  }
+  const closeSection = () => {
+    closeCard()
+    if (!sectionOpen) return
+    blocks.push("</section>")
+    sectionOpen = false
+    sectionTitle = ""
   }
   for (const rawLine of input.split(/\r?\n/)) {
     const line = rawLine.trim()
@@ -3690,12 +3816,35 @@ function markdownReportToHtml(input: string) {
     if (heading) {
       flushParagraph()
       const level = Math.min(3, heading[1]!.length)
-      blocks.push(`<h${level}>${markdownInline(heading[2]!)}</h${level}>`)
+      const title = heading[2]!
+      if (level === 1) {
+        closeSection()
+        blocks.push(`<h1>${markdownInline(title)}</h1>`)
+        continue
+      }
+      if (level === 2) {
+        closeSection()
+        sectionOpen = true
+        sectionTitle = title
+        blocks.push(`<section class="report-section authored-section ${authoredSectionClass(title)}">`)
+        blocks.push(`<h2>${markdownInline(title)}</h2>`)
+        continue
+      }
+      const card = authoredCardForSection(sectionTitle)
+      if (card) {
+        closeCard()
+        blocks.push(card.open)
+        blocks.push(`<h3>${markdownInline(title)}</h3>`)
+        cardClose = card.close
+        continue
+      }
+      blocks.push(`<h${level}>${markdownInline(title)}</h${level}>`)
       continue
     }
     paragraph.push(line)
   }
   flushParagraph()
+  closeSection()
   return blocks.join("\n")
 }
 
@@ -3811,22 +3960,34 @@ function outlineSectionBudgets(outline: string | undefined): OutlineSectionBudge
 function reportSectionForOutlineTitle(report: string, title: string) {
   const target = normalizeSectionTitle(title)
   if (!target) return undefined
-  const headings: Array<{ index: number; end: number; text: string }> = []
+  const headings: Array<{ index: number; end: number; level: number; text: string }> = []
 
   for (const match of report.matchAll(/^#{1,6}\s+(.+)$/gim)) {
     if (match.index === undefined) continue
-    headings.push({ index: match.index, end: match.index + match[0].length, text: match[1] ?? "" })
+    headings.push({
+      index: match.index,
+      end: match.index + match[0].length,
+      level: match[0].match(/^#+/)?.[0].length ?? 6,
+      text: match[1] ?? "",
+    })
   }
   for (const match of report.matchAll(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gim)) {
     if (match.index === undefined) continue
-    headings.push({ index: match.index, end: match.index + match[0].length, text: match[2] ?? "" })
+    headings.push({
+      index: match.index,
+      end: match.index + match[0].length,
+      level: Number.parseInt(match[1] ?? "6", 10),
+      text: match[2] ?? "",
+    })
   }
 
   headings.sort((left, right) => left.index - right.index)
   const headingIndex = headings.findIndex((heading) => normalizeSectionTitle(heading.text).includes(target))
   if (headingIndex < 0) return undefined
   const heading = headings[headingIndex]!
-  const next = headings.find((candidate, index) => index > headingIndex && candidate.index > heading.index)
+  const next = headings.find(
+    (candidate, index) => index > headingIndex && candidate.index > heading.index && candidate.level <= heading.level,
+  )
   return plainReportText(report.slice(heading.end, next?.index ?? report.length))
 }
 
@@ -3891,6 +4052,8 @@ export async function writeReportOutline(worktree: string, input: ReportOutlineI
     "- Every finding section must include affected assets, evidence, impact, remediation, confidence, and validation limits.",
     "- Every evidence claim must cite a stored evidence id or path.",
     "- People, role, and identity claims should cite `profiles/` artifacts or evidence records.",
+    "- The rendered report must have a cover, table of contents, metric cards, finding sections, remediation roadmap cards, and evidence cards.",
+    "- Tables are for compact comparable data only; do not use them as the default layout for findings, evidence maps, validation limits, or executive summaries.",
     "- Long reports should pass evidence indexing, technical review, executive review, report_lint, report_render, runtime_summary, operation_audit, and handoff gates before delivery.",
     "- Sparse sections should be expanded with methodology, observations, validation detail, and remediation sequencing, not filler.",
     "- Known unknowns and rejected findings belong in the report when they affect decision-making.",
@@ -4802,18 +4965,80 @@ function renderFindingRows(reportable: FindingRecord[]) {
     : '<tr><td colspan="5">No validated or report-ready findings were recorded.</td></tr>'
 }
 
+function renderMetricCard(label: string, value: string, detail: string) {
+  return `<div class="metric-card">
+    <div class="metric-value">${escapeHtml(value)}</div>
+    <div class="metric-label">${escapeHtml(label)}</div>
+    <p>${escapeHtml(detail)}</p>
+  </div>`
+}
+
+function renderFindingRoadmapCards(reportable: FindingRecord[]) {
+  return reportable.length
+    ? reportable
+        .map(
+          (finding) => `<article class="roadmap-card severity-${escapeHtml(finding.severity)}">
+    <div class="card-kicker">${escapeHtml(finding.findingID)} / ${escapeHtml(finding.severity)} / ${escapeHtml(finding.state)}</div>
+    <h3>${escapeHtml(finding.title)}</h3>
+    <p>${escapeHtml(finding.impact ?? finding.description)}</p>
+    <p><strong>Next owner action:</strong> ${escapeHtml(finding.remediation ?? "Assign an accountable owner and define a retest plan.")}</p>
+    <p><strong>Evidence:</strong> ${escapeHtml(finding.evidence.map((item) => item.path ?? item.id).join(", ") || "not recorded")}</p>
+  </article>`,
+        )
+        .join("\n")
+    : '<article class="roadmap-card empty"><h3>No validated or report-ready findings</h3><p>The report must not invent risks to fill the roadmap.</p></article>'
+}
+
+function renderNonReportableCards(nonReportable: FindingRecord[]) {
+  return nonReportable.length
+    ? nonReportable
+        .map(
+          (finding) => `<article class="validation-card">
+    <div class="card-kicker">${escapeHtml(finding.findingID)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.severity)}</div>
+    <h3>${escapeHtml(finding.title)}</h3>
+    <p>Retained for reviewer awareness, but not promoted to report-ready status at handoff.</p>
+    <p>${escapeHtml(finding.description)}</p>
+  </article>`,
+        )
+        .join("\n")
+    : '<article class="validation-card empty"><h3>No retained validation limits</h3><p>No rejected, candidate, or needs-validation findings were recorded.</p></article>'
+}
+
+function renderEvidenceCards(evidence: EvidenceRecord[]) {
+  return evidence.length
+    ? evidence
+        .map(
+          (item) => `<article class="evidence-card">
+    <div class="card-kicker">${escapeHtml(item.evidenceID)} / ${escapeHtml(item.kind)}</div>
+    <h3>${escapeHtml(item.title)}</h3>
+    <p>${escapeHtml(item.summary)}</p>
+    <p><strong>Path:</strong> ${escapeHtml(item.path ?? "not recorded")}</p>
+  </article>`,
+        )
+        .join("\n")
+    : '<article class="evidence-card empty"><h3>No evidence records</h3><p>No evidence records were recorded.</p></article>'
+}
+
 function renderFindingSections(reportable: FindingRecord[]) {
   return reportable.length
     ? reportable
         .map(
-          (finding) => `<section class="finding">
-    <h3>${escapeHtml(finding.title)}</h3>
-    <p><strong>Severity:</strong> ${escapeHtml(finding.severity)} | <strong>Confidence:</strong> ${finding.confidence}</p>
-    <p><strong>Affected Assets:</strong> ${escapeHtml(finding.affectedAssets.join(", "))}</p>
-    <p><strong>Description:</strong> ${escapeHtml(finding.description)}</p>
-    <p><strong>Impact:</strong> ${escapeHtml(finding.impact ?? "Not recorded.")}</p>
-    <p><strong>Remediation:</strong> ${escapeHtml(finding.remediation ?? "Not recorded.")}</p>
-    <p><strong>Evidence:</strong> ${escapeHtml(finding.evidence.map((item) => item.path ?? item.id).join(", "))}</p>
+          (finding) => `<section class="finding severity-${escapeHtml(finding.severity)}">
+    <div class="finding-header">
+      <div>
+        <div class="card-kicker">${escapeHtml(finding.findingID)} / ${escapeHtml(finding.state)}</div>
+        <h3>${escapeHtml(finding.title)}</h3>
+      </div>
+      <div class="severity-pill">${escapeHtml(finding.severity)}</div>
+    </div>
+    <div class="finding-meta">
+      <span>confidence ${finding.confidence}</span>
+      <span>${escapeHtml(finding.affectedAssets.join(", ") || "no affected assets recorded")}</span>
+    </div>
+    <p><strong>What was found:</strong> ${escapeHtml(finding.description)}</p>
+    <p><strong>Operational impact:</strong> ${escapeHtml(finding.impact ?? "Not recorded.")}</p>
+    <p><strong>Remediation path:</strong> ${escapeHtml(finding.remediation ?? "Not recorded.")}</p>
+    <p><strong>Evidence trail:</strong> ${escapeHtml(finding.evidence.map((item) => item.path ?? item.id).join(", ") || "not recorded")}</p>
   </section>`,
         )
         .join("\n")
@@ -5152,108 +5377,115 @@ function renderReportSections(input: {
     .map((title) => {
       const normalized = normalizeSectionTitle(title)
       if (normalized.includes("executive summary")) {
-        return `<h2>${escapeHtml(title)}</h2>
-  <p>${escapeHtml(input.operation?.summary ?? "No operation summary has been recorded.")}</p>
-  <p>This handoff contains ${input.reportable.length} report-ready findings, ${input.evidence.length} evidence records, and ${input.nonReportable.length} retained non-reportable findings so reviewers can separate confirmed risk from unresolved or rejected observations.</p>`
+        return `<section class="report-section executive-summary">
+  <h2>${escapeHtml(title)}</h2>
+  <p class="lede">${escapeHtml(input.operation?.summary ?? "No operation summary has been recorded.")}</p>
+  <div class="metric-grid">
+    ${renderMetricCard("Report-Ready Findings", String(input.reportable.length), "validated findings ready for stakeholder review")}
+    ${renderMetricCard("Evidence Records", String(input.evidence.length), "stored references behind report claims")}
+    ${renderMetricCard("Retained Leads", String(input.nonReportable.length), "candidate, rejected, or unresolved observations preserved for review")}
+    ${renderMetricCard("Current Risk", input.operation?.riskLevel ?? "unknown", "operation-level risk posture from the ledger")}
+  </div>
+  <p>This handoff separates confirmed risk from unresolved observations so board members, staff, and CEH reviewers can make decisions without mistaking raw lead volume for validated exposure.</p>
+</section>`
       }
       if (normalized.includes("scope") && normalized.includes("methodology")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>${escapeHtml(input.operation?.objective ?? "No objective has been recorded.")}</p>
   <p>Testing followed the recorded operation plan, preserved raw support through evidence records, promoted only evidence-backed findings, and used stage, lint, render, runtime, and audit gates before handoff.</p>
-  <p>Assumptions: ${escapeHtml(input.plan?.assumptions?.join("; ") || "No explicit assumptions were recorded.")}</p>`
+  <p>Assumptions: ${escapeHtml(input.plan?.assumptions?.join("; ") || "No explicit assumptions were recorded.")}</p>
+</section>`
       }
       if (normalized.includes("environment overview")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>Recorded affected assets include ${escapeHtml(assets.join(", ") || "none recorded")}. Evidence kinds represented in the ledger include ${escapeHtml(evidenceKinds.join(", ") || "none recorded")}.</p>
-  <p>District and public system context should be read from profiles/district-profile.md when present. The environment overview is intentionally limited to operation artifacts and synthetic evidence available at render time, so unverified systems are not invented in the client deliverable.</p>`
+  <p>District and public system context should be read from profiles/district-profile.md when present. The environment overview is intentionally limited to operation artifacts and synthetic evidence available at render time, so unverified systems are not invented in the client deliverable.</p>
+</section>`
       }
       if (normalized.includes("people") || normalized.includes("identity graph")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>People, role, application, group, and data-system relationships are tracked in profiles/people/ and profiles/identity-graph.json so authority and workflow risk can be reviewed separately from network exposure.</p>
-  <p>Public role inferences should be treated as hypotheses until validated with authorized identity exports, SaaS role review, or authenticated workflow testing.</p>`
+  <p>Public role inferences should be treated as hypotheses until validated with authorized identity exports, SaaS role review, or authenticated workflow testing.</p>
+</section>`
       }
       if (normalized.includes("attack path")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>The confirmed attack narrative is derived from report-ready findings only: ${escapeHtml(
     input.reportable.map((finding) => `${finding.findingID}: ${finding.description}`).join(" ") ||
       "no report-ready attack path was recorded",
   )}</p>
-  <p>Rejected and candidate observations are retained separately so the report does not overstate exploitability or imply validation that did not happen.</p>`
+  <p>Rejected and candidate observations are retained separately so the report does not overstate exploitability or imply validation that did not happen.</p>
+</section>`
       }
       if (normalized.includes("findings detail")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>Each detailed finding below includes severity, confidence, affected assets, description, impact, remediation, and evidence references from the durable operation ledger.</p>
-  ${renderFindingSections(input.reportable)}`
+  ${renderFindingSections(input.reportable)}
+</section>`
       }
       if (normalized.includes("risk register") || normalized.includes("roadmap")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>The prioritized remediation roadmap should start with critical and high severity report-ready findings, then address medium and low items based on affected assets, exploitability, and operational owner availability.</p>
-  <table>
-    <thead><tr><th>ID</th><th>Severity</th><th>Title</th><th>State</th><th>Evidence</th></tr></thead>
-    <tbody>${renderFindingRows(input.reportable)}</tbody>
-  </table>`
+  <div class="roadmap-list">${renderFindingRoadmapCards(input.reportable)}</div>
+</section>`
       }
       if (normalized.includes("validation limits") || normalized.includes("known unknowns")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>Validation limits are represented by unresolved or rejected findings, recorded blockers, and missing evidence. Current blockers: ${escapeHtml(
     input.operation?.blockers?.join("; ") || "No blockers recorded.",
   )}</p>
-  <table>
-    <thead><tr><th>ID</th><th>State</th><th>Severity</th><th>Title</th><th>Reason Retained</th></tr></thead>
-    <tbody>${
-      input.nonReportable.length
-        ? input.nonReportable
-            .map(
-              (finding) =>
-                `<tr><td>${escapeHtml(finding.findingID)}</td><td>${escapeHtml(finding.state)}</td><td>${escapeHtml(
-                  finding.severity,
-                )}</td><td>${escapeHtml(
-                  finding.title,
-                )}</td><td>Not promoted to validated/report-ready state at handoff.</td></tr>`,
-            )
-            .join("\n")
-        : '<tr><td colspan="5">No rejected, candidate, or needs-validation findings were recorded.</td></tr>'
-    }</tbody>
-  </table>`
+  <div class="validation-list">${renderNonReportableCards(input.nonReportable)}</div>
+</section>`
       }
       if (
         normalized.includes("coverage") ||
         normalized.includes("browser evidence") ||
         normalized.includes("testing limits")
       ) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>This section summarizes what the operation actually touched, where browser evidence exists, and where confidence is limited by scope, time, authentication, tooling, or unresolved blockers.</p>
   <p>Current affected assets from validated/report-ready findings: ${escapeHtml(assets.join(", ") || "none recorded")}.</p>
-  <p>Browser evidence should be reviewed under browser/ and evidence/ when present. Missing browser artifacts are a testing limitation, not proof of absence.</p>`
+  <p>Browser evidence should be reviewed under browser/ and evidence/ when present. Missing browser artifacts are a testing limitation, not proof of absence.</p>
+</section>`
       }
       if (normalized.includes("evidence map")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
   <p>The Evidence Index maps report claims back to stored evidence identifiers and paths, keeping the handoff reviewable after context compaction or process restart.</p>
-  <table>
-    <thead><tr><th>ID</th><th>Kind</th><th>Title</th><th>Path</th><th>Summary</th></tr></thead>
-    <tbody>${renderEvidenceRows(input.evidence)}</tbody>
-  </table>`
+  <div class="evidence-grid">${renderEvidenceCards(input.evidence)}</div>
+</section>`
       }
       if (normalized.includes("operator handoff")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section handoff-checklist">
+  <h2>${escapeHtml(title)}</h2>
   <ul>
     <li>Review report-ready findings and their evidence paths before sending externally.</li>
     <li>Review candidate, needs-validation, and rejected findings so known unknowns are not lost.</li>
     <li>Confirm runtime_summary and operation_audit exist for unattended-run accountability.</li>
     <li>Run report_lint with finalHandoff=true after any manual report edits.</li>
     <li>Use the operation memory file for internal continuation notes only; do not include it in customer deliverables.</li>
-  </ul>`
+  </ul>
+</section>`
       }
       if (normalized.includes("appendix") || normalized.includes("raw evidence")) {
-        return `<h2>${escapeHtml(title)}</h2>
+        return `<section class="report-section appendix">
+  <h2>${escapeHtml(title)}</h2>
   <p>The raw evidence appendix preserves command outputs, HTTP responses, files, screenshots, notes, and logs that support the report. Reviewers should use these paths to verify each claim before remediation planning.</p>
-  <table>
-    <thead><tr><th>ID</th><th>Kind</th><th>Title</th><th>Path</th><th>Summary</th></tr></thead>
-    <tbody>${renderEvidenceRows(input.evidence)}</tbody>
-  </table>`
+  <div class="evidence-grid compact">${renderEvidenceCards(input.evidence)}</div>
+</section>`
       }
-      return `<h2>${escapeHtml(title)}</h2>
-  <p>This section is reserved by the report outline. The current render uses available operation summary, findings, evidence, blockers, and runtime artifacts to avoid inventing details beyond the durable ledger.</p>`
+      return `<section class="report-section">
+  <h2>${escapeHtml(title)}</h2>
+  <p>This section is reserved by the report outline. The current render uses available operation summary, findings, evidence, blockers, and runtime artifacts to avoid inventing details beyond the durable ledger.</p>
+</section>`
     })
     .join("\n")
 }
@@ -5296,6 +5528,7 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   const runtimeSummaryMarkdownSource = await readText(path.join(root, "deliverables", "runtime-summary.md"))
   const runtimeSummaryExists = Boolean(runtimeSummaryMarkdownSource)
   const title = input.title ?? operation?.objective ?? `ULMCode Operation ${operationID}`
+  const sectionTitles = reportOutlineTitles(outline)
   const finalDir = path.join(root, "deliverables", "final")
   const reportBody = authoredReport
     ? authoredReportBody(authoredReport)
@@ -5308,32 +5541,172 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   <meta charset="utf-8">
   <title>${escapeHtml(title)}</title>
   <style>
-    :root { --ink: #111318; --muted: #58606f; --rule: #d9dde5; --paper: #fbfaf7; --panel: #ffffff; --accent: #9b611d; --accent-soft: #f6ead8; }
-    body { font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--paper); margin: 46px; line-height: 1.58; }
+    :root {
+      --ink: #111318;
+      --muted: #5c6573;
+      --rule: #d9dde5;
+      --paper: #f6f1e8;
+      --panel: #fffefa;
+      --panel-strong: #171a20;
+      --accent: #9b611d;
+      --accent-deep: #633b10;
+      --accent-soft: #f1dfc7;
+      --blue: #204d72;
+      --green: #28705b;
+      --red: #9b2f27;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body {
+      font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(90deg, rgba(155,97,29,0.08), transparent 22rem), var(--paper);
+      margin: 0;
+      line-height: 1.58;
+    }
+    main { max-width: 1040px; margin: 0 auto; padding: 46px; }
     h1, h2, h3 { line-height: 1.12; letter-spacing: 0; }
-    h1 { font-size: 42px; margin: 0 0 10px; max-width: 920px; }
-    h2 { border-top: 2px solid var(--ink); padding-top: 18px; margin-top: 34px; font-size: 24px; }
-    h3 { font-size: 18px; margin-top: 24px; }
+    h1 { font-size: 46px; margin: 0 0 14px; max-width: 860px; }
+    h2 { border-top: 2px solid var(--ink); padding-top: 18px; margin-top: 42px; font-size: 25px; }
+    h3 { font-size: 18px; margin: 0 0 10px; }
     p { max-width: 920px; }
-    table { width: 100%; border-collapse: collapse; margin: 18px 0 24px; background: var(--panel); box-shadow: 0 1px 0 rgba(17,19,24,0.04); }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0 24px; background: var(--panel); }
     th, td { border: 1px solid var(--rule); padding: 9px 10px; text-align: left; vertical-align: top; }
-    th { background: var(--accent-soft); color: var(--ink); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    th { background: var(--accent-soft); color: var(--ink); font-size: 12px; text-transform: uppercase; letter-spacing: 0; }
     ul { padding-left: 22px; }
-    .meta { color: var(--muted); border-left: 4px solid var(--accent); padding-left: 12px; margin-bottom: 28px; }
-    .finding { page-break-inside: avoid; background: var(--panel); border: 1px solid var(--rule); padding: 14px 18px; margin: 18px 0; }
+    .report-cover {
+      min-height: 540px;
+      display: grid;
+      align-content: space-between;
+      border-bottom: 1px solid rgba(17,19,24,0.22);
+      padding-bottom: 34px;
+      position: relative;
+    }
+    .report-cover::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto -46px;
+      width: 10px;
+      height: 100%;
+      background: linear-gradient(var(--accent), var(--blue));
+    }
+    .cover-kicker, .card-kicker {
+      color: var(--accent-deep);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .meta {
+      color: var(--muted);
+      border-left: 4px solid var(--accent);
+      padding-left: 12px;
+      margin-bottom: 28px;
+      max-width: 760px;
+    }
+    .lede { font-size: 20px; line-height: 1.42; max-width: 820px; }
+    .toc {
+      background: var(--panel);
+      border: 1px solid rgba(17,19,24,0.18);
+      padding: 22px;
+      margin: 34px 0 10px;
+    }
+    .toc ol { columns: 2; margin: 0; padding-left: 20px; }
+    .toc li { break-inside: avoid; margin: 0 0 8px; color: var(--muted); }
+    .metric-grid, .evidence-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 14px;
+      margin: 18px 0 28px;
+    }
+    .metric-card, .evidence-card, .roadmap-card, .validation-card, .finding {
+      background: var(--panel);
+      border: 1px solid rgba(17,19,24,0.16);
+      box-shadow: 0 10px 24px rgba(17,19,24,0.06);
+      page-break-inside: avoid;
+    }
+    .metric-card { padding: 18px; }
+    .metric-value { font-size: 30px; font-weight: 800; color: var(--panel-strong); }
+    .metric-label { font-weight: 800; margin-top: 2px; }
+    .metric-card p, .evidence-card p, .roadmap-card p, .validation-card p { margin-bottom: 0; }
+    .report-section { margin: 34px 0; }
+    .finding, .roadmap-card, .validation-card, .evidence-card { padding: 18px; margin: 16px 0; }
+    .finding-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+    }
+    .severity-pill {
+      background: var(--panel-strong);
+      color: #fff;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .severity-critical .severity-pill, .severity-critical { border-color: rgba(155,47,39,0.5); }
+    .severity-high .severity-pill { background: var(--red); }
+    .severity-medium .severity-pill { background: var(--accent-deep); }
+    .severity-low .severity-pill { background: var(--green); }
+    .finding-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .finding-meta span {
+      background: var(--accent-soft);
+      border: 1px solid rgba(99,59,16,0.18);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .roadmap-list, .validation-list { display: grid; gap: 12px; }
+    .appendix .evidence-grid.compact { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
     @page { margin: 0.62in; }
-    @media print { body { margin: 0; background: white; } table, .finding { box-shadow: none; } }
+    @media print {
+      body { background: white; }
+      main { max-width: none; padding: 0; }
+      .report-cover { min-height: 8.6in; page-break-after: always; }
+      .toc { page-break-after: always; }
+      .metric-card, .evidence-card, .roadmap-card, .validation-card, .finding { box-shadow: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
-  <p class="meta">Operation: ${escapeHtml(operationID)} | Stage: ${escapeHtml(operation?.stage ?? "unknown")} | Status: ${escapeHtml(operation?.status ?? "unknown")}</p>
-  <h2>Finding State Counts</h2>
-  <table>
-    <thead><tr><th>Candidate</th><th>Needs Validation</th><th>Validated</th><th>Report Ready</th><th>Rejected</th></tr></thead>
-    <tbody><tr><td>${counts.candidate}</td><td>${counts.needs_validation}</td><td>${counts.validated}</td><td>${counts.report_ready}</td><td>${counts.rejected}</td></tr></tbody>
-  </table>
-  ${finalReportBody}
+  <main>
+    <section class="report-cover">
+      <div>
+        <div class="cover-kicker">ULMCode final security report</div>
+        <h1>${escapeHtml(title)}</h1>
+        <p class="meta">Operation: ${escapeHtml(operationID)} | Stage: ${escapeHtml(operation?.stage ?? "unknown")} | Status: ${escapeHtml(operation?.status ?? "unknown")}</p>
+      </div>
+      <div class="metric-grid">
+        ${renderMetricCard("Validated + Report Ready", String(counts.validated + counts.report_ready), "findings promoted beyond raw candidate state")}
+        ${renderMetricCard("Candidate / Needs Validation", String(counts.candidate + counts.needs_validation), "items still requiring reviewer judgment")}
+        ${renderMetricCard("Rejected", String(counts.rejected), "leads retained but excluded from the client risk narrative")}
+      </div>
+    </section>
+    <nav class="toc" role="doc-toc" aria-label="Table of contents">
+      <h2>Table Of Contents</h2>
+      <ol>
+        <li>Finding State Counts</li>
+        ${sectionTitles.map((item) => `<li>${escapeHtml(item)}</li>`).join("\n        ")}
+      </ol>
+    </nav>
+    <section class="report-section finding-state-counts">
+      <h2>Finding State Counts</h2>
+      <div class="metric-grid">
+        ${renderMetricCard("Candidate", String(counts.candidate), "raw observations not ready for stakeholder action")}
+        ${renderMetricCard("Needs Validation", String(counts.needs_validation), "items that need more evidence before promotion")}
+        ${renderMetricCard("Validated", String(counts.validated), "confirmed issues awaiting final report polish")}
+        ${renderMetricCard("Report Ready", String(counts.report_ready), "validated findings ready for distribution")}
+        ${renderMetricCard("Rejected", String(counts.rejected), "discarded or out-of-scope observations")}
+      </div>
+    </section>
+    ${finalReportBody}
+  </main>
 </body>
 </html>
 `

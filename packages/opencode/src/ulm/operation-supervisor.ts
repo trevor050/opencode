@@ -12,6 +12,7 @@ import { readOperationPlanExcerpt, type OperationPlanExcerpt } from "./operation
 import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import { effectiveULMContinuation, readULMConfig } from "./config"
 import { containsRawCredentialSecret } from "./credential-safety"
+import { discoveryResearchMinutesForDuration } from "./pentest-kickoff"
 
 export type OperationSupervisorReviewKind =
   | "startup"
@@ -207,15 +208,16 @@ function decisionsFor(input: {
     )
   }
   if (!input.status.plans.operation && approvedDiscoveryCharter(input.status)) {
+    const targetMinutes = discoveryResearchMinutesForDuration(input.goal?.targetDurationHours)
     decisions.push(
       decision({
         action: "continue_coverage",
-        reason: "approved Discovery Charter needs bounded discovery before the full operation plan",
-        requiredNextTool: "command_supervise",
-        requiredArtifacts: ["plans/discovery-charter.json", "evidence/"],
-        operatorMessage: "Use the approved charter to gather bounded discovery evidence, then write the full operation plan.",
+        reason: "approved Discovery Charter needs a dedicated research pass before the full operation plan",
+        requiredNextTool: "task",
+        requiredArtifacts: ["plans/discovery-charter.json", "evidence/", "memory.md"],
+        operatorMessage: "Use the approved charter to run the research pass, record evidence and plan-shaping notes, then write the full operation plan.",
         modelPrompt:
-          "Run only bounded passive/basic discovery through safe foreground commands or command_supervise, record evidence, then call operation_plan with planningMode=full-duration once duration-fit is defensible.",
+          `Launch a dedicated Discovery Charter research pass${targetMinutes ? ` targeting about ${targetMinutes} minutes` : ""}. The goal is research: answer charter questions, inspect useful external/source material, run only safe scoped recon, put active probes through command_supervise, record evidence and operation_memory notes, checkpoint the discoveries, then call operation_plan with planningMode=full-duration only once duration-fit evidence and an overflow backlog are defensible.`,
       }),
     )
   }

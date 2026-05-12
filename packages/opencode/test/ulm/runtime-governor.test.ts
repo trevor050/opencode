@@ -105,7 +105,7 @@ describe("ULM runtime governor", () => {
 
     expect(decision.action).toBe("continue")
     expect(decision.contextRatio).toBeUndefined()
-    expect(decision.blockers).not.toContain("model context is above 90% for opencode-go/qwen3.6-plus")
+    expect(decision.blockers).not.toContain("model context is above 90% for openai/gpt-5.4-mini-fast")
   })
 
   test("compacts when the active session reports high compaction pressure", async () => {

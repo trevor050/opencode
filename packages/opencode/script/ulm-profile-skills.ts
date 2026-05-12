@@ -131,6 +131,7 @@ type ProfileConfig = {
   instructions?: string[]
   plugin?: string[]
   agent?: Record<string, AgentConfig>
+  provider?: Record<string, unknown>
 }
 
 type OmoRoute = {
@@ -159,6 +160,7 @@ function validateRouting() {
   if (opencodeConfig.model !== "openai/gpt-5.5") throw new Error("profile model must default to GPT-5.5")
   if (opencodeConfig.small_model !== "openai/gpt-5.4-mini-fast") throw new Error("profile small_model must use GPT-5.4 Mini Fast")
   if (opencodeConfig.default_agent !== "pentest") throw new Error("profile default agent must be pentest")
+  if (opencodeConfig.provider) throw new Error("profile must not configure non-OpenAI providers")
 
   assertRoute("opencode.json", "pentest", opencodeConfig.agent?.pentest, {
     model: "openai/gpt-5.5",

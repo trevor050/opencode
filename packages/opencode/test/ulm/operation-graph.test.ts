@@ -70,15 +70,15 @@ describe("ULM operation graph", () => {
 
     expect(throughputLane?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
     expect(throughputLane?.fallbackModelRoutes).toEqual(["openai/gpt-5.5"])
-    expect(graph.lanes.flatMap((lane) => [lane.modelRoute, ...lane.fallbackModelRoutes])).not.toContain(
-      "opencode-go/qwen3.6-plus",
+    expect(graph.lanes.flatMap((lane) => [lane.modelRoute, ...lane.fallbackModelRoutes]).every((route) => route.startsWith("openai/"))).toBe(
+      true,
     )
   })
 
   test("rejects non-OpenAI model routes in operation graphs", () => {
     const graph = buildOperationGraph({
       operationID: "School",
-      modelRoutes: { throughput: "opencode-go/qwen3.6-plus" },
+      modelRoutes: { throughput: "other-provider/other-model" },
     })
 
     expect(validateOperationGraph(graph)).toContain("district_profile: modelRoute provider must be openai")
@@ -204,6 +204,74 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
     expect(graph.lanes.find((lane) => lane.id === "operator_summary")?.releaseRequired).toBe(true)
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(30, 2)
+  })
+
+  test("expands operation plan execution blocks into scheduler lanes before reporting", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationRoot = `${dir.path}/.ulmcode/operations/home-network`
+    await fs.mkdir(`${operationRoot}/plans`, { recursive: true })
+    await fs.writeFile(
+      `${operationRoot}/plans/operation-plan.json`,
+      JSON.stringify(
+        {
+          operationID: "home-network",
+          timeBudget: {
+            targetHours: 7,
+            finalizationWindowHours: 1,
+            executionBlocks: [
+              {
+                id: "lan-discovery-1",
+                stage: "recon",
+                laneID: "service_inventory",
+                title: "LAN discovery block 1",
+                startMinute: 0,
+                durationMinutes: 30,
+                objective: "Run bounded service inventory chunk.",
+                actions: ["Run supervised inventory."],
+                successCriteria: ["Chunk has evidence or blocker."],
+                fallbackWork: ["Narrow the chunk and retry once."],
+                subagents: ["recon"],
+                expectedArtifacts: ["work-blocks/lan-discovery-1.md"],
+              },
+              {
+                id: "validation-1",
+                stage: "validation",
+                laneID: "finding_validation",
+                title: "Validation block 1",
+                startMinute: 30,
+                durationMinutes: 30,
+                objective: "Validate candidate findings.",
+                actions: ["Review normalized evidence."],
+                successCriteria: ["Candidates are promoted or rejected."],
+                fallbackWork: ["Record a limitation and continue queued validation."],
+                subagents: ["validator"],
+                expectedArtifacts: ["work-blocks/validation-1.md"],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const result = await writeOperationGraph(dir.path, { operationID: "Home Network", template: "internal-network" })
+    const graph = JSON.parse(await fs.readFile(result.json, "utf8"))
+    const laneIDs = graph.lanes.map((lane: { id: string }) => lane.id)
+
+    expect(laneIDs).toContain("planned_work_lan_discovery_1")
+    expect(laneIDs).toContain("planned_work_validation_1")
+    expect(laneIDs.indexOf("planned_work_validation_1")).toBeLessThan(laneIDs.indexOf("report_evidence_index"))
+    expect(graph.lanes.find((lane: { id: string }) => lane.id === "planned_work_lan_discovery_1")?.dependsOn).toEqual([
+      "service_inventory",
+    ])
+    expect(graph.lanes.find((lane: { id: string; minRuntimeMinutes?: number }) => lane.id === "planned_work_lan_discovery_1")?.minRuntimeMinutes).toBe(24)
+    expect(graph.lanes.find((lane: { id: string }) => lane.id === "planned_work_validation_1")?.dependsOn).toEqual([
+      "planned_work_lan_discovery_1",
+    ])
+    expect(graph.lanes.find((lane: { id: string }) => lane.id === "report_writing")?.dependsOn).toContain(
+      "planned_work_validation_1",
+    )
   })
 
   test("includes a supervisor lane by default for the school laptop 48h template", () => {

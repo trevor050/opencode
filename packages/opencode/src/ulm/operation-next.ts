@@ -5,6 +5,7 @@ import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import type { GovernorDecision } from "./runtime-governor"
 import { evaluateRuntimeGovernor } from "./runtime-governor"
 import type { OperationGraphRecord, OperationLane } from "./operation-graph"
+import { discoveryResearchMinutesForDuration } from "./pentest-kickoff"
 
 export type OperationNextAction =
   | {
@@ -25,6 +26,22 @@ export type OperationNextAction =
     }
   | {
       operationID: string
+      action: "expand_work"
+      reason: string
+      recommendedTools: string[]
+      blockers: string[]
+    }
+  | {
+      operationID: string
+      action: "research_charter"
+      reason: string
+      laneID: string
+      prompt: string
+      recommendedTools: string[]
+      blockers: string[]
+    }
+  | {
+      operationID: string
       action: "launch_lane"
       reason: string
       lane: OperationLane
@@ -33,6 +50,20 @@ export type OperationNextAction =
       blockers: string[]
       governor: GovernorDecision
     }
+
+type DiscoveryCharterRecord = {
+  planningApproval?: {
+    status?: string
+  }
+  discoveryCharter?: {
+    purpose?: string
+    researchQuestions?: string[]
+    reconInvestments?: string[]
+    operatorQuestions?: string[]
+    candidateDeepWorkLanes?: string[]
+    decisionCriteriaForFullPlan?: string[]
+  }
+}
 
 async function readJson<T>(file: string): Promise<T | undefined> {
   try {
@@ -103,6 +134,39 @@ function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date)
   return elapsedHours < goal.targetDurationHours * 0.8
 }
 
+function listLines(title: string, values: string[] | undefined) {
+  const items = values?.filter((item) => item.trim()) ?? []
+  return items.length ? [title, ...items.map((item) => `- ${item}`), ""] : []
+}
+
+function promptForDiscoveryResearch(input: {
+  operationID: string
+  charter: DiscoveryCharterRecord
+  goal?: OperationGoalRecord
+}) {
+  const targetMinutes = discoveryResearchMinutesForDuration(input.goal?.targetDurationHours)
+  const charter = input.charter.discoveryCharter
+  return [
+    `Run the Discovery Charter research pass for operation "${input.operationID}".`,
+    "",
+    targetMinutes ? `Target research effort: about ${targetMinutes} minutes before final planning.` : undefined,
+    "This is not the final operation plan. Your goal is research: learn enough to write a duration-sized final plan without guessing.",
+    "",
+    charter?.purpose ? `Charter purpose: ${charter.purpose}` : undefined,
+    "",
+    ...listLines("Research questions to answer:", charter?.researchQuestions),
+    ...listLines("Recon investments to perform safely:", charter?.reconInvestments),
+    ...listLines("Operator questions to sharpen or answer:", charter?.operatorQuestions),
+    ...listLines("Candidate deep-work lanes to prove or reject:", charter?.candidateDeepWorkLanes),
+    ...listLines("Decision criteria before the full plan:", charter?.decisionCriteriaForFullPlan),
+    "Use tool_inventory, useful source/web research, and passive/basic local recon first. Any active network probe goes through command_supervise or a background task with the approved safety profile.",
+    "Record useful facts with evidence_record, append plan-shaping discoveries and unresolved questions to operation_memory, and write an operation_checkpoint summarizing what the final plan now knows.",
+    "Do not schedule broad execution yet. After the research pass, ask only concrete round 3 follow-up questions that remain, then call operation_plan with planningMode=full-duration only when duration-fit evidence and overflow backlog are defensible.",
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n")
+}
+
 function promptForLane(lane: OperationLane, scopeRules: string[]) {
   const specific =
     lane.id === "finding_validation"
@@ -141,11 +205,36 @@ export async function decideOperationNext(worktree: string, input: { operationID
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphRecord>(path.join(root, "plans", "operation-graph.json"))
+  const operationPlan = await readJson<Record<string, unknown>>(path.join(root, "plans", "operation-plan.json"))
+  const discoveryCharter = await readJson<DiscoveryCharterRecord>(path.join(root, "plans", "discovery-charter.json"))
   const runtime = await readJson<RuntimeSummaryRecord>(path.join(root, "deliverables", "runtime-summary.json"))
   const goal = (await readOperationGoal(worktree, operationID)).goal
   const now = input.now instanceof Date ? input.now : input.now ? new Date(input.now) : new Date()
 
   if (!graph) {
+    if (!operationPlan && discoveryCharter?.planningApproval?.status === "approved") {
+      const action: OperationNextAction = {
+        operationID,
+        action: "research_charter",
+        reason: "approved Discovery Charter is ready for the dedicated research pass before the full plan",
+        laneID: "discovery_research",
+        prompt: promptForDiscoveryResearch({ operationID, charter: discoveryCharter, goal }),
+        recommendedTools: [
+          "task",
+          "tool_inventory",
+          "websearch",
+          "webfetch",
+          "command_supervise",
+          "evidence_record",
+          "operation_memory",
+          "operation_checkpoint",
+          "operation_status",
+          "operation_plan",
+        ],
+        blockers: goal ? [] : ["operation goal is missing"],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
     const action: OperationNextAction = {
       operationID,
       action: "schedule",
@@ -184,6 +273,16 @@ export async function decideOperationNext(worktree: string, input: { operationID
   if (!lane) {
     const incomplete = graph.lanes.find((item) => item.status !== "complete")
     const coverage = (goal?.targetDurationHours ?? 0) >= 1 ? await evaluateCoverageReadiness(worktree, operationID) : undefined
+    if (!incomplete && targetWindowStillOpen(goal, now)) {
+      const action: OperationNextAction = {
+        operationID,
+        action: "expand_work",
+        reason: `base graph is complete but target runtime window is still open for active ${goal?.targetDurationHours}h goal`,
+        recommendedTools: ["operation_gap_audit", "operation_supervise", "operation_queue", "asset_graph", "attack_chain", "runtime_scheduler", "operation_status"],
+        blockers: coverage?.ok === false ? coverage.gaps : [],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
     if (!incomplete && coverage && !coverage.ok) {
       const action: OperationNextAction = {
         operationID,
@@ -200,16 +299,6 @@ export async function decideOperationNext(worktree: string, input: { operationID
         action: "stop",
         reason: "all operation lanes are complete and coverage contract is release-ready",
         recommendedTools: ["operation_checkpoint", "operation_audit", "report_lint"],
-        blockers: [],
-      }
-      return { action, path: await writeNextAction(worktree, action) }
-    }
-    if (!incomplete && targetWindowStillOpen(goal, now)) {
-      const action: OperationNextAction = {
-        operationID,
-        action: "wait",
-        reason: `target runtime window is still open for active ${goal?.targetDurationHours}h goal`,
-        recommendedTools: ["operation_supervise", "runtime_scheduler", "operation_status", "operation_audit"],
         blockers: [],
       }
       return { action, path: await writeNextAction(worktree, action) }

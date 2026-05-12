@@ -108,6 +108,9 @@ export type OperationLane = {
     staleAfterMinutes: number
   }
   activeJobs?: Array<{ id: string; type: string; status: string; updatedAt: string }>
+  startedAt?: string
+  plannedDurationMinutes?: number
+  minRuntimeMinutes?: number
   terminalState?: OperationLaneTerminalState
   skipReason?: string
   coverageImpact?: OperationLaneCoverageImpact
@@ -124,6 +127,21 @@ export type OperationGraphRecord = {
   createdAt: string
   updatedAt: string
   lanes: OperationLane[]
+}
+
+type OperationPlanExecutionBlock = {
+  id?: string
+  stage?: string
+  laneID: string
+  title: string
+  startMinute: number
+  durationMinutes: number
+  objective: string
+  actions: string[]
+  successCriteria: string[]
+  fallbackWork: string[]
+  subagents: string[]
+  expectedArtifacts?: string[]
 }
 
 export type OperationScheduleInput = {
@@ -570,6 +588,15 @@ const SUPERVISOR_LANE: (typeof BASE_LANES)[number] = {
   releaseRequired: false,
 }
 
+const REPORTING_LANE_IDS = new Set([
+  "report_evidence_index",
+  "report_writing",
+  "report_technical_review",
+  "report_executive_review",
+  "report_review",
+  "operator_summary",
+])
+
 function routeFor(input: OperationScheduleInput, route: string) {
   return (
     input.modelRoutes?.[route] ??
@@ -817,12 +844,79 @@ async function archiveStaleLaneProofs(root: string, laneIDs: Set<string>, now: s
   return archived
 }
 
+async function readPlanExecutionBlocks(root: string) {
+  const planPath = path.join(root, "plans", "operation-plan.json")
+  try {
+    const plan = (await Bun.file(planPath).json()) as { timeBudget?: { executionBlocks?: OperationPlanExecutionBlock[] } }
+    return Array.isArray(plan.timeBudget?.executionBlocks) ? plan.timeBudget.executionBlocks : []
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
+}
+
+function operationBlockLaneID(block: OperationPlanExecutionBlock, index: number) {
+  const value = (block.id ?? `planned-work-${index + 1}`)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  return `planned_work_${value || index + 1}`
+}
+
+function expandGraphWithExecutionBlocks(graph: OperationGraphRecord, blocks: OperationPlanExecutionBlock[]) {
+  if (!blocks.length) return graph
+  const existingIDs = new Set(graph.lanes.map((lane) => lane.id))
+  const plannedLanes = blocks.map((block, index): OperationLane => {
+    const id = operationBlockLaneID(block, index)
+    const previous = index > 0 ? operationBlockLaneID(blocks[index - 1]!, index - 1) : undefined
+    const baseDependency =
+      index === 0 && existingIDs.has(block.laneID) && !REPORTING_LANE_IDS.has(block.laneID) ? block.laneID : undefined
+    return {
+      id,
+      title: block.title,
+      agent: block.subagents[0] ?? "pentest",
+      status: "pending",
+      dependsOn: [previous, baseDependency].filter((item): item is string => !!item),
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "command_supervise", "evidence_record", "finding_record", "write", "task", "operation_run"],
+      expectedArtifacts: block.expectedArtifacts?.length ? [...block.expectedArtifacts] : [`work-blocks/${id}.md`],
+      budget: {},
+      restartPolicy: {
+        restartable: true,
+        maxAttempts: 2,
+        staleAfterMinutes: Math.max(30, Math.ceil(block.durationMinutes * 2)),
+      },
+      plannedDurationMinutes: block.durationMinutes,
+      minRuntimeMinutes: Math.max(5, Math.ceil(block.durationMinutes * 0.8)),
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: graph.operationID,
+    }
+  })
+  const plannedIDs = plannedLanes.map((lane) => lane.id)
+  const lastPlannedID = plannedIDs.at(-1)
+  if (!lastPlannedID) return graph
+  const lanes = graph.lanes.map((lane) =>
+    REPORTING_LANE_IDS.has(lane.id) && !lane.dependsOn.includes(lastPlannedID)
+      ? { ...lane, dependsOn: [...lane.dependsOn, lastPlannedID] }
+      : lane,
+  )
+  const firstReportingIndex = lanes.findIndex((lane) => REPORTING_LANE_IDS.has(lane.id))
+  const insertAt = firstReportingIndex === -1 ? lanes.length : firstReportingIndex
+  return {
+    ...graph,
+    lanes: [...lanes.slice(0, insertAt), ...plannedLanes, ...lanes.slice(insertAt)],
+  }
+}
+
 export async function writeOperationGraph(worktree: string, input: OperationScheduleInput) {
   if (containsRawCredentialSecret(input)) throw new Error("operation graphs must not contain raw credential secrets")
-  const graph = buildOperationGraph(input)
+  const root = operationPath(worktree, slug(input.operationID, "operation"))
+  const graph = expandGraphWithExecutionBlocks(buildOperationGraph(input), await readPlanExecutionBlocks(root))
   const gaps = validateOperationGraph(graph)
   if (gaps.length) throw new Error(gaps.join("; "))
-  const root = operationPath(worktree, graph.operationID)
   const json = path.join(root, "plans", "operation-graph.json")
   const md = path.join(root, "plans", "operation-graph.md")
   await fs.mkdir(path.dirname(json), { recursive: true })

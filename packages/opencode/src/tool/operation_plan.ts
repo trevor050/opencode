@@ -53,6 +53,26 @@ const TimeBudget = Schema.Struct({
       }),
     ),
   ),
+  executionBlocks: Schema.optional(
+    Schema.mutable(
+      Schema.Array(
+        Schema.Struct({
+          id: Schema.optional(Schema.String),
+          stage: Schema.Literals(["intake", "recon", "mapping", "validation", "reporting", "handoff"]),
+          laneID: Schema.String,
+          title: Schema.String,
+          startMinute: Schema.Number,
+          durationMinutes: Schema.Number,
+          objective: Schema.String,
+          actions: Schema.mutable(Schema.Array(Schema.String)),
+          successCriteria: Schema.mutable(Schema.Array(Schema.String)),
+          fallbackWork: Schema.mutable(Schema.Array(Schema.String)),
+          subagents: Schema.mutable(Schema.Array(Schema.String)),
+          expectedArtifacts: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+        }),
+      ),
+    ),
+  ),
 })
 
 const CoverageContract = Schema.Struct({
@@ -149,7 +169,9 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const discoveryMode = params.planningMode === "discovery-charter" || (params.phases === undefined && params.discoveryCharter)
+        const discoveryMode =
+          params.planningMode === "discovery-charter" ||
+          (params.planningMode === undefined && params.phases === undefined && params.discoveryCharter)
         if (yield* Effect.tryPromise(() => hasActiveExecution(Instance.worktree, params.operationID)).pipe(Effect.orDie)) {
           return yield* Effect.die(
             new Error(

@@ -33,9 +33,9 @@ describe("ULM model runtime catalog", () => {
     expect(resolveModelRuntime("openai/gpt-current", catalog)?.contextLimit).toBe(1_000_000)
   })
 
-  test("does not infer unavailable OpenCode Go route metadata", () => {
+  test("does not infer unavailable non-OpenAI route metadata", () => {
     const catalog = buildModelRuntimeCatalog({
-      "opencode-go": {
+      "other-provider": {
         source: "custom",
         models: {
           default: {
@@ -46,7 +46,7 @@ describe("ULM model runtime catalog", () => {
       },
     })
 
-    expect(resolveModelRuntime("opencode-go/qwen3.6-plus", catalog)).toBeUndefined()
+    expect(resolveModelRuntime("other-provider/other-model", catalog)).toBeUndefined()
   })
 
   test("audits primary and fallback route availability against provider metadata", () => {

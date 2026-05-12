@@ -1,12 +1,40 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { writeCoverageContract, writeOperationCheckpoint, writeOperationDiscoveryCharter, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import {
+  writeCoverageContract,
+  writeOperationCheckpoint,
+  writeOperationDiscoveryCharter,
+  writeOperationPlan,
+  writeRuntimeSummary,
+  type Stage,
+} from "@/ulm/artifact"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { operationPath } from "@/ulm/artifact"
 import { superviseOperation } from "@/ulm/operation-supervisor"
 import { tmpdir } from "../fixture/fixture"
+
+function executionBlocks(input: { minutes: number; stage?: Stage; laneID?: string; blockMinutes?: number }) {
+  const blockMinutes = input.blockMinutes ?? 60
+  return Array.from({ length: Math.ceil(input.minutes / blockMinutes) }, (_, index) => {
+    const id = `fixture-block-${index + 1}`
+    return {
+      id,
+      stage: input.stage ?? "recon",
+      laneID: input.laneID ?? "recon",
+      title: `Fixture block ${index + 1}`,
+      startMinute: index * blockMinutes,
+      durationMinutes: Math.min(blockMinutes, input.minutes - index * blockMinutes),
+      objective: "Keep duration-sized execution moving with durable evidence.",
+      actions: ["Run bounded work for this block.", "Record evidence or blockers before moving on."],
+      successCriteria: ["Block note exists.", "Evidence refs or blockers are recorded."],
+      fallbackWork: ["Switch to backlog validation or evidence normalization if primary work is blocked."],
+      subagents: ["recon"],
+      expectedArtifacts: [`work-blocks/${id}.md`],
+    }
+  })
+}
 
 async function writeMinimalPlan(root: string) {
   await writeOperationPlan(root, {
@@ -45,7 +73,7 @@ describe("ULM operation supervisor", () => {
     expect(review.decisions[0]?.requiredNextTool).toBe("operation_plan")
   })
 
-  test("does not block approved Discovery Charter runs before bounded discovery evidence exists", async () => {
+  test("does not block approved Discovery Charter runs before the research pass exists", async () => {
     await using dir = await tmpdir({ git: true })
     await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized three hour assessment", targetDurationHours: 3 })
     await writeOperationDiscoveryCharter(dir.path, {
@@ -68,8 +96,9 @@ describe("ULM operation supervisor", () => {
     const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
 
     expect(review.decisions.map((item) => item.reason)).not.toContain("operation plan is missing")
-    expect(review.decisions[0]?.reason).toBe("approved Discovery Charter needs bounded discovery before the full operation plan")
-    expect(review.decisions[0]?.requiredNextTool).toBe("command_supervise")
+    expect(review.decisions[0]?.reason).toBe("approved Discovery Charter needs a dedicated research pass before the full operation plan")
+    expect(review.decisions[0]?.requiredNextTool).toBe("task")
+    expect(review.decisions[0]?.modelPrompt).toContain("The goal is research")
     expect(review.planExcerpt?.path).toContain("discovery-charter.json")
     expect(review.planExcerpt?.content).toContain("operator")
   })
@@ -293,6 +322,7 @@ describe("ULM operation supervisor", () => {
           { stage: "validation", hours: 14, work: "Validate evidence-backed chains." },
           { stage: "reporting", hours: 4, work: "Final reports, lint, render, runtime summary, and audit." },
         ],
+        executionBlocks: executionBlocks({ minutes: 44 * 60, laneID: "recon", stage: "recon" }),
         durationFit: {
           confidence: "duration_sized",
           evidence: ["48h target with protected finalization window."],

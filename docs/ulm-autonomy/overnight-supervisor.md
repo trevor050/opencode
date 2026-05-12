@@ -32,9 +32,9 @@ Never run a foreground command expected to exceed two minutes. Use `command_supe
 
 Run `tool_inventory` early. It writes installed/missing tool facts and acquisition guidance under `.ulmcode/operations/<id>/tool-inventory/`. Use `tool_acquire` only after operator authorization, and keep unattended command profiles non-destructive.
 
-## OMO And Plannotator
+## Plan Critique
 
-Oh My OpenAgent is the profile base for routing and delegation. Keep `sisyphus_agent.replace_plan=false`; native Build/Plan and ULM artifacts stay authoritative.
+ULM profile routing is OpenAI-only and native ULM artifacts stay authoritative.
 
 Plannotator is a critique lane, not the plan owner. For 8+ hour operations, run it after the plan-plan and before final `operation_plan` approval to find missing questions, lane gaps, report gaps, and ROE/safety issues.
 

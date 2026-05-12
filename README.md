@@ -1,157 +1,201 @@
 <p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
+  <img src="packages/web/src/assets/lander/screenshot.png" alt="OpenCode terminal UI running an agent workflow" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/trevor050/ulmcode/actions/workflows/ulm-harness.yml">
+    <img alt="ULM harness" src="https://img.shields.io/github/actions/workflow/status/trevor050/ulmcode/ulm-harness.yml?branch=dev&label=ULM%20harness&style=flat-square">
   </a>
+  <a href="https://github.com/trevor050/ulmcode/actions/workflows/ulmcode-release-cli.yml">
+    <img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/trevor050/ulmcode/ulmcode-release-cli.yml?label=release&style=flat-square">
+  </a>
+  <a href="./LICENSE">
+    <img alt="License" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-2f81f7?style=flat-square">
+  </a>
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Bun%201.3%2B-111827?style=flat-square">
 </p>
-<p align="center">The open source AI coding agent.</p>
+
+# ULMCode
+
+**ULMCode is an OpenCode fork for guided, authorized security operations.** It turns an agent chat into an operation system: plans become durable artifacts, long work runs through supervised lanes, evidence is normalized before it becomes a finding, and final reports must pass strict gates before handoff.
+
+This is not a prompt pack. It is a security operations layer for OpenCode.
+
+## The Product Bet
+
 <p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
+  <img src=".github/readme/hero.svg" alt="ULMCode security operations layer" width="100%">
 </p>
+
+Most agentic pentest demos fail in the middle. They can narrate a scan, but they lose context, blur evidence, block on shell commands, overclaim findings, or produce reports that look like filler.
+
+ULMCode makes the operation itself the source of truth.
+
+| Instead of...        | ULMCode does this                                                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Chat-only plans      | Writes operation goals, Discovery Charters, full plans, schedules, checkpoints, and audits under `.ulmcode/operations/<id>/`. |
+| One giant agent loop | Uses scheduler-owned lanes, background tasks, supervised commands, specialist agents, and restartable daemon runs.            |
+| Findings from vibes  | Requires evidence references, validation state, normalized leads, and rejection paths for unsupported claims.                 |
+| Thin final answers   | Generates a final package with HTML, PDF, manifest, findings JSON, evidence index, runtime summary, and operation audit.      |
+| "Trust me, it ran"   | Stores heartbeats, command artifacts, cost/context accounting, stale-job metadata, and final gate results.                    |
+
+## Operation Pipeline
 
 <p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
+  <img src=".github/readme/operation-pipeline.svg" alt="ULMCode operation pipeline" width="100%">
 </p>
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+The closeout is intentionally strict. A final answer is not a deliverable. A deliverable is a generated package with evidence links, parseable structured files, runtime accounting, and a fresh passing audit.
 
----
+## Capability Map
 
-### Installation
+<p align="center">
+  <img src=".github/readme/capability-map.svg" alt="ULMCode capability map" width="100%">
+</p>
+
+## What Lives Where
+
+| Path                    | Purpose                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `packages/opencode`     | Core CLI/server/runtime, ULM tools, operation artifacts, agents, scheduler, daemon, report pipeline, tests. |
+| `packages/app`          | Solid app UI, operation dashboards, chat-bound ULM panels, deliverables and credential views.               |
+| `packages/desktop`      | Electron desktop shell and packaging for the ULMCode app.                                                   |
+| `tools/ulmcode-profile` | Isolated ULM profile, compact skills, commands, guard plugin, model defaults, and tool manifest.            |
+| `tools/ulmcode-labs`    | Manifest-driven synthetic vulnerable labs and replay targets.                                               |
+| `tools/ulmcode-evals`   | Versioned harness scenarios for capability checks.                                                          |
+| `docs/ulm-autonomy`     | Architecture decisions for long-running operations, evidence factories, report gates, and model governance. |
+
+## Final Handoff Package
+
+`deliverables/final/` is the human handoff folder generated from canonical operation artifacts.
+
+| Artifact                       | Why it matters                                                     |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `report.pdf` and `report.html` | Stakeholder-ready report and styled source render.                 |
+| `findings.json`                | Structured validated/reportable findings.                          |
+| `evidence-index.json`          | Evidence references and reverse links.                             |
+| `executive-summary.md`         | Leadership-ready summary.                                          |
+| `technical-appendix.md`        | Implementation details, validation notes, and remediation context. |
+| `operator-review.md`           | Internal operator handoff, limitations, and review notes.          |
+| `runtime-summary.md`           | Model, cost, compaction, task, and blind-spot accounting.          |
+| `manifest.json`                | Canonical file inventory and integrity anchor.                     |
+
+Report gates reject sparse reports, stale generated files, unsupported findings, placeholder padding, missing runtime summaries, manifest drift, and credentialed plans without a submitted redacted credential review.
+
+## Quick Start
 
 ```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+bun install
+bun run dev          # ULM CLI/runtime
+bun run dev:web      # web app
+bun run dev:desktop  # desktop app
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
-
-### Updating
+Install and verify the isolated ULM profile:
 
 ```bash
-# Built-in updater (recommended for fork users installed via script)
-ulmcode upgrade
-
-# Alias
-ulmcode update
+tools/ulmcode-profile/scripts/install-profile.sh
+tools/ulmcode-profile/test-profile.sh
 ```
 
-If you distribute a custom fork build, users can pin the release source:
+The root `test` script intentionally exits early. Use package-level checks from the package you are changing.
+
+## ULM Commands Worth Knowing
+
+```bash
+# Fast lifecycle smoke test
+bun run --cwd packages/opencode test:ulm-smoke
+
+# Profile skills and supervised command manifest
+bun run --cwd packages/opencode test:ulm-skills
+bun run --cwd packages/opencode test:ulm-tool-manifest
+
+# Synthetic lab replay and target services
+bun run --cwd packages/opencode test:ulm-lab
+bun run --cwd packages/opencode test:ulm-lab-target
+
+# Harness tiers
+bun run --cwd packages/opencode test:ulm-harness:fast
+bun run --cwd packages/opencode test:ulm-harness:chaos
+
+# Long-run owner
+bun run --cwd packages/opencode ulm:runtime-daemon <operationID> --duration-hours 20 --detach --json
+
+# Literal readiness after daemon work
+bun run --cwd packages/opencode ulm:literal-run-readiness <operationID> --strict --json
+```
+
+## Safety Model
+
+ULMCode is built for scoped, authorized work.
+
+- Unattended command profiles default to `non_destructive`.
+- Commands expected to exceed two minutes should run through `command_supervise`, background tasks, the scheduler, or the daemon.
+- Authorized credentials belong in `operation_credentials`; raw secrets should not appear in chat, operation memory, reports, command text, task metadata, or final deliverables.
+- Findings are not report-ready until they have evidence references and validation state.
+- K-12 people and organization recon must stay professional, scoped, and engagement-relevant.
+
+## Model And Profile Defaults
+
+The ULM profile is intentionally isolated from a general OpenCode setup.
+
+- Default operation agent: `pentest`
+- Focused one-off mode: `action`
+- Primary reasoning/reporting route: `openai/gpt-5.5`
+- Quick recon/evidence route: `openai/gpt-5.4-mini-fast`
+- Bundled profile surfaces: compact K-12 security skills, ULM commands, runtime guard plugin, and tool manifest
+- Excluded from the ULM profile by design: personal OpenCode agents, unrelated MCPs, broad model-routing plugins, and the Claude Code bridge plugin
+
+## Verification Matrix
+
+| Check                          | Command                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Core typecheck                 | `bun run --cwd packages/opencode typecheck`                                                                     |
+| ULM lifecycle smoke            | `bun run --cwd packages/opencode test:ulm-smoke`                                                                |
+| Tool manifest                  | `bun run --cwd packages/opencode test:ulm-tool-manifest`                                                        |
+| Profile skills                 | `bun run --cwd packages/opencode test:ulm-skills`                                                               |
+| Synthetic labs                 | `bun run --cwd packages/opencode test:ulm-lab`                                                                  |
+| Lab target services            | `bun run --cwd packages/opencode test:ulm-lab-target`                                                           |
+| Fast harness                   | `bun run --cwd packages/opencode test:ulm-harness:fast`                                                         |
+| Full/chaos/overnight harnesses | `bun run --cwd packages/opencode test:ulm-harness:full`, `test:ulm-harness:chaos`, `test:ulm-harness:overnight` |
+| Profile installer              | `tools/ulmcode-profile/test-profile.sh`                                                                         |
+
+GitHub runs the fast ULM harness on pull requests and `dev` pushes, with a scheduled chaos lane for deeper drift detection.
+
+## Relationship To OpenCode
+
+ULMCode is a customized fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps the OpenCode client/server architecture, TUI/app foundation, provider integrations, and development ergonomics, then adds ULM-specific security operation workflows on top.
+
+Some package names, internal paths, and upstream localized README files still use OpenCode naming. The canonical ULM-facing README is this file.
+
+## Releases
+
+The repository includes a ULM release workflow for CLI assets, profile skill bundles, Homebrew tap publishing, and desktop packages:
+
+```text
+.github/workflows/ulmcode-release-cli.yml
+```
+
+For local fork builds, the updater can be pointed at this repository:
 
 ```bash
 ULMCODE_GITHUB_REPO=trevor050/ulmcode ulmcode upgrade
 ```
 
-### Desktop App (BETA)
+## Contributing
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+Good contributions preserve the operation contract:
 
-| Platform              | Download                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe` |
-| Linux                 | `.deb`, `.rpm`, or `.AppImage`     |
+- Keep operation truth in durable artifacts.
+- Add or update tests for new ULM tools, routes, report gates, or scheduler behavior.
+- Prefer structured outputs over parsing human text where tools support it.
+- Run package-level checks from the package you changed.
+- Update the nearest `AGENTS.md` only when future agents genuinely need the lesson.
 
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
+Start with [CONTRIBUTING.md](./CONTRIBUTING.md), then read [AGENTS.md](./AGENTS.md) before making repo-wide changes.
 
-#### Installation Directory
+## License
 
-The install script respects the following priority order for the installation path:
+ULMCode is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
 
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
-
-```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
-```
-
-### Agents
-
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
-
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
-
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
-
-Learn more about [agents](https://opencode.ai/docs/agents).
-
-### Documentation
-
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
-
-### Contributing
-
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### Building on OpenCode
-
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
-
-### FAQ
-
-#### How is this different from Claude Code?
-
-It's very similar to Claude Code in terms of capability. Here are the key differences:
-
-- 100% open source
-- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen), OpenCode can be used with Claude, OpenAI, Google, or even local models. As models evolve, the gaps between them will close and pricing will drop, so being provider-agnostic is important.
-- Built-in opt-in LSP support
-- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
-- A client/server architecture. This, for example, can allow OpenCode to run on your computer while you drive it remotely from a mobile app, meaning that the TUI frontend is just one of the possible clients.
-
----
-
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+Commercial use, resale, or offering paid services using this software requires a separate written commercial license from the licensor.

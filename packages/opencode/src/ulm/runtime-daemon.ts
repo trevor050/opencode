@@ -7,6 +7,7 @@ import { auditFirstRunObjective } from "./first-run-objective-audit"
 import { runRuntimeScheduler, type RuntimeSchedulerCycle } from "./runtime-scheduler"
 import type { OperationRunResult } from "./operation-run"
 import { markRecoveredLanesRunning, restartableOperationJobs } from "./operation-recovery"
+import { generateOperationBacklog } from "./operation-backlog"
 
 export type RuntimeDaemonInput = {
   operationID: string
@@ -325,7 +326,6 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         if (stopped) break
         continue
       }
-      consecutiveErrors = 0
       cycles.push(...scheduler.cycles)
       const latestSupervisor = [...scheduler.cycles]
         .reverse()
@@ -333,8 +333,56 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       if (latestSupervisor?.generatedAt) lastSupervisorReviewAt = latestSupervisor.generatedAt
       stopped = scheduler.stopped
       reason = scheduler.reason
+      const scheduleBlocker = scheduler.cycles.at(-1)?.run?.action === "schedule"
+      if (scheduleBlocker) {
+        consecutiveErrors += 1
+        lastSchedulerError = scheduler.reason
+        const heartbeat = {
+          operationID,
+          pid: process.pid,
+          tick,
+          schedulerCycles: scheduler.cycles.length,
+          totalCycles: cycles.length,
+          startedAt: started.toISOString(),
+          updatedAt: tickTime.toISOString(),
+          elapsedSeconds,
+          stopped: consecutiveErrors >= maxConsecutiveErrors,
+          reason: `scheduler error: ${scheduler.reason}`,
+          consecutiveErrors,
+          lockPath,
+          recoveredJobs: recoveredThisTick,
+          supervisorAction: scheduler.cycles.at(-1)?.supervisor?.action,
+          supervisorReason: scheduler.cycles.at(-1)?.supervisor?.reason,
+          supervisorRan: scheduler.cycles.at(-1)?.supervisor?.ran ?? false,
+        }
+        await writeJson(lockPath, {
+          pid: process.pid,
+          createdAt: started.toISOString(),
+          updatedAt: tickTime.toISOString(),
+        })
+        await writeJson(heartbeatPath, heartbeat)
+        await appendJsonl(logPath, heartbeat)
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          stopped = true
+          reason = `scheduler error: ${scheduler.reason}`
+          break
+        }
+        const remainingRuntimeSeconds = Math.max(0, maxRuntimeSeconds - elapsedSeconds)
+        const cappedBackoffSeconds = Math.min(errorBackoffSeconds, remainingRuntimeSeconds)
+        if (cappedBackoffSeconds > 0) await sleep(cappedBackoffSeconds * 1000)
+        continue
+      }
+      consecutiveErrors = 0
+      lastSchedulerError = undefined
       if (schedulerStoppedBeforeRuntimeWork({ stopped, reason, elapsedSeconds, maxRuntimeSeconds })) {
-        reason = "no scheduled operation work remains before target runtime elapsed"
+        const backlog = await generateOperationBacklog(worktree, {
+          operationID,
+          toolManifestPath: input.toolManifestPath,
+          maxUnits: input.commandWorkUnitLimit ?? 25,
+          runtimeRemainingSeconds: Math.max(0, Math.floor(maxRuntimeSeconds - elapsedSeconds)),
+        })
+        stopped = false
+        reason = `expanded operation backlog before target runtime elapsed: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
       }
       const heartbeat = {
         operationID,

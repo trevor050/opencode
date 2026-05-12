@@ -99,8 +99,7 @@
     }
   },
   "plugin": [
-    "__ULMCODE_PROFILE_DIR__/plugins/ulmcode-runtime-guard.js",
-    "@khalilgharbaoui/opencode-claude-code-plugin"
+    "__ULMCODE_PROFILE_DIR__/plugins/ulmcode-runtime-guard.js"
   ],
   "mcp": {
     "websearch": {
@@ -133,23 +132,6 @@
         "-i",
         "ramgameer/pentest-mcp:latest"
       ]
-    }
-  },
-  "provider": {
-    "lmstudio": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "LM Studio",
-      "options": {
-        "baseURL": "http://192.168.1.151:1234/v1"
-      },
-      "models": {
-        "qwen3.6-28b-reap-i1": {
-          "name": "Qwen 28B"
-        },
-        "qwopus3.6-27b-v1-preview-i1": {
-          "name": "Qwopus 27B"
-        }
-      }
     }
   }
 }

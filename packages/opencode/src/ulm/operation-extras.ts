@@ -399,9 +399,10 @@ function templateTimeBudget(input: { targetDurationHours?: number; stages: Stage
   const targetHours = input.targetDurationHours
   if (!targetHours) return undefined
   const base = Math.max(0.25, Number((targetHours / input.stages.length).toFixed(2)))
+  const finalizationWindowHours = Math.max(1, Math.min(4, Math.round(targetHours * 0.15)))
   return {
     targetHours,
-    finalizationWindowHours: Math.max(1, Math.min(4, Math.round(targetHours * 0.15))),
+    finalizationWindowHours,
     durationFit: {
       confidence: targetHours >= 2 ? "duration_sized" as const : "medium" as const,
       evidence: [
@@ -419,6 +420,60 @@ function templateTimeBudget(input: { targetDurationHours?: number; stages: Stage
       hours: index === input.stages.length - 1 ? Math.max(0.25, Number((targetHours - base * (input.stages.length - 1)).toFixed(2))) : base,
       work: `${stage} work for the template operation.`,
     })),
+    executionBlocks: templateExecutionBlocks({ targetDurationHours: targetHours, stages: input.stages, finalizationWindowHours }),
+  }
+}
+
+function templateExecutionBlocks(input: { targetDurationHours: number; stages: Stage[]; finalizationWindowHours: number }) {
+  if (input.targetDurationHours < 2) return undefined
+  const executionMinutes = Math.max(15, Math.round((input.targetDurationHours - input.finalizationWindowHours) * 60))
+  const blockMinutes = input.targetDurationHours >= 8 ? 60 : 30
+  const blockCount = Math.max(1, Math.ceil(executionMinutes / blockMinutes))
+  const workStages = input.stages.filter((stage) => stage !== "reporting" && stage !== "handoff")
+  const stages = workStages.length ? workStages : input.stages
+  return Array.from({ length: blockCount }, (_, index) => {
+    const stage = stages[index % stages.length] ?? "recon"
+    const remainingMinutes = executionMinutes - index * blockMinutes
+    const durationMinutes = Math.max(15, Math.min(blockMinutes, remainingMinutes))
+    const id = `template-block-${index + 1}`
+    return {
+      id,
+      stage,
+      laneID: templateExecutionLaneID(stage),
+      title: `Template execution block ${index + 1}`,
+      startMinute: index * blockMinutes,
+      durationMinutes,
+      objective: `Complete focused ${stage} work for the duration-sized template run.`,
+      actions: [
+        "Run the next bounded command profile or model lane for this block.",
+        "Record evidence, blockers, and fallback decisions before moving to the next block.",
+      ],
+      successCriteria: [
+        "A durable block note exists under work-blocks/.",
+        "Evidence references or explicit blockers are recorded for this block.",
+      ],
+      fallbackWork: [
+        "If the primary profile is blocked, switch to lower-risk inventory, normalization, validation, or backlog grooming.",
+      ],
+      subagents: stage === "validation" ? ["validator"] : ["recon", "attack-map"],
+      expectedArtifacts: [`work-blocks/${id}.md`],
+    }
+  })
+}
+
+function templateExecutionLaneID(stage: Stage) {
+  switch (stage) {
+    case "intake":
+    case "recon":
+      return "recon"
+    case "mapping":
+      return "web_inventory"
+    case "validation":
+      return "finding_validation"
+    case "reporting":
+      return "report_writing"
+    case "handoff":
+      return "operator_summary"
   }
 }
 

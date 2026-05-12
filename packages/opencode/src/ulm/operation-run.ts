@@ -13,6 +13,7 @@ export type OperationRunInput = {
   operationID: string
   mode?: OperationRunMode
   controller?: "scheduler" | "tool"
+  now?: Date | string
   laneID?: string
   jobID?: string
   summary?: string
@@ -96,6 +97,12 @@ type RunLogRecord = {
   summary?: string
   action: OperationRunResult["action"]
   reason: string
+}
+
+function toDate(value: Date | string | undefined) {
+  if (!value) return new Date()
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isFinite(date.getTime()) ? date : new Date()
 }
 
 async function readJson<T>(file: string): Promise<T | undefined> {
@@ -186,13 +193,26 @@ function jobMatchesWorktree(job: BackgroundJob.Info, worktree: string) {
 }
 
 function laneRequiresEvidenceRefs(lane: OperationLane) {
-  return [
+  return lane.id.startsWith("planned_work_") || [
     "evidence_normalization",
     "finding_validation",
     "report_writing",
     "report_review",
     "operator_summary",
   ].includes(lane.id)
+}
+
+function incompletePlannedWorkExists(graph: OperationGraphRecord) {
+  return graph.lanes.some(
+    (lane) =>
+      lane.id.startsWith("planned_work_") &&
+      lane.status !== "complete" &&
+      !(
+        (lane.status === "skipped" || lane.status === "blocked") &&
+        lane.releaseRequired === false &&
+        lane.coverageImpact !== "blocks_release"
+      ),
+  )
 }
 
 const REPORT_AUTOCOMPLETE_LANES = new Set([
@@ -255,6 +275,10 @@ function operationRunRepairHints(blockers: readonly string[], next?: OperationNe
     hints.add(
       `Runtime context needs maintenance before more lane work: ${next.reason}. Use ${next.recommendedTools.join(", ")}; do not reschedule the operation graph.`,
     )
+  } else if (next?.action === "research_charter") {
+    hints.add(
+      `Discovery Charter research is next. Launch the ${next.laneID} pass, record evidence and operation memory, then write the full duration-aware operation_plan before operation_schedule.`,
+    )
   }
   return [...hints]
 }
@@ -289,7 +313,25 @@ async function validateLaneCompletionProof(root: string, lane: OperationLane, pr
       blockers.push(`proof does not cover expected artifact: ${expected}`)
     }
   }
+  blockers.push(...validatePlannedWorkRuntime(lane, proof.completedAt))
   return blockers
+}
+
+function validatePlannedWorkRuntime(lane: OperationLane, completedAt: string) {
+  if (!lane.id.startsWith("planned_work_")) return []
+  const minRuntimeMinutes = lane.minRuntimeMinutes ?? 0
+  if (minRuntimeMinutes <= 0) return []
+  const startedAt = lane.startedAt ? Date.parse(lane.startedAt) : Number.NaN
+  const finishedAt = Date.parse(completedAt)
+  if (!Number.isFinite(startedAt)) return [`${lane.id}: planned work cannot complete before the scheduler records startedAt`]
+  if (!Number.isFinite(finishedAt)) return [`${lane.id}: completion proof has invalid completedAt`]
+  const elapsedMinutes = (finishedAt - startedAt) / 60 / 1000
+  if (elapsedMinutes < minRuntimeMinutes) {
+    return [
+      `${lane.id}: planned work ran ${elapsedMinutes.toFixed(1)}m, requires at least ${minRuntimeMinutes}m before completion`,
+    ]
+  }
+  return []
 }
 
 async function proofIsValid(root: string, lane: OperationLane, proof: LaneCompletionProof) {
@@ -301,7 +343,7 @@ async function proofIsValid(root: string, lane: OperationLane, proof: LaneComple
   }
 }
 
-async function validateInputProof(root: string, lane: OperationLane, input: OperationRunInput) {
+async function validateInputProof(root: string, lane: OperationLane, input: OperationRunInput, now: Date) {
   const artifacts = [...(input.artifacts ?? [])]
   for (const expected of lane.expectedArtifacts) {
     if (artifacts.some((artifact) => artifactCoversExpected(artifact, expected))) continue
@@ -311,7 +353,7 @@ async function validateInputProof(root: string, lane: OperationLane, input: Oper
     operationID: lane.operationID,
     laneID: lane.id,
     status: "complete",
-    completedAt: new Date().toISOString(),
+    completedAt: now.toISOString(),
     summary: input.summary?.trim() || "",
     artifacts,
     evidenceRefs: [...(input.evidenceRefs ?? [])],
@@ -329,12 +371,13 @@ async function persistLaneTerminalProof(
   lane: OperationLane,
   input: OperationRunInput,
   status: "skipped" | "blocked",
+  now: Date,
 ) {
   const proof: LaneCompletionProof = {
     operationID: lane.operationID,
     laneID: lane.id,
     status,
-    completedAt: new Date().toISOString(),
+    completedAt: now.toISOString(),
     summary: input.summary?.trim() || "",
     artifacts: [...(input.artifacts ?? [])],
     evidenceRefs: [...(input.evidenceRefs ?? [])],
@@ -353,6 +396,17 @@ async function persistLaneTerminalProof(
     COVERAGE_RANK[input.coverageImpact] < COVERAGE_RANK[lane.coverageImpact]
   ) {
     blockers.push(`${lane.id}: coverageImpact cannot be downgraded from ${lane.coverageImpact} to ${input.coverageImpact}`)
+  }
+  if (lane.id.startsWith("planned_work_")) {
+    if (!proof.artifacts.length) blockers.push(`${lane.id}: planned work ${status} proof requires artifacts`)
+    if (!proof.evidenceRefs.length) blockers.push(`${lane.id}: planned work ${status} proof requires evidenceRefs`)
+    for (const expected of lane.expectedArtifacts) {
+      if (!proof.artifacts.some((artifact) => artifactCoversExpected(artifact, expected))) {
+        blockers.push(`${lane.id}: planned work ${status} proof does not cover expected artifact: ${expected}`)
+      } else if (!(await expectedArtifactExists(root, expected))) {
+        blockers.push(`${lane.id}: planned work ${status} expected artifact is missing or empty: ${expected}`)
+      }
+    }
   }
   if (!blockers.length) await persistLaneCompletionProof(root, proof)
   return { proof, blockers }
@@ -393,6 +447,7 @@ function dependenciesSatisfied(graph: OperationGraphRecord, lane: OperationLane)
 
 async function autoCompleteReportLane(root: string, graph: OperationGraphRecord, lane: OperationLane) {
   if (!REPORT_AUTOCOMPLETE_LANES.has(lane.id)) return false
+  if (incompletePlannedWorkExists(graph)) return false
   if (lane.status !== "ready" && lane.status !== "running") return false
   if (!dependenciesSatisfied(graph, lane)) return false
   if (!(await Promise.all(lane.expectedArtifacts.map((artifact) => expectedArtifactExists(root, artifact)))).every(Boolean)) {
@@ -511,6 +566,10 @@ function scopeRulePromptLines(scopeRules: string[]) {
 }
 
 function laneSpecificInstruction(lane: OperationLane) {
+  if (lane.id.startsWith("planned_work_"))
+    return `This is a duration-plan execution block. The harness will reject completion before the wall-clock floor${
+      lane.minRuntimeMinutes ? ` of ${lane.minRuntimeMinutes} minutes` : ""
+    }. Complete the scoped block, write a durable block note under work-blocks/, cite evidence or blockers, and only then call operation_run mode=complete_lane for this exact lane. Do not skip ahead to reporting while planned_work lanes remain.`
   if (lane.id === "finding_validation")
     return "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
   if (lane.id === "report_writing")
@@ -546,6 +605,19 @@ function taskParamsForLane(lane: OperationLane, scopeRules: string[]) {
   }
 }
 
+function taskParamsForDiscoveryResearch(action: Extract<OperationNextAction, { action: "research_charter" }>) {
+  return {
+    description: "Discovery Charter research pass",
+    prompt: action.prompt,
+    subagent_type: "recon",
+    operationID: action.operationID,
+    laneID: action.laneID,
+    modelRoute: "openai/gpt-5.5",
+    allowedTools: action.recommendedTools,
+    background: true,
+  }
+}
+
 async function persistRun(worktree: string, graph: OperationGraphRecord, record: RunLogRecord) {
   const { graphPath, runLogPath } = graphPaths(worktree, graph.operationID)
   graph.updatedAt = record.time
@@ -559,7 +631,45 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   if (containsRawCredentialSecret(operatorInput)) throw new Error("operation run inputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const mode = input.mode ?? "advance"
-  const { root } = graphPaths(worktree, operationID)
+  const now = toDate(input.now)
+  const { root, graphPath, runLogPath } = graphPaths(worktree, operationID)
+  const graphExists = await Bun.file(graphPath).exists()
+  if (!graphExists) {
+    if (mode !== "advance") throw new Error("operation graph is missing; run operation_schedule first")
+    const next = await decideOperationNext(worktree, { operationID, now })
+    const taskParams =
+      next.action.action === "research_charter" ? taskParamsForDiscoveryResearch(next.action) : undefined
+    await appendJsonl(runLogPath, {
+      time: now.toISOString(),
+      mode,
+      laneID: "laneID" in next.action ? next.action.laneID : undefined,
+      jobID: input.jobID,
+      summary: input.summary,
+      action: next.action.action,
+      reason: next.action.reason,
+    })
+    return {
+      operationID,
+      mode,
+      action: next.action.action,
+      reason: next.action.reason,
+      laneID: "laneID" in next.action ? next.action.laneID : undefined,
+      graphPath,
+      runLogPath,
+      taskParams,
+      commandProfiles: [],
+      completedLanes: [],
+      skippedLanes: [],
+      blockedLanes: [],
+      failedLanes: [],
+      syncedJobs: [],
+      syncedWorkUnits: [],
+      completedWorkUnits: [],
+      failedWorkUnits: [],
+      blockers: next.action.blockers,
+      repairHints: operationRunRepairHints(next.action.blockers, next.action),
+    }
+  }
   const synced = await syncOperationRuntimeState(worktree, {
     operationID,
     backgroundJobs: input.backgroundJobs,
@@ -580,7 +690,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     if (!input.laneID) throw new Error(`${mode} requires laneID`)
     const lane = findLane(graph, input.laneID)
     if (mode === "complete_lane") {
-      const proof = await validateInputProof(root, lane, input)
+      const proof = await validateInputProof(root, lane, input, now)
       if (lane.terminalState && lane.terminalState !== "complete" && proof.blockers.length) {
         blockers.push(`${lane.id}: terminal ${lane.terminalState} lane cannot be completed`)
       }
@@ -591,16 +701,18 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
         await persistLaneCompletionProof(root, proof.proof)
         lane.status = "complete"
         lane.terminalState = "complete"
+        lane.startedAt = undefined
         completedLanes.push(lane.id)
         markDependentsReady(graph)
       }
     } else if (mode === "skip_lane" || mode === "block_lane") {
       const status = mode === "skip_lane" ? "skipped" : "blocked"
-      const proof = await persistLaneTerminalProof(root, lane, input, status)
+      const proof = await persistLaneTerminalProof(root, lane, input, status, now)
       if (proof.blockers.length) blockers.push(...proof.blockers)
       if (!blockers.length) {
         lane.status = status
         lane.terminalState = status
+        lane.startedAt = undefined
         lane.skipReason = proof.proof.summary
         lane.coverageImpact = proof.proof.coverageImpact
         lane.releaseRequired = proof.proof.releaseRequired
@@ -616,13 +728,13 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   }
 
   if (completedLanes.length || skippedLanes.length || blockedLanes.length || failedLanes.length) {
-    graph.updatedAt = new Date().toISOString()
+    graph.updatedAt = now.toISOString()
     await writeJson(synced.graphPath, graph)
   }
 
   if (mode === "complete_lane" || mode === "skip_lane" || mode === "block_lane" || mode === "fail_lane") {
     const laneID = input.laneID
-    const next = blockers.length ? undefined : await decideOperationNext(worktree, { operationID })
+    const next = blockers.length ? undefined : await decideOperationNext(worktree, { operationID, now })
     const nextHint =
       next?.action.action === "launch_lane"
         ? ` Next lane ready: ${next.action.lane.id}; continue via runtime_scheduler/runtime_daemon or complete that lane with operation_run.`
@@ -637,7 +749,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
       ? `${mode} did not update lane ${laneID}: ${blockers.join("; ")}`
       : `recorded ${mode} for lane ${laneID}; scheduler will choose the next lane.${nextHint}`
     const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
-      time: new Date().toISOString(),
+      time: now.toISOString(),
       mode,
       laneID,
       jobID: input.jobID,
@@ -670,7 +782,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   if (mode === "advance" && input.controller === "tool") {
     const reason = "operation_run advance is scheduler-owned; use runtime_scheduler or runtime_daemon to launch lanes"
     const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
-      time: new Date().toISOString(),
+      time: now.toISOString(),
       mode,
       jobID: input.jobID,
       summary: input.summary,
@@ -698,7 +810,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
     }
   }
 
-  const next = await decideOperationNext(worktree, { operationID })
+  const next = await decideOperationNext(worktree, { operationID, now })
   let taskParams: OperationRunResult["taskParams"]
   let commandProfiles: string[] = []
   let laneID = "lane" in next.action ? next.action.lane.id : "laneID" in next.action ? next.action.laneID : undefined
@@ -706,6 +818,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   if (mode === "advance" && next.action.action === "launch_lane") {
     const lane = findLane(graph, next.action.lane.id)
     lane.status = "running"
+    lane.startedAt = now.toISOString()
     laneID = lane.id
     taskParams = taskParamsForLane(lane, await readOperationScopeRules(root))
     commandProfiles = commandProfilesForLane(lane)
@@ -716,7 +829,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
       ? `marked lane ${laneID} running and prepared launch parameters`
       : next.action.reason
   const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
-    time: new Date().toISOString(),
+    time: now.toISOString(),
     mode,
     laneID,
     jobID: input.jobID,

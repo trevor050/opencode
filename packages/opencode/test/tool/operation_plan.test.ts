@@ -11,6 +11,27 @@ import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
 
+function executionBlocks(input: { minutes: number; laneID?: string; stage?: "recon" | "validation" | "reporting" | "handoff" }) {
+  const laneID = input.laneID ?? "recon"
+  const stage = input.stage ?? "recon"
+  const blockMinutes = input.minutes >= 480 ? 60 : 30
+  const count = Math.ceil(input.minutes / blockMinutes)
+  return Array.from({ length: count }, (_, index) => ({
+    id: `block-${index + 1}`,
+    stage,
+    laneID,
+    title: `Bounded ${stage} work block ${index + 1}`,
+    startMinute: index * blockMinutes,
+    durationMinutes: blockMinutes,
+    objective: `Complete bounded ${stage} work block ${index + 1}.`,
+    actions: [`Run the scoped ${stage} action for block ${index + 1}.`],
+    successCriteria: [`Block ${index + 1} records evidence, blockers, or a safe fallback.`],
+    fallbackWork: [`If the primary action stalls, run the narrower safe fallback for block ${index + 1}.`],
+    subagents: stage === "reporting" ? ["report-writer"] : [laneID],
+    expectedArtifacts: [`work-blocks/block-${index + 1}.md`],
+  }))
+}
+
 describe("tool.operation_plan", () => {
   test("rejects durable plan rewrites after execution has started", async () => {
     await using dir = await tmpdir({ git: true })
@@ -293,6 +314,7 @@ describe("tool.operation_plan", () => {
                     { stage: "reporting", hours: 0.75, work: "Evidence normalization, report draft, lint, and render." },
                     { stage: "handoff", hours: 0.45, work: "Runtime summary, audit, and final handoff." },
                   ],
+                  executionBlocks: executionBlocks({ minutes: 156 }),
                 },
                 coverageContract: {
                   status: "unmet",
@@ -452,6 +474,7 @@ describe("tool.operation_plan", () => {
                     { stage: "reporting", hours: 1.25, work: "Evidence normalization, report outline, report drafting, report review, lint, and render." },
                     { stage: "handoff", hours: 0.35, work: "Runtime summary, eval scorecard, operation audit, handoff gate, and final handoff." },
                   ],
+                  executionBlocks: executionBlocks({ minutes: 198 }),
                 },
                 coverageContract: {
                   status: "unmet",

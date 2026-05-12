@@ -18,8 +18,7 @@ async function makeAuditFixture() {
     "tools/ulmcode-profile/package.json",
     JSON.stringify({
       dependencies: {
-        "oh-my-openagent": "file:plugins/vendor/oh-my-openagent-3.17.12",
-        "oh-my-opencode": "file:plugins/vendor/oh-my-openagent-3.17.12",
+        "@opencode-ai/plugin": "1.14.38",
       },
     }),
   )
@@ -55,11 +54,6 @@ async function makeAuditFixture() {
       "- Check literal readiness with `ulm:literal-run-readiness`.",
       "- Run bounded live probes with `ulm:behavior-probe`.",
     ].join("\n"),
-  )
-  await writeFixtureFile(
-    root,
-    "tools/ulmcode-profile/plugins/vendor/oh-my-openagent-3.17.12/dist/index.js",
-    "module.exports = {}",
   )
   await writeFixtureFile(
     root,

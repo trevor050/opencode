@@ -390,7 +390,6 @@ async function auditOperationRuntime() {
     "contextLimit",
     "outputLimit",
     "costCliffTokens",
-    "opencode-go/qwen3.6-plus",
   ])
   requireText("packages/opencode/src/ulm/operation-next.ts", operationNext, [
     "decideOperationNext",
@@ -1427,7 +1426,6 @@ async function auditReportQuality() {
 async function auditProfileRouting() {
   const profileSkills = await read("packages/opencode/script/ulm-profile-skills.ts")
   const profileConfig = await read("tools/ulmcode-profile/opencode.json")
-  const omoConfig = await read("tools/ulmcode-profile/oh-my-openagent.jsonc")
   const shellStrategy = await read("tools/ulmcode-profile/plugins/shell-strategy/shell_strategy.md")
   const pentestPrompt = await read("packages/opencode/src/agent/prompt/pentest.txt")
   const reconPrompt = await read("packages/opencode/src/agent/prompt/recon.txt")
@@ -1435,6 +1433,7 @@ async function auditProfileRouting() {
   requireText("packages/opencode/script/ulm-profile-skills.ts", profileSkills, [
     "profile model must default to GPT-5.5",
     "profile small_model must use GPT-5.4 Mini Fast",
+    "profile must not configure non-OpenAI providers",
     "action must use medium reasoning",
     "websearch must route through the Exa remote MCP",
     "validator must use xhigh reasoning",
@@ -1450,11 +1449,6 @@ async function auditProfileRouting() {
     "web_search_exa",
     '"enable_sse_json_repair": true',
     "__ULMCODE_PROFILE_DIR__/plugins/shell-strategy/shell_strategy.md",
-  ])
-  requireText("tools/ulmcode-profile/oh-my-openagent.jsonc", omoConfig, [
-    '"repo-scout"',
-    '"xhigh-court"',
-    '"reasoningEffort": "xhigh"',
   ])
   requireText("packages/opencode/src/agent/prompt/action.txt", actionPrompt, [
     "focused, one-off",
@@ -1508,11 +1502,10 @@ async function auditProfileRuntime() {
   const toolManifest = await read("tools/ulmcode-profile/tool-manifest.json")
   validateToolManifestSupervision(toolManifest)
   requireText("tools/ulmcode-profile/package.json", profilePackage, [
-    "file:plugins/vendor/oh-my-openagent-3.17.12",
-    "oh-my-openagent",
-    "oh-my-opencode",
+    "@opencode-ai/plugin",
   ])
-  assert(!opencodeConfig.includes("oh-my-openagent@latest"), "profile must not use oh-my-openagent@latest")
+  assert(!profilePackage.includes("oh-my-openagent"), "profile package must not install Oh My OpenAgent")
+  assert(!profilePackage.includes("oh-my-opencode"), "profile package must not install legacy Oh My OpenCode")
   requireText("tools/ulmcode-profile/plugins/ulmcode-runtime-guard.js", guard, [
     "operation_resume",
     "operation_supervise",
@@ -1547,8 +1540,8 @@ async function auditProfileRuntime() {
     "ulm:behavior-probe",
   ])
   assert(
-    await exists("tools/ulmcode-profile/plugins/vendor/oh-my-openagent-3.17.12/dist/index.js"),
-    "vendored oh-my-openagent dist is missing",
+    !(await exists("tools/ulmcode-profile/plugins/vendor/oh-my-openagent-3.17.12/dist/index.js")),
+    "vendored oh-my-openagent dist must not be present",
   )
   return { id: "profile_runtime", status: "ok", detail: "isolated profile, runtime guard, and vendored plugins are wired" } satisfies CheckResult
 }

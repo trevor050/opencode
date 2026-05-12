@@ -10,7 +10,7 @@ ULMCode should be able to run an authorized non-destructive pentest operation un
 
 | Requirement | Required evidence | Current status |
 | --- | --- | --- |
-| Research-first architecture hub | `docs/ulm-autonomy/` decision docs with cited patterns and rejected approaches | Implemented for this slice. `docs/ulm-autonomy/overnight-supervisor.md` captures the overnight supervisor architecture, OMO/Plannotator integration stance, foreground command policy, and verification commands. |
+| Research-first architecture hub | `docs/ulm-autonomy/` decision docs with cited patterns and rejected approaches | Implemented for this slice. `docs/ulm-autonomy/overnight-supervisor.md` captures the overnight supervisor architecture, plan-critique stance, foreground command policy, and verification commands. |
 | Durable operation goal | Explicit objective, target duration, status, blockers, completion gates | Implemented through `operation_goal` and `packages/opencode/src/ulm/operation-goal.ts`. Completion is blocked until final artifacts and audit evidence exist. |
 | Duration-aware pentest kickoff | Under-two-hour compact planning and 20-36 hour plan-plan/supervised path | Implemented in kickoff policy and prompt guidance. Missing duration, authorization, and scope block broad execution. |
 | Adaptive plan-plan workflow | Passive discovery, follow-up questions, plan-plan, critic pass, full operation plan | Implemented as policy/prompt/runtime contract. Plannotator is a critic lane, not the durable state owner. |
