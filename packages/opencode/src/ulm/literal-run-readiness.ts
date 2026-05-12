@@ -33,6 +33,33 @@ export type LiteralRunReadinessResult = {
   targetElapsedSeconds: number
   checkedAt: string
   literalElapsedSeconds?: number
+  modelRouteAudit: {
+    ok: boolean
+    gaps: string[]
+  }
+  credentialLeakAudit: {
+    ok: boolean
+    findings: Array<{ label: string; reason: string }>
+  }
+  configDrift: {
+    checked: boolean
+    ok: boolean
+    gaps: string[]
+  }
+  supervisorIncidentCount: number
+  staleTaskSummary: {
+    stale: number
+    superseded: number
+    nonblocking: number
+    needsRecovery: number
+  }
+  deterministicCloseout: {
+    ok: boolean
+    finalPackage: boolean
+    finalOperationAudit: boolean
+    rerenderedAfterHeartbeat: boolean
+    noRunningStatusInFinalDeliverables: boolean
+  }
   checks: LiteralRunCheck[]
   gaps: string[]
   auditPath: string
@@ -115,6 +142,14 @@ async function finalStakeholderPackageGaps(finalDir: string, artifacts: Record<s
     for (const term of item.terms) {
       if (!body.includes(term)) gaps.push(`${item.label}:missing:${term}`)
     }
+    if (/\bstatus:\s*running\b/i.test(body)) gaps.push(`${item.label}:stale-running-status`)
+    if (
+      item.label === "ulm-team-report.md" &&
+      /## Supervisor Incidents[\s\S]*?-\s+(?!None recorded\.)/i.test(body) &&
+      /## Residual Harness Risks[\s\S]*?-\s+No residual harness risks/i.test(body)
+    ) {
+      gaps.push("ulm-team-report.md:conflicting-risk-claim")
+    }
   }
   for (const item of pdfChecks) {
     const file = finalManifestArtifactPath(finalDir, artifacts[item.key])
@@ -193,6 +228,22 @@ function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | un
 
 function countItems(input: unknown) {
   return Array.isArray(input) ? input.length : 0
+}
+
+function supervisorIncidentCount(report: string | undefined) {
+  const section = report?.match(/## Supervisor Incidents\s+([\s\S]*?)(?:\n## |\s*$)/i)?.[1] ?? ""
+  if (!section.trim() || /-\s+None recorded\./i.test(section)) return 0
+  return section.split(/\r?\n/).filter((line) => /^\s*-\s+\S/.test(line)).length
+}
+
+function countRuntimeStatuses(runtimeSummary: { backgroundTasks?: Array<{ status?: string }> } | undefined) {
+  const tasks = runtimeSummary?.backgroundTasks ?? []
+  return {
+    stale: tasks.filter((task) => task.status === "stale").length,
+    superseded: tasks.filter((task) => task.status === "superseded").length,
+    nonblocking: tasks.filter((task) => task.status === "nonblocking").length,
+    needsRecovery: tasks.filter((task) => task.status === "needs_recovery").length,
+  }
 }
 
 function syntheticCredentialReason(credentials: unknown[]) {
@@ -381,6 +432,7 @@ export async function auditLiteralRunReadiness(
   const burnInProofPath = path.join(root, "burnin", "burnin-proof.json")
   const toolPreflightPath = path.join(root, "tools", "tool-preflight.json")
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
+  const runtimeSummaryPath = path.join(root, "deliverables", "runtime-summary.json")
   const reportOutlinePath = path.join(root, "reports", "report-outline.md")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
   const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
@@ -538,6 +590,17 @@ export async function auditLiteralRunReadiness(
   )
 
   const toolPreflight = await readJson<{ total?: number; available?: number; blocked?: number }>(toolPreflightPath)
+  const modelRouteAudit = await readJson<{
+    ok?: boolean
+    gaps?: unknown[]
+    configDrift?: { checked?: boolean; ok?: boolean; gaps?: unknown[] }
+  }>(modelRouteAuditPath)
+  const modelRouteGaps = Array.isArray(modelRouteAudit?.gaps)
+    ? modelRouteAudit.gaps.filter((gap): gap is string => typeof gap === "string")
+    : []
+  const configDriftGaps = Array.isArray(modelRouteAudit?.configDrift?.gaps)
+    ? modelRouteAudit.configDrift.gaps.filter((gap): gap is string => typeof gap === "string")
+    : []
   checks.push(
     check({
       id: "tool-preflight",
@@ -553,9 +616,19 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "model-route-audit",
-      status: (await exists(modelRouteAuditPath)) ? "ok" : requiresLongRunProof ? "fail" : "warn",
+      status:
+        modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0)
+          ? "ok"
+          : requiresLongRunProof
+            ? "fail"
+            : "warn",
       required: requiresLongRunProof,
-      detail: (await exists(modelRouteAuditPath)) ? "model route audit exists" : "model-route-audit.json is missing",
+      detail:
+        modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0)
+          ? "model route audit passed"
+          : (await exists(modelRouteAuditPath))
+            ? `model route audit failed: ${modelRouteGaps.join("; ") || "ok flag missing"}`
+            : "model-route-audit.json is missing",
       path: modelRouteAuditPath,
     }),
   )
@@ -698,6 +771,7 @@ export async function auditLiteralRunReadiness(
   )
 
   const finalManifest = await readJson<{ operationID?: string; generatedAt?: string; artifacts?: Record<string, unknown> }>(finalManifestPath)
+  const runtimeSummary = await readJson<{ backgroundTasks?: Array<{ status?: string }> }>(runtimeSummaryPath)
   const finalManifestExists = finalManifest !== undefined
   const finalManifestOperationMatches = operationIDMatches(finalManifest?.operationID, operationID)
   const missingFinalManifestArtifacts = requiredFinalManifestArtifacts.filter(
@@ -715,17 +789,16 @@ export async function auditLiteralRunReadiness(
     .filter((item) => !item.exists)
     .map((item) => item.key)
   const finalStakeholderGaps = await finalStakeholderPackageGaps(finalDir, finalManifest?.artifacts)
+  const finalPackageOk =
+    finalManifestExists &&
+    finalManifestOperationMatches &&
+    missingFinalManifestArtifacts.length === 0 &&
+    missingFinalManifestFiles.length === 0 &&
+    finalStakeholderGaps.length === 0
   checks.push(
     check({
       id: "final-package",
-      status:
-        finalManifestExists &&
-        finalManifestOperationMatches &&
-        missingFinalManifestArtifacts.length === 0 &&
-        missingFinalManifestFiles.length === 0 &&
-        finalStakeholderGaps.length === 0
-          ? "ok"
-          : "fail",
+      status: finalPackageOk ? "ok" : "fail",
       required: true,
       detail: finalManifestExists
         ? `manifest_operation_id=${finalManifest?.operationID ?? "missing"}; selected_operation_id=${operationID}; missing_manifest_artifacts=${missingFinalManifestArtifacts.length ? missingFinalManifestArtifacts.join(",") : "none"}; missing_manifest_files=${missingFinalManifestFiles.length ? missingFinalManifestFiles.join(",") : "none"}; stakeholder_gaps=${finalStakeholderGaps.length ? finalStakeholderGaps.join(",") : "none"}`
@@ -741,6 +814,7 @@ export async function auditLiteralRunReadiness(
     checks?: {
       finalHandoff?: { ok?: boolean; gates?: { minOutlineTargetPages?: number; minPdfPages?: number } }
       credentialHandoff?: { ok?: boolean; required?: boolean; credentialCount?: number }
+      credentialLeakAudit?: { ok?: boolean; findings?: Array<{ label?: unknown; reason?: unknown }> }
     }
   }>(finalAuditPath)
   const finalAuditTime = timestamp(finalAudit?.generatedAt)
@@ -764,19 +838,18 @@ export async function auditLiteralRunReadiness(
     (finalAuditCredentialHandoff?.ok === true &&
       finalAuditCredentialHandoff.required === true &&
       (finalAuditCredentialHandoff.credentialCount ?? 0) > 0)
+  const finalOperationAuditOk =
+    finalAudit?.ok === true &&
+    finalAuditOperationMatches &&
+    countItems(finalAudit.blockers) === 0 &&
+    finalAuditFresh &&
+    finalAuditHandoffOk &&
+    finalAuditGatesOk &&
+    finalAuditCredentialHandoffOk
   checks.push(
     check({
       id: "final-operation-audit",
-      status:
-        finalAudit?.ok === true &&
-        finalAuditOperationMatches &&
-        countItems(finalAudit.blockers) === 0 &&
-        finalAuditFresh &&
-        finalAuditHandoffOk &&
-        finalAuditGatesOk &&
-        finalAuditCredentialHandoffOk
-          ? "ok"
-          : "fail",
+      status: finalOperationAuditOk ? "ok" : "fail",
       required: true,
       detail: finalAudit
         ? `ok=${finalAudit.ok === true ? "true" : "false"}; audit_operation_id=${finalAudit.operationID ?? "missing"}; selected_operation_id=${operationID}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; final_manifest_generated_at=${finalManifest?.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; final_handoff=${finalAuditHandoffOk ? "proved" : "missing"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; min_pdf_pages=${finalAuditMinPdfPages ?? "missing"}${requiredAuditMinPdfPages ? `; required_min_pdf_pages=${requiredAuditMinPdfPages}` : ""}; credential_handoff=${
@@ -795,12 +868,45 @@ export async function auditLiteralRunReadiness(
   const gaps = checks
     .filter((item) => item.status !== "ok")
     .map((item) => `${item.id}: ${item.detail}`)
+  const credentialLeakFindings =
+    finalAudit?.checks?.credentialLeakAudit?.findings
+      ?.map((finding) => ({
+        label: typeof finding.label === "string" ? finding.label : "unknown",
+        reason: typeof finding.reason === "string" ? finding.reason : "unknown",
+      }))
+      .filter((finding) => finding.label !== "unknown" || finding.reason !== "unknown") ?? []
+  const teamReport = await readText(path.join(finalDir, "ulm-team-report.md"))
+  const noRunningStatusInFinalDeliverables = !finalStakeholderGaps.some((gap) => gap.endsWith(":stale-running-status"))
+  const rerenderedAfterHeartbeat =
+    finalManifestTime !== undefined && (heartbeatTime === undefined || finalManifestTime >= heartbeatTime)
   const result: LiteralRunReadinessResult = {
     operationID,
     status,
     targetElapsedSeconds,
     checkedAt: (input.now ?? (() => new Date()))().toISOString(),
     literalElapsedSeconds,
+    modelRouteAudit: {
+      ok: modelRouteAudit?.ok === true,
+      gaps: modelRouteGaps,
+    },
+    credentialLeakAudit: {
+      ok: finalAudit?.checks?.credentialLeakAudit?.ok === true,
+      findings: credentialLeakFindings,
+    },
+    configDrift: {
+      checked: modelRouteAudit?.configDrift?.checked === true,
+      ok: modelRouteAudit?.configDrift?.ok === true,
+      gaps: configDriftGaps,
+    },
+    supervisorIncidentCount: supervisorIncidentCount(teamReport),
+    staleTaskSummary: countRuntimeStatuses(runtimeSummary),
+    deterministicCloseout: {
+      ok: finalPackageOk && finalOperationAuditOk && rerenderedAfterHeartbeat && noRunningStatusInFinalDeliverables,
+      finalPackage: finalPackageOk,
+      finalOperationAudit: finalOperationAuditOk,
+      rerenderedAfterHeartbeat,
+      noRunningStatusInFinalDeliverables,
+    },
     checks,
     gaps,
     auditPath,

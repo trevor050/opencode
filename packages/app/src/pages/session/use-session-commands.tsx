@@ -13,6 +13,7 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
+import { useUlm } from "@/context/ulm"
 import { showToast } from "@opencode-ai/ui/toast"
 import { findLast } from "@opencode-ai/core/util/array"
 import { createSessionTabs } from "@/pages/session/helpers"
@@ -20,6 +21,7 @@ import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { isUlmDirectory } from "@/utils/ulm-workspace"
+import { operationFilesOpenPathForSession } from "@/utils/ulm-operation-ui"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -49,6 +51,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sync = useSync()
   const terminal = useTerminal()
   const layout = useLayout()
+  const ulm = useUlm()
   const navigate = useNavigate()
   const { params, tabs, view } = useSessionLayout()
   const ulmWorkspace = () => isUlmDirectory(sdk.directory)
@@ -226,6 +229,19 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     void import("@/components/dialog-select-file").then((x) => {
       dialog.show(() => <x.DialogSelectFile onOpenFile={showAllFiles} />)
     })
+  }
+
+  const openOperationFiles = () => {
+    const target = operationFilesOpenPathForSession(ulm.store.operations, params.id, sdk.directory)
+    if (!target || !platform.openPath) {
+      showToast({
+        title: "Operation files unavailable",
+        description: "No operation file store is available for this workspace.",
+        variant: "error",
+      })
+      return
+    }
+    void platform.openPath(target)
   }
 
   const closeTab = () => {
@@ -433,6 +449,18 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       slash: "open",
       onSelect: openFile,
     }),
+    ...(ulmWorkspace()
+      ? [
+          fileCommand({
+            id: "operation.openFiles",
+            title: "Open operation files",
+            description: "Open the current operation artifact folder",
+            slash: "open-operation",
+            disabled: !platform.openPath,
+            onSelect: openOperationFiles,
+          }),
+        ]
+      : []),
     fileCommand({
       id: "tab.close",
       title: language.t("command.tab.close"),

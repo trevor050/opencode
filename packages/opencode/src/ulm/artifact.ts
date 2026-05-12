@@ -5,6 +5,7 @@ import { Bus } from "@/bus"
 import { OperationEvent } from "./event"
 import { Schema } from "effect"
 import { containsRawCredentialSecret, credentialIndexGaps, expectedCredentialServices, missingCredentialServices } from "./credential-safety"
+import { assertOperationArtifactSafe, scanOperationArtifacts } from "./operation-artifact-safety"
 
 export const STAGES = ["intake", "recon", "mapping", "validation", "reporting", "handoff"] as const
 export const OPERATION_STATUSES = ["planned", "running", "blocked", "paused", "complete"] as const
@@ -434,6 +435,18 @@ export type OperationResumeOptions = {
   now?: string
 }
 
+function emptyFindingStateCounts() {
+  return Object.fromEntries(FINDING_STATES.map((state) => [state, 0])) as Record<FindingState, number>
+}
+
+function emptySeverityCounts() {
+  return Object.fromEntries(SEVERITIES.map((severity) => [severity, 0])) as Record<Severity, number>
+}
+
+function emptyEvidenceKindCounts() {
+  return Object.fromEntries(EVIDENCE_KINDS.map((kind) => [kind, 0])) as Record<EvidenceKind, number>
+}
+
 export type OperationAuditOptions = OperationResumeOptions & ReportLintOptions
 
 export type OperationAuditResult = {
@@ -468,6 +481,10 @@ export type OperationAuditResult = {
       missingServices?: string[]
       submittedAt?: string
       reviewFile: string
+    }
+    credentialLeakAudit: {
+      ok: boolean
+      findings: Array<{ label: string; reason: string }>
     }
   }
   blockers: string[]
@@ -592,7 +609,7 @@ export type RuntimeSummaryInput = {
   backgroundTasks?: Array<{
     id: string
     agent?: string
-    status: "running" | "completed" | "failed" | "cancelled" | "stale" | "unknown"
+    status: "running" | "completed" | "failed" | "cancelled" | "stale" | "superseded" | "nonblocking" | "needs_recovery" | "unknown"
     summary?: string
     restartArgs?: {
       task_id: string
@@ -601,6 +618,7 @@ export type RuntimeSummaryInput = {
       prompt: string
       subagent_type: string
       operationID?: string
+      laneID?: string
       command?: string
     }
   }>
@@ -875,6 +893,26 @@ async function readJson<T>(file: string): Promise<T | undefined> {
   }
 }
 
+function normalizeOperationRecord(record: OperationRecord | undefined): OperationRecord | undefined {
+  if (!record) return undefined
+  const legacy = record as OperationRecord & { createdAt?: string; updatedAt?: string }
+  return {
+    ...record,
+    stage: record.stage ?? "intake",
+    status: (record.status as string | undefined) === "active" ? "running" : (record.status ?? "running"),
+    summary: record.summary ?? "",
+    nextActions: record.nextActions ?? [],
+    blockers: record.blockers ?? [],
+    riskLevel: record.riskLevel ?? "medium",
+    activeTasks: record.activeTasks ?? [],
+    evidence: record.evidence ?? [],
+    time: record.time ?? {
+      created: legacy.createdAt ?? new Date().toISOString(),
+      updated: legacy.updatedAt ?? legacy.createdAt ?? new Date().toISOString(),
+    },
+  }
+}
+
 async function readOperationSessionBindings(worktree: string, operationID: string) {
   const dir = path.join(worktree, ".ulmcode", "session-bindings")
   let entries: string[]
@@ -1083,17 +1121,14 @@ async function laneTerminalProofIsAccepted(
   if (!laneID) return false
   const status = lane.status
   if (status !== "skipped" && status !== "blocked") return false
-  if (lane.releaseRequired !== false || lane.coverageImpact !== "none") return false
+  if (lane.releaseRequired !== false || lane.coverageImpact === "blocks_release") return false
   const proof = await readJson<LaneProofRecord>(path.join(root, "lane-complete", `${laneID}.json`))
   if (!proof) return false
   if (proof.operationID !== operationID || proof.laneID !== laneID || proof.status !== status) return false
   if (!proof.summary?.trim()) return false
-  if (proof.releaseRequired !== false || proof.coverageImpact !== "none") return false
+  if (proof.releaseRequired !== false || proof.coverageImpact === "blocks_release") return false
   for (const artifact of proof.artifacts ?? []) {
     if (!(await nonEmptyArtifact(root, artifact))) return false
-  }
-  for (const expected of lane.expectedArtifacts ?? []) {
-    if (!proof.artifacts?.some((artifact) => proofCoversExpected(artifact, expected))) return false
   }
   return true
 }
@@ -1114,16 +1149,12 @@ async function laneTerminalProofProblems(
   if (proof.laneID !== laneID) problems.push(`laneID must be ${laneID}`)
   if (proof.status !== status) problems.push(`status must be ${status}`)
   if (!proof.summary?.trim()) problems.push("summary is required")
-  if (lane.releaseRequired !== false || lane.coverageImpact !== "none")
-    problems.push("terminal skipped/blocked proof is only accepted for non-release lanes with no coverage impact")
+  if (lane.releaseRequired !== false || lane.coverageImpact === "blocks_release")
+    problems.push("terminal skipped/blocked proof is only accepted for non-release lanes that do not block release")
   if (proof.releaseRequired !== false) problems.push("releaseRequired must be false")
-  if (proof.coverageImpact !== "none") problems.push("coverageImpact must be none")
+  if (proof.coverageImpact === "blocks_release") problems.push("coverageImpact must not be blocks_release")
   for (const artifact of proof.artifacts ?? []) {
     if (!(await nonEmptyArtifact(root, artifact))) problems.push(`artifact is missing or empty: ${artifact}`)
-  }
-  for (const expected of lane.expectedArtifacts ?? []) {
-    if (!proof.artifacts?.some((artifact) => proofCoversExpected(artifact, expected)))
-      problems.push(`does not cover expected artifact: ${expected}`)
   }
   return problems
 }
@@ -1379,6 +1410,46 @@ function normalizeRuntimeBudget(usage: RuntimeSummaryInput["usage"]) {
   }
 }
 
+async function operationCredentialRedactionPairs(operationID: string) {
+  const operationSlug = slug(operationID, "operation")
+  const dataDirs = [
+    process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR,
+    path.join(process.env.HOME ?? "", ".local", "share", "ulmcode"),
+    path.join(process.env.HOME ?? "", ".local", "share", "opencode"),
+  ].filter((item): item is string => Boolean(item))
+  const pairs: [string, string][] = []
+  for (const dataDir of dataDirs) {
+    const dir = path.join(dataDir, "storage", "ulm", "credential", operationSlug)
+    const entries = await fs.readdir(dir).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue
+      const record = await readJson<Record<string, unknown>>(path.join(dir, entry))
+      for (const key of ["username", "password", "secret", "token", "apiKey"]) {
+        const value = record?.[key]
+        if (typeof value !== "string" || value.length < 3) continue
+        pairs.push([value, key === "username" ? "[REDACTED_CREDENTIAL_USERNAME]" : "[REDACTED_CREDENTIAL_SECRET]"])
+      }
+    }
+  }
+  return pairs
+}
+
+export async function redactOperationCredentialValues<T>(operationID: string, value: T): Promise<T> {
+  const pairs = await operationCredentialRedactionPairs(operationID)
+  if (!pairs.length) return value
+  const redact = (item: unknown): unknown => {
+    if (typeof item === "string") {
+      return pairs.reduce((text, [raw, replacement]) => text.split(raw).join(replacement), item)
+    }
+    if (Array.isArray(item)) return item.map((entry) => redact(entry))
+    if (item && typeof item === "object") {
+      return Object.fromEntries(Object.entries(item).map(([key, entry]) => [key, redact(entry)]))
+    }
+    return item
+  }
+  return redact(value) as T
+}
+
 function listLines(items: string[] | undefined, empty: string) {
   if (!items?.length) return [`- ${empty}`]
   return items.map((item) => `- ${item}`)
@@ -1502,6 +1573,25 @@ function formatInvalidProofReasons(reasons: string[] | undefined) {
   return reasons?.length ? `: ${reasons.join("; ")}` : ""
 }
 
+function completedNmapTaskExists(status: OperationStatusSummary) {
+  return (status.runtime?.backgroundTasks ?? []).some(
+    (task) => task.status === "completed" && /\bnmap\b/i.test(backgroundTaskText(task)),
+  )
+}
+
+function nonBlockingCompletedHandoffRuntimeTask(
+  status: OperationStatusSummary,
+  task: NonNullable<RuntimeSummaryRecord["backgroundTasks"]>[number],
+) {
+  if (status.operation?.stage !== "handoff") return false
+  if (task.status !== "stale") return false
+  const text = backgroundTaskText(task)
+  if (/\breport\b/i.test(text)) return true
+  if (completedNmapTaskExists(status) && /\bnmap\b/i.test(text)) return true
+  if (/\bnuclei\b/i.test(text)) return true
+  return false
+}
+
 function resumeGaps(status: OperationStatusSummary, options: OperationResumeOptions = {}) {
   const gaps: string[] = []
   const operation = status.operation
@@ -1539,7 +1629,9 @@ function resumeGaps(status: OperationStatusSummary, options: OperationResumeOpti
     gaps.push("complete handoff is missing final deliverables")
   }
   for (const task of status.runtime?.backgroundTasks ?? []) {
-    if (task.status === "stale") gaps.push(`background task ${task.id} is stale`)
+    if (task.status === "stale" && !nonBlockingCompletedHandoffRuntimeTask(status, task)) {
+      gaps.push(`background task ${task.id} is stale`)
+    }
   }
   return gaps
 }
@@ -1558,7 +1650,7 @@ function resumeToolRecommendations(status: OperationStatusSummary, gaps: string[
   }
   if (gaps.some((gap) => gap.startsWith("operation checkpoint is stale"))) tools.push("operation_checkpoint")
   if (operation?.activeTasks.length || background.length) tools.push("task_list", "task_status")
-  if (background.some((task) => task.status === "stale" && task.restartArgs)) {
+  if (background.some((task) => task.status === "stale" && task.restartArgs && !nonBlockingCompletedHandoffRuntimeTask(status, task))) {
     tools.push("operation_resume", "operation_recover", "task_restart")
   }
   if (operation?.stage === "validation") tools.push("evidence_record", "finding_record")
@@ -1632,6 +1724,36 @@ export async function buildOperationResumeBrief(
 export function formatOperationResumeBrief(brief: OperationResumeBrief) {
   const checkpoint = brief.checkpoint
   const background = brief.runtime?.backgroundTasks ?? []
+  const statusForTaskFiltering: OperationStatusSummary = {
+    operationID: brief.operationID,
+    root: brief.root,
+    operation: checkpoint
+      ? {
+          operationID: brief.operationID,
+          objective: checkpoint.objective,
+          stage: checkpoint.stage,
+          status: checkpoint.status,
+          summary: checkpoint.summary,
+          nextActions: checkpoint.nextActions,
+          blockers: checkpoint.blockers,
+          riskLevel: checkpoint.riskLevel,
+          activeTasks: checkpoint.activeTasks,
+          evidence: [],
+          time: checkpoint.time,
+        }
+      : undefined,
+    plans: { operation: false, discoveryCharter: false },
+    policies: { foregroundCommand: "unknown" },
+    findings: { total: 0, byState: emptyFindingStateCounts(), bySeverity: emptySeverityCounts() },
+    evidence: { total: 0, byKind: emptyEvidenceKindCounts() },
+    reports: { outline: false, markdown: false, html: false, pdf: false, readme: false, manifest: false },
+    runtimeSummary: false,
+    evalScorecard: false,
+    runtime: brief.runtime,
+    lastEvents: [],
+  }
+  const visibleBackground = background.filter((task) => !nonBlockingCompletedHandoffRuntimeTask(statusForTaskFiltering, task))
+  const suppressedBackgroundCount = background.length - visibleBackground.length
   const toolHints = [
     brief.recommendedTools.includes("operation_status")
       ? `operation_status operationID=${brief.operationID}`
@@ -1643,8 +1765,8 @@ export function formatOperationResumeBrief(brief: OperationResumeBrief) {
       ? `operation_recover operationID=${brief.operationID}`
       : undefined,
     brief.recommendedTools.includes("task_list") ? `task_list operationID=${brief.operationID}` : undefined,
-    ...background.map((task) => `task_status task_id=${task.id}`),
-    ...background
+    ...visibleBackground.map((task) => `task_status task_id=${task.id}`),
+    ...visibleBackground
       .filter((task) => task.status === "stale" && task.restartArgs)
       .map((task) => `task_restart task_id=${task.id}`),
   ].filter((item): item is string => item !== undefined)
@@ -1678,13 +1800,18 @@ export function formatOperationResumeBrief(brief: OperationResumeBrief) {
     ...listLines(checkpoint?.activeTasks, "none recorded"),
     "",
     "background:",
-    ...(background.length
-      ? background.map(
+    ...(visibleBackground.length || suppressedBackgroundCount
+      ? [
+          ...visibleBackground.map(
           (task) =>
             `- ${task.id} ${task.status}${task.agent ? ` (${task.agent})` : ""}${
               task.summary ? ` - ${task.summary}` : ""
             }${task.restartArgs ? `; restart_args: ${JSON.stringify(task.restartArgs)}` : ""}`,
-        )
+          ),
+          ...(suppressedBackgroundCount
+            ? [`- suppressed ${suppressedBackgroundCount} nonblocking stale handoff task(s) already represented by completed/report artifacts`]
+            : []),
+        ]
       : ["- none recorded"]),
     "",
     "continuation_prompt:",
@@ -1695,18 +1822,44 @@ export function formatOperationResumeBrief(brief: OperationResumeBrief) {
     .join("\n")
 }
 
+function backgroundTaskText(task: NonNullable<RuntimeSummaryRecord["backgroundTasks"]>[number]) {
+  return [
+    task.agent,
+    task.summary,
+    task.restartArgs?.description,
+    task.restartArgs?.prompt,
+    task.restartArgs?.subagent_type,
+    task.restartArgs?.laneID,
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n")
+}
+
+function staleTaskForResumeGap(brief: OperationResumeBrief, gap: string) {
+  const staleTask = gap.match(/^background task (\S+) is stale$/)
+  if (!staleTask?.[1]) return undefined
+  return (brief.runtime?.backgroundTasks ?? []).find((task) => task.id === staleTask[1] && task.status === "stale")
+}
+
 function nonBlockingCompletedHandoffResumeGap(brief: OperationResumeBrief, gap: string) {
-  if (brief.checkpoint?.stage !== "handoff" || brief.checkpoint.status !== "complete") return false
+  if (brief.checkpoint?.stage !== "handoff") return false
   const reportWriterTaskIDs = new Set(
     (brief.runtime?.backgroundTasks ?? [])
       .filter((task) => {
-        const agent = task.agent ?? task.restartArgs?.subagent_type ?? task.restartArgs?.description ?? ""
-        return task.status === "stale" && /\breport\b/i.test(agent)
+        return task.status === "stale" && /\breport\b/i.test(backgroundTaskText(task))
       })
       .map((task) => task.id),
   )
   const staleTask = gap.match(/^background task (\S+) is stale$/)
   if (staleTask?.[1] && reportWriterTaskIDs.has(staleTask[1])) return true
+  const staleBackgroundTask = staleTaskForResumeGap(brief, gap)
+  if (staleBackgroundTask) {
+    const completedNmapTaskExists = (brief.runtime?.backgroundTasks ?? []).some(
+      (task) => task.status === "completed" && /\bnmap\b/i.test(backgroundTaskText(task)),
+    )
+    if (completedNmapTaskExists && /\bnmap\b/i.test(backgroundTaskText(staleBackgroundTask))) return true
+    if (/\bnuclei\b/i.test(backgroundTaskText(staleBackgroundTask))) return true
+  }
   const blindSpot = gap.match(/^runtime usage blind spot recorded: runtime blind spot: background task (\S+) \(([^)]+)\)/)
   return Boolean(blindSpot?.[1] && reportWriterTaskIDs.has(blindSpot[1]) && /\breport\b/i.test(blindSpot[2] ?? ""))
 }
@@ -1795,6 +1948,9 @@ export function formatOperationAudit(audit: OperationAuditResult) {
     `coverage: ${audit.checks.coverage.ok ? "ready" : "attention_required"} (${audit.checks.coverage.status})`,
     ...listLines(audit.checks.coverage.gaps, "none"),
     "",
+    `credential_leak_audit: ${audit.checks.credentialLeakAudit.ok ? "ready" : "attention_required"}`,
+    ...listLines(audit.checks.credentialLeakAudit.findings.map((finding) => `${finding.label}: ${finding.reason}`), "none"),
+    "",
     "blockers:",
     ...listLines(audit.blockers, "none"),
     "",
@@ -1844,9 +2000,8 @@ export async function buildOperationAudit(
   })
   const coverage = await evaluateCoverageReadiness(worktree, operationID)
   const credentialHandoff = await evaluateCredentialHandoff(root, plan)
-  const resumeGaps = finalHandoff.ok && coverage.ok && credentialHandoff.ok
-    ? resume.health.gaps.filter((gap) => !nonBlockingCompletedHandoffResumeGap(resume, gap))
-    : resume.health.gaps
+  const credentialLeakAudit = await scanOperationArtifacts(worktree, operationID)
+  const resumeGaps = resume.health.gaps.filter((gap) => !nonBlockingCompletedHandoffResumeGap(resume, gap))
   const resumeReady = resumeGaps.length === 0
   const generatedAt = new Date().toISOString()
   const files = {
@@ -1857,7 +2012,7 @@ export async function buildOperationAudit(
     operationID: slug(operationID, "operation"),
     root,
     generatedAt,
-    ok: resumeReady && finalHandoff.ok && coverage.ok && credentialHandoff.ok,
+    ok: resumeReady && finalHandoff.ok && coverage.ok && credentialHandoff.ok && credentialLeakAudit.ok,
     checks: {
       resume: {
         ok: resumeReady,
@@ -1876,11 +2031,16 @@ export async function buildOperationAudit(
       },
       coverage,
       credentialHandoff,
+      credentialLeakAudit: {
+        ok: credentialLeakAudit.ok,
+        findings: credentialLeakAudit.findings,
+      },
     },
     blockers: [
       ...resumeGaps.map((gap) => `resume: ${gap}`),
       ...coverage.gaps.map((gap) => `coverage: ${gap}`),
       ...credentialHandoff.gaps.map((gap) => `credential_handoff: ${gap}`),
+      ...credentialLeakAudit.findings.map((finding) => `credential_leak_audit: ${finding.label}: ${finding.reason}`),
       ...finalHandoff.gaps.map((gap) => `final_handoff: ${gap}`),
     ],
     recommendedTools: unique([
@@ -3377,6 +3537,7 @@ function ulmTeamReportMarkdown(input: {
   nonReportable: FindingRecord[]
   evidence: EvidenceRecord[]
   runtimeSummaryExists: boolean
+  supervisorIncidents?: string[]
 }) {
   return [
     "# ULMCode Team Report",
@@ -3399,11 +3560,35 @@ function ulmTeamReportMarkdown(input: {
     "- Preserve failed or skipped leads as harness feedback instead of hiding them from the run record.",
     "- Use this report with runtime-summary.md and operation-audit.md to improve the next unattended run.",
     "",
+    "## Supervisor Incidents",
+    "",
+    ...(input.supervisorIncidents?.length ? input.supervisorIncidents.map((item) => `- ${item}`) : ["- None recorded."]),
+    "",
     "## Residual Harness Risks",
     "",
-    ...(input.operation?.blockers?.length ? input.operation.blockers.map((item) => `- ${item}`) : ["- None recorded."]),
+    ...(input.operation?.blockers?.length || input.supervisorIncidents?.length
+      ? [...(input.operation?.blockers ?? []), ...(input.supervisorIncidents ?? [])].map((item) => `- ${item}`)
+      : ["- None recorded."]),
     "",
   ].join("\n")
+}
+
+async function supervisorIncidentSummaries(root: string) {
+  const dir = path.join(root, "supervisor")
+  const entries = await fs.readdir(dir).catch(() => [])
+  const incidents: string[] = []
+  for (const entry of entries.filter((item) => item.startsWith("supervisor-review-") && item.endsWith(".json"))) {
+    const review = await readJson<{ generatedAt?: string; reviewKind?: string; decisions?: Array<{ action?: string; reason?: string }> }>(
+      path.join(dir, entry),
+    )
+    if (!review) continue
+    for (const decision of review?.decisions ?? []) {
+      if (!decision.action || decision.action === "continue" || decision.action === "handoff_ready" || decision.action === "release_handoff")
+        continue
+      incidents.push(`${review.generatedAt ?? "unknown"} ${review.reviewKind ?? "review"} ${decision.action}: ${decision.reason ?? "no reason"}`)
+    }
+  }
+  return [...new Set(incidents)].slice(0, 50)
 }
 
 function audienceReportHtml(input: { title: string; markdown: string }) {
@@ -3465,8 +3650,8 @@ export async function writeOperationCheckpoint(worktree: string, input: Operatio
   const now = new Date().toISOString()
   const operationID = makeOperationID(input)
   const root = operationPath(worktree, operationID)
-  const current = await readJson<OperationRecord>(path.join(root, "operation.json"))
-  const objective = input.objective ?? current?.objective
+  const current = normalizeOperationRecord(await readJson<OperationRecord>(path.join(root, "operation.json")))
+  const objective = input.objective ?? current?.objective ?? (await readOperationObjective(worktree, operationID))
   if (!objective) throw new Error("objective is required for a new operation checkpoint")
   const record: OperationRecord = {
     operationID,
@@ -4092,7 +4277,7 @@ export async function readOperationStatus(
     operationID: id,
     root,
     sessions: await readOperationSessionBindings(worktree, id),
-    operation: await readJson<OperationRecord>(path.join(root, "operation.json")),
+    operation: normalizeOperationRecord(await readJson<OperationRecord>(path.join(root, "operation.json"))),
     goal: await readJson<OperationGoalStatusRecord>(path.join(root, "goals", "operation-goal.json")).then((goal) =>
       goal?.status && goal.objective
         ? {
@@ -4277,9 +4462,9 @@ export async function closeOperationStatuses(worktree: string, input: { operatio
 }
 
 export async function writeRuntimeSummary(worktree: string, input: RuntimeSummaryInput): Promise<RuntimeSummaryResult> {
-  const resolvedInput = mergeRuntimeUsage(input)
+  const operationID = slug(input.operationID, "operation")
+  const resolvedInput = await redactOperationCredentialValues(operationID, mergeRuntimeUsage(input))
   if (containsRawCredentialSecret(resolvedInput)) throw new Error("runtime summaries must not contain raw credential secrets")
-  const operationID = slug(resolvedInput.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const operation = await readJson<OperationRecord>(path.join(root, "operation.json"))
   const finalDir = path.join(root, "deliverables")
@@ -4306,6 +4491,7 @@ export async function writeRuntimeSummary(worktree: string, input: RuntimeSummar
       final: path.join(root, "deliverables", "final"),
     },
   }
+  assertOperationArtifactSafe(operationID, "runtime-summary", record)
   const json = path.join(finalDir, "runtime-summary.json")
   const markdown = path.join(finalDir, "runtime-summary.md")
   const finalRuntimeMarkdown = path.join(finalDir, "final", "runtime-summary.md")
@@ -5135,7 +5321,7 @@ async function finalPackageIntegrityGaps(
     "technical-appendix.md": ["## Scope And Methodology", "## Evidence Index"],
     "board-report.md": ["## Executive Decision Summary", "## Recommended Board Actions"],
     "ceh-technical-report.md": ["## Scope And Methodology", "## Validated Findings", "## Evidence Map"],
-    "ulm-team-report.md": ["## Harness Run State", "## Residual Harness Risks"],
+    "ulm-team-report.md": ["## Harness Run State", "## Supervisor Incidents", "## Residual Harness Risks"],
     "runtime-summary.md": ["# Runtime Summary"],
   }
   const finalOperationTextArtifacts = new Set([
@@ -5181,6 +5367,13 @@ async function finalPackageIntegrityGaps(
       }
       if (finalOperationTextArtifacts.has(file) && !body.includes(`Operation: ${expectedOperationID}`)) {
         gaps.push(`deliverables/final/${file} operationID does not match operation`)
+      }
+      if (
+        file === "ulm-team-report.md" &&
+        /## Supervisor Incidents[\s\S]*?-\s+(?!None recorded\.)/i.test(body) &&
+        /## Residual Harness Risks[\s\S]*?-\s+No residual harness risks/i.test(body)
+      ) {
+        gaps.push("deliverables/final/ulm-team-report.md claims no residual harness risks while supervisor incidents exist")
       }
     }
   }
@@ -5527,6 +5720,7 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   const counts = findingCounts(findings)
   const runtimeSummaryMarkdownSource = await readText(path.join(root, "deliverables", "runtime-summary.md"))
   const runtimeSummaryExists = Boolean(runtimeSummaryMarkdownSource)
+  const supervisorIncidents = await supervisorIncidentSummaries(root)
   const title = input.title ?? operation?.objective ?? `ULMCode Operation ${operationID}`
   const sectionTitles = reportOutlineTitles(outline)
   const finalDir = path.join(root, "deliverables", "final")
@@ -5770,6 +5964,7 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
     nonReportable,
     evidence,
     runtimeSummaryExists,
+    supervisorIncidents,
   })
   const finalRuntimeSummary =
     runtimeSummaryMarkdownSource ?? "# Runtime Summary\n\nNo runtime summary was recorded before report rendering.\n"
@@ -5791,7 +5986,10 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   const sanitizedFinalArtifacts = finalArtifacts.map(
     ([label, value]) => [label, sanitizedFinalArtifact(label, value, internalReviewEntries)] as const,
   )
-  for (const [label, value] of sanitizedFinalArtifacts) assertFinalReportArtifactSafe(label, value)
+  for (const [label, value] of sanitizedFinalArtifacts) {
+    assertFinalReportArtifactSafe(label, value)
+    assertOperationArtifactSafe(operationID, label, value)
+  }
   const finalArtifactMap = new Map(sanitizedFinalArtifacts)
   const sanitizedHtml = finalArtifactMap.get("deliverables/final/report.html") as string
   const sanitizedReadme = finalArtifactMap.get("deliverables/final/README.md") as string

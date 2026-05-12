@@ -4,7 +4,7 @@ import { Effect, Schema } from "effect"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
 import { buildCommandPlan, writeCommandPlan } from "@/ulm/tool-manifest"
-import { containsRawCredentialSecret } from "@/ulm/credential-safety"
+import { containsRawCredentialSecret, credentialGuessingPolicyGaps } from "@/ulm/credential-safety"
 import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 import { errorMessage } from "@/util/error"
 import * as Tool from "./tool"
@@ -60,6 +60,27 @@ function toolPromise<T>(try_: () => Promise<T>) {
   return Effect.tryPromise({
     try: try_,
     catch: (error) => new Error(errorMessage(error)),
+  })
+}
+
+function normalized(value: unknown) {
+  return JSON.stringify(value ?? {}, Object.keys((value && typeof value === "object" ? value : {}) as Record<string, unknown>).sort())
+}
+
+function duplicateCommandJob(
+  jobs: BackgroundJob.Info[],
+  input: { operationID: string; laneID?: string; profileID: string; variables?: Record<string, string>; outputPrefix?: string },
+) {
+  const inputVariables = normalized(input.variables)
+  return jobs.find((job) => {
+    const metadata = job.metadata ?? {}
+    if (job.type !== "command_supervise") return false
+    if (job.status !== "running" && job.status !== "stale") return false
+    if (metadata.operationID !== input.operationID) return false
+    if ((metadata.laneID ?? undefined) !== (input.laneID ?? undefined)) return false
+    if (metadata.profileID !== input.profileID) return false
+    if ((metadata.outputPrefix ?? undefined) !== (input.outputPrefix ?? undefined)) return false
+    return normalized(metadata.variables) === inputVariables
   })
 }
 
@@ -170,7 +191,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
     return {
       description: DESCRIPTION,
       parameters: Parameters,
-      execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx) =>
         Effect.gen(function* () {
           assertLaneToolAllowed("command_supervise")
           if (
@@ -183,6 +204,12 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
           ) {
             return yield* Effect.die(new Error("supervised command inputs must not contain raw credential secrets"))
           }
+          const guessingGaps = credentialGuessingPolicyGaps({
+            profileID: params.profileID,
+            variables: params.variables,
+            outputPrefix: params.outputPrefix,
+          })
+          if (guessingGaps.length) return yield* Effect.die(new Error(guessingGaps.join("; ")))
           const dryRun = params.dryRun ?? true
           const plan = yield* toolPromise(() =>
             buildCommandPlan({
@@ -198,7 +225,18 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
           yield* toolPromise(() => writeCommandPlan(plan)).pipe(Effect.orDie)
 
           let jobID: string | undefined
-          if (!dryRun) {
+          let duplicate: BackgroundJob.Info | undefined
+          if (!dryRun && ctx.extra?.recoverExistingOperationJob !== true) {
+            duplicate = duplicateCommandJob(yield* jobs.list(), {
+              operationID: plan.operationID,
+              laneID: params.laneID,
+              profileID: plan.profile.id,
+              variables: params.variables,
+              outputPrefix: params.outputPrefix,
+            })
+            if (duplicate) jobID = duplicate.id
+          }
+          if (!dryRun && !duplicate) {
             const job = yield* jobs.start({
               type: "command_supervise",
               title: `${plan.profile.id}: ${plan.profile.tool}`,
@@ -245,6 +283,7 @@ export const CommandSuperviseTool = Tool.define<typeof Parameters, Metadata, Bac
               `profile_id: ${plan.profile.id}`,
               `tool: ${plan.profile.tool}`,
               `dry_run: ${dryRun}`,
+              ...(duplicate ? ["deduped: true", `existing_job_id: ${duplicate.id}`] : []),
               ...(jobID ? [`job_id: ${jobID}`] : []),
               `plan: ${plan.planPath}`,
               `stdout: ${plan.stdoutPath}`,

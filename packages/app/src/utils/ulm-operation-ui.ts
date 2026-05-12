@@ -1,4 +1,5 @@
 import type { UlmFinalArtifact, UlmOperationStatusSummary } from "@opencode-ai/sdk/v2"
+import { isUlmOperationsDirectory } from "./ulm-workspace"
 
 export type ReportPackageState = "ready" | "partial" | "missing"
 type OperationSessionBinding = {
@@ -36,6 +37,22 @@ export function operationFilesPathForSession(
   allOperationsPath: string | undefined,
 ) {
   return currentOperationFilesPath(operationForSession(operations, sessionID)) ?? allOperationsPath
+}
+
+export function operationFilesRootForDirectory(directory: string | undefined) {
+  if (!directory) return undefined
+  if (directory.endsWith("/packages/opencode")) return `${directory.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
+  if (directory.endsWith("/opencode")) return `${directory}/.ulmcode/operations`
+  if (isUlmOperationsDirectory(directory)) return `${directory}/.ulmcode/operations`
+  return directory
+}
+
+export function operationFilesOpenPathForSession(
+  operations: SessionBoundOperation[],
+  sessionID: string | undefined,
+  directory: string | undefined,
+) {
+  return operationFilesPathForSession(operations, sessionID, operationFilesRootForDirectory(directory))
 }
 
 export function operationChatSessionID(item: SessionBoundOperation) {

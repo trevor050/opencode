@@ -653,6 +653,57 @@ describe("ULM operation run controller", () => {
     expect(afterAccepted.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe("complete")
   })
 
+  test("allows planned work recovery from existing artifacts when scheduler start time is missing", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const operationRoot = path.join(dir.path, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(operationRoot, "work-blocks"), { recursive: true })
+    await fs.mkdir(path.join(operationRoot, "evidence"), { recursive: true })
+    await fs.writeFile(path.join(operationRoot, "work-blocks", "recon-1.md"), "# Recon block\n")
+    await fs.writeFile(path.join(operationRoot, "evidence", "ev-recon-1.json"), "{}\n")
+    const record = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    record.lanes.splice(0, 0, {
+      id: "planned_work_recon_1",
+      title: "Planned recon block",
+      agent: "recon",
+      status: "ready",
+      dependsOn: [],
+      modelRoute: "openai/gpt-5.4-mini-fast",
+      fallbackModelRoutes: ["openai/gpt-5.5"],
+      allowedTools: ["operation_checkpoint", "operation_run"],
+      expectedArtifacts: ["work-blocks/recon-1.md"],
+      budget: {},
+      restartPolicy: { restartable: true, maxAttempts: 2, staleAfterMinutes: 60 },
+      plannedDurationMinutes: 30,
+      minRuntimeMinutes: 20,
+      coverageImpact: "high",
+      releaseRequired: false,
+      operationID: "school",
+    })
+    await fs.writeFile(graph.json, JSON.stringify(record, null, 2) + "\n")
+
+    const recovered = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "complete_lane",
+      laneID: "planned_work_recon_1",
+      now: "2026-05-05T00:05:00.000Z",
+      summary: "Recovered completed recon block from durable artifacts after scheduler state was lost.",
+      artifacts: ["work-blocks/recon-1.md"],
+      evidenceRefs: ["ev-recon-1"],
+    })
+    const afterRecovered = JSON.parse(await fs.readFile(graph.json, "utf8"))
+
+    expect(recovered.blockers).toEqual([])
+    expect(afterRecovered.lanes.find((lane: { id: string }) => lane.id === "planned_work_recon_1")?.status).toBe(
+      "complete",
+    )
+  })
+
   test("rejects planned work terminal blockers that do not leave durable fallback proof", async () => {
     await using dir = await tmpdir({ git: true })
     const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

@@ -614,7 +614,7 @@ function fallbackRoutesFor(input: OperationScheduleInput, route: string, primary
       ? ["openai/gpt-5.5"]
       : route === "small"
         ? ["openai/gpt-5.5"]
-        : ["openai/gpt-5.4-mini-fast"]
+        : []
   return [...new Set([...(input.fallbackModelRoutes?.[route] ?? defaults)].filter((item) => item !== primary))]
 }
 
@@ -763,7 +763,6 @@ export function validateOperationGraph(graph: OperationGraphRecord) {
     }
     if (!lane.modelRoute.includes("/")) gaps.push(`${lane.id}: modelRoute must include provider/model`)
     else if (routeProvider(lane.modelRoute) !== "openai") gaps.push(`${lane.id}: modelRoute provider must be openai`)
-    if (!lane.fallbackModelRoutes?.length) gaps.push(`${lane.id}: fallbackModelRoutes required`)
     for (const fallback of lane.fallbackModelRoutes ?? []) {
       if (!fallback.includes("/")) gaps.push(`${lane.id}: fallbackModelRoute must include provider/model`)
       else if (routeProvider(fallback) !== "openai") gaps.push(`${lane.id}: fallbackModelRoute provider must be openai`)

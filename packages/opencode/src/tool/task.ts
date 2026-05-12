@@ -14,7 +14,7 @@ import { Cause, Effect, Exit, Option, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { Instance } from "@/project/instance"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
-import { containsRawCredentialSecret } from "@/ulm/credential-safety"
+import { containsRawCredentialSecret, credentialGuessingPolicyGaps } from "@/ulm/credential-safety"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { readULMConfig, type ULMRuntimeConfig } from "@/ulm/config"
 import { assertLaneToolAllowed, LANE_GUARDED_TOOLS } from "@/ulm/lane-tool-guard"
@@ -162,6 +162,24 @@ function latestToolActivity(messages: MessageV2.WithParts[]) {
   return Math.max(0, ...times)
 }
 
+function duplicateOperationTask(
+  jobs: BackgroundJob.Info[],
+  params: Schema.Schema.Type<typeof Parameters>,
+  modelRoute: string | undefined,
+) {
+  if (!params.operationID) return undefined
+  return jobs.find((job) => {
+    const metadata = job.metadata ?? {}
+    if (job.type !== id) return false
+    if (job.status !== "running" && job.status !== "stale") return false
+    if (metadata.operationID !== params.operationID) return false
+    if ((metadata.laneID ?? undefined) !== (params.laneID ?? undefined)) return false
+    if (metadata.subagent_type !== params.subagent_type) return false
+    if ((metadata.modelRoute ?? undefined) !== (params.modelRoute ?? modelRoute ?? undefined)) return false
+    return metadata.prompt === params.prompt
+  })
+}
+
 export const TaskTool = Tool.define(
   id,
   Effect.gen(function* () {
@@ -188,6 +206,10 @@ export const TaskTool = Tool.define(
       ) {
         return yield* Effect.fail(new Error("operation-scoped task inputs must not contain raw credential secrets"))
       }
+      const guessingGaps = params.operationID
+        ? credentialGuessingPolicyGaps({ prompt: params.prompt, command: params.command })
+        : []
+      if (guessingGaps.length) return yield* Effect.fail(new Error(guessingGaps.join("; ")))
       const cfg = yield* config.get()
 
       if (!ctx.extra?.bypassAgentCheck) {
@@ -253,16 +275,43 @@ export const TaskTool = Tool.define(
       const msg = yield* Effect.sync(() => MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }))
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
+      const background = params.background === true
       const routeModel = modelFromRoute(params.modelRoute)
       const model = routeModel ?? next.model ?? {
         modelID: msg.info.modelID,
         providerID: msg.info.providerID,
       }
+      const modelRouteForDedupe = `${model.providerID}/${model.modelID}`
+      const duplicateBackgroundTask =
+        background && ctx.extra?.recoverExistingOperationJob !== true
+          ? duplicateOperationTask(yield* jobs.list(), params, modelRouteForDedupe)
+          : undefined
+      if (duplicateBackgroundTask) {
+        return {
+          title: params.description,
+          metadata: {
+            sessionId: SessionID.make(duplicateBackgroundTask.id),
+            model,
+            operationID: params.operationID,
+            laneID: params.laneID,
+            modelRoute: params.modelRoute ?? modelRouteForDedupe,
+            background: true,
+          },
+          output: [
+            `task_id: ${duplicateBackgroundTask.id} (existing matching operation task)`,
+            "state: running",
+            "deduped: true",
+            "",
+            "<task_result>",
+            "A matching operation-scoped background task is already running or recoverable. Poll it with task_status instead of starting a duplicate lane.",
+            "</task_result>",
+          ].join("\n"),
+        }
+      }
       const parentModel = {
         modelID: msg.info.modelID,
         providerID: msg.info.providerID,
       }
-      const background = params.background === true
       const operationDirectory = currentDirectory() ?? process.cwd()
       const operationWorktree = currentWorktree() ?? operationDirectory
       const ulmConfig: ULMRuntimeConfig = params.operationID

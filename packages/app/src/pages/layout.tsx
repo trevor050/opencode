@@ -58,7 +58,11 @@ import { setNavigate } from "@/utils/notification-click"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { isUlmDirectory, isUlmOperationsDirectory } from "@/utils/ulm-workspace"
-import { operationFilesPathForSession, type SessionBoundOperation } from "@/utils/ulm-operation-ui"
+import {
+  operationFilesPathForSession,
+  operationFilesRootForDirectory,
+  type SessionBoundOperation,
+} from "@/utils/ulm-operation-ui"
 
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
@@ -2409,11 +2413,7 @@ export default function Layout(props: ParentProps) {
     const chatDir = operationDir || active
     const operationRoot = () => {
       const dir = operationDir
-      if (!dir) return undefined
-      if (dir.endsWith("/packages/opencode")) return `${dir.slice(0, -"/packages/opencode".length)}/.ulmcode/operations`
-      if (dir.endsWith("/opencode")) return `${dir}/.ulmcode/operations`
-      if (isUlmOperationsDirectory(dir)) return `${dir}/.ulmcode/operations`
-      return dir
+      return operationFilesRootForDirectory(dir)
     }
     const operationFilesDir = createMemo(() => {
       const root = operationRoot()

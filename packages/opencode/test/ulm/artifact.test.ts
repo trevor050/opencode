@@ -2427,6 +2427,37 @@ describe("ULM artifact ledger", () => {
     ).rejects.toThrow("runtime summaries must not contain raw credential secrets")
   })
 
+  test("redacts operation credential values in runtime summaries", async () => {
+    const worktree = await tmpdir()
+    const dataDir = await tmpdir()
+    const previous = process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR
+    process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR = dataDir
+    try {
+      await fs.mkdir(path.join(dataDir, "storage", "ulm", "credential", "school"), { recursive: true })
+      await fs.writeFile(
+        path.join(dataDir, "storage", "ulm", "credential", "school", "router.json"),
+        JSON.stringify({ username: "router_admin_handle_123", password: "RouterPass123!" }) + "\n",
+      )
+
+      const result = await writeRuntimeSummary(worktree, {
+        operationID: "school",
+        notes: ["Router auth used router_admin_handle_123 but RouterPass123! was never printed."],
+      })
+      const json = await fs.readFile(result.json, "utf8")
+      const markdown = await fs.readFile(result.markdown, "utf8")
+
+      expect(json).not.toContain("router_admin_handle_123")
+      expect(json).not.toContain("RouterPass123!")
+      expect(markdown).not.toContain("router_admin_handle_123")
+      expect(markdown).not.toContain("RouterPass123!")
+      expect(json).toContain("[REDACTED_CREDENTIAL_USERNAME]")
+      expect(markdown).toContain("[REDACTED_CREDENTIAL_SECRET]")
+    } finally {
+      if (previous === undefined) delete process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR
+      else process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR = previous
+    }
+  })
+
   test("builds restart-ready operation resume briefs", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {
@@ -2575,6 +2606,64 @@ describe("ULM artifact ledger", () => {
     expect(await fs.readFile(audit.files.markdown, "utf8")).toContain("final_handoff: attention_required")
   })
 
+  test("operation audit demotes stale duplicate nmap tasks after handoff gates are ready", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "handoff",
+      status: "running",
+      summary: "Rendered handoff is holding for target duration.",
+    })
+    await completeGraphForHandoff(worktree)
+    await writeEvidence(worktree, {
+      operationID: "school",
+      evidenceID: "ev-1",
+      title: "Nmap scan output",
+      kind: "command_output",
+      summary: "Network scan evidence exists.",
+      path: "evidence/raw/nmap.txt",
+    })
+    await writeFinding(worktree, {
+      operationID: "school",
+      title: "Exposed service",
+      state: "report_ready",
+      severity: "low",
+      confidence: 0.9,
+      affectedAssets: ["host"],
+      evidence: [{ id: "ev-1", path: "evidence/raw/nmap.txt" }],
+      description: "A service is exposed on the LAN.",
+      impact: "LAN-adjacent probing is possible.",
+      remediation: "Restrict the service to trusted hosts.",
+    })
+    await renderReport(worktree, { operationID: "school", title: "Assessment Report" })
+    await writeRuntimeSummary(worktree, {
+      operationID: "school",
+      backgroundTasks: [
+        { id: "task-nmap-done", status: "completed", summary: "tcp-top-ports-sweep: nmap" },
+        {
+          id: "task-nmap-stale",
+          agent: "recon",
+          status: "stale",
+          summary: "Duplicate nmap scan",
+          restartArgs: {
+            task_id: "task-nmap-stale",
+            background: true,
+            description: "Duplicate nmap scan",
+            prompt: "Run nmap -Pn --top-ports 1000 against a host already covered by template lanes.",
+            subagent_type: "recon",
+            operationID: "school",
+            laneID: "network_discovery",
+          },
+        },
+      ],
+    })
+
+    const audit = await buildOperationAudit(worktree, "school", { finalHandoff: true })
+
+    expect(audit.blockers.some((blocker) => blocker.includes("task-nmap-stale is stale"))).toBe(false)
+  })
+
   test("operation audit blocks final handoff when graph lanes are incomplete or missing proof", async () => {
     const worktree = await tmpdir()
     await writeOperationCheckpoint(worktree, {
@@ -2596,6 +2685,58 @@ describe("ULM artifact ledger", () => {
     expect(audit.blockers).toContain("final_handoff: operation lane recon is missing completion proof")
     expect(audit.recommendedTools[0]).toBe("operation_run")
     expect(formatOperationAudit(audit)).toContain("next_step: Call operation_run before editing reports or plans.")
+  })
+
+  test("operation audit accepts non-release blocked lanes with retained coverage impact", async () => {
+    const worktree = await tmpdir()
+    await writeOperationCheckpoint(worktree, {
+      operationID: "school",
+      objective: "Authorized school assessment",
+      stage: "reporting",
+      status: "running",
+      summary: "Coverage limitation documented.",
+    })
+    const graph = await writeOperationGraph(worktree, { operationID: "school", budgetUSD: 10 })
+    const root = path.join(worktree, ".ulmcode", "operations", "school")
+    await fs.mkdir(path.join(root, "evidence"), { recursive: true })
+    await fs.mkdir(path.join(root, "lane-complete"), { recursive: true })
+    await fs.writeFile(path.join(root, "evidence", "browser-blocked.md"), "Browser auth blocked by rejected credential.\n")
+    const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    for (const lane of parsed.lanes) {
+      lane.status = "complete"
+      lane.terminalState = "complete"
+    }
+    const webLane = parsed.lanes.find((lane: { id: string }) => lane.id === "web_inventory")
+    Object.assign(webLane, {
+      status: "blocked",
+      terminalState: "blocked",
+      expectedArtifacts: ["evidence/browser-blocked.md"],
+      coverageImpact: "high",
+      releaseRequired: false,
+    })
+    await fs.writeFile(graph.json, JSON.stringify(parsed, null, 2) + "\n")
+    await fs.writeFile(
+      path.join(root, "lane-complete", "web_inventory.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          laneID: "web_inventory",
+          status: "blocked",
+          completedAt: new Date().toISOString(),
+          summary: "Blocked but non-release coverage impact was retained.",
+          artifacts: ["evidence/browser-blocked.md"],
+          evidenceRefs: ["ev-browser"],
+          coverageImpact: "high",
+          releaseRequired: false,
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const audit = await buildOperationAudit(worktree, "school")
+
+    expect(audit.blockers.some((blocker) => blocker.includes("web_inventory has invalid completion proof"))).toBe(false)
   })
 
   test("operation audit forwards strict outline section gates", async () => {

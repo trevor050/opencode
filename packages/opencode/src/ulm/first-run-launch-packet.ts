@@ -28,6 +28,7 @@ export type FirstRunLaunchPacketResult = {
     openCredentialVault: string
     credentialReview: string
     canary: string
+    modelRouteAudit: string
     preflight: string
     daemon48h: string
     supervisor: string
@@ -79,6 +80,7 @@ function commands(operationID: string, targetHours: number) {
     openCredentialVault: `operation_credentials action=open_vault operationID=${operationID}`,
     credentialReview: `bun run --cwd packages/opencode ulm:credential-review ${operationID} --strict --json`,
     canary: `bun run --cwd packages/opencode ulm:wall-clock-canary ${operationID}-canary --target-seconds 120 --strict --json`,
+    modelRouteAudit: `bun run --cwd packages/opencode ulm:model-route-audit ${operationID} --strict --json`,
     preflight: `bun run --cwd packages/opencode ulm:laptop-preflight ${operationID} --prepare --strict --confirm power --confirm sleep --confirm wifi --confirm scope --confirm clock --json`,
     daemon48h: `bun run --cwd packages/opencode ulm:runtime-daemon ${operationID} --duration-hours ${targetHours} --detach --json`,
     supervisor: `bun run --cwd packages/opencode ulm:runtime-daemon ${operationID} --duration-hours ${targetHours} --supervisor all --json`,
@@ -117,6 +119,10 @@ function requiredBeforeLaunch(expectedServices: string[]) {
     {
       id: "credential-review",
       detail: `${listCredentialServices(expectedServices)} credentials are stored through the vault with redacted indexes only.`,
+    },
+    {
+      id: "model-route-audit",
+      detail: "OpenAI-only model route audit passes for the profile, installed configs, launch env, and selected operation graph.",
     },
     { id: "tool-model-preflight", detail: "Tool preflight and model route audit pass for the selected operation." },
     { id: "wall-clock-canary", detail: "A short literal wall-clock canary passes on this laptop before the 48-hour run." },

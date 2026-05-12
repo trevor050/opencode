@@ -4,6 +4,7 @@ import {
   evaluateCoverageReadiness,
   operationPath,
   readOperationStatus,
+  redactOperationCredentialValues,
   slug,
   type CoverageReadiness,
   type OperationStatusSummary,
@@ -12,6 +13,7 @@ import { readOperationPlanExcerpt, type OperationPlanExcerpt } from "./operation
 import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import { effectiveULMContinuation, readULMConfig } from "./config"
 import { containsRawCredentialSecret } from "./credential-safety"
+import { assertOperationArtifactSafe } from "./operation-artifact-safety"
 import { discoveryResearchMinutesForDuration } from "./pentest-kickoff"
 
 export type OperationSupervisorReviewKind =
@@ -120,7 +122,6 @@ function hasStaleOrFailedLane(graph: OperationGraphLike | undefined) {
         if (lane.status === "complete" || lane.status === "skipped") return false
         return (
           lane.status === "failed" ||
-          lane.status === "blocked" ||
           lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled")
         )
       },
@@ -171,6 +172,16 @@ function finalizationWindowStatus(input: {
     finalizationWindowHours,
     startsAtHours,
   }
+}
+
+function timeGatedFinalHandoffOnly(gaps: unknown[] | undefined) {
+  const items = (gaps ?? []).filter((item): item is string => typeof item === "string")
+  if (!items.length) return false
+  return items.every(
+    (gap) =>
+      /handoff stage must be marked complete before final report handoff/i.test(gap) ||
+      /operation status must be complete for final handoff/i.test(gap),
+  )
 }
 
 function approvedDiscoveryCharter(status: OperationStatusSummary) {
@@ -298,7 +309,28 @@ function decisionsFor(input: {
       }),
     )
   }
-  if (input.status.plans.operation && input.finalArtifacts.operationAudit && input.finalArtifacts.operationAuditOk === false) {
+  const auditBlockersAreTimeGated = timeGatedFinalHandoffOnly(input.finalArtifacts.operationAuditBlockers)
+  const handoffGapsAreTimeGated = timeGatedFinalHandoffOnly(input.finalArtifacts.handoffGateGaps)
+  if (
+    input.status.plans.operation &&
+    input.finalArtifacts.operationAudit &&
+    input.finalArtifacts.operationAuditOk === false &&
+    auditBlockersAreTimeGated &&
+    !finalization?.due
+  ) {
+    decisions.push(
+      decision({
+        action: "continue",
+        reason: "final handoff is waiting for target stop window",
+        requiredNextTool: "operation_status",
+        requiredArtifacts: ["deliverables/operation-audit.json", "deliverables/stage-gates/handoff.json"],
+        operatorMessage:
+          "The only final audit blockers are time-gated handoff completion checks; monitor health until the target stop window instead of reopening report closeout.",
+        modelPrompt:
+          "Do not mark the operation complete yet. Continue periodic supervision with operation_status, operation_supervise, credential leak checks, and runtime documentation until the target stop window.",
+      }),
+    )
+  } else if (input.status.plans.operation && input.finalArtifacts.operationAudit && input.finalArtifacts.operationAuditOk === false) {
     const nextReportTool = nextReportToolForAuditBlockers(input.finalArtifacts.operationAuditBlockers)
     decisions.push(
       decision({
@@ -322,7 +354,12 @@ function decisionsFor(input: {
       }),
     )
   }
-  if (input.status.plans.operation && input.finalArtifacts.handoffGate && input.finalArtifacts.handoffGateOk === false) {
+  if (
+    input.status.plans.operation &&
+    input.finalArtifacts.handoffGate &&
+    input.finalArtifacts.handoffGateOk === false &&
+    !(handoffGapsAreTimeGated && !finalization?.due)
+  ) {
     decisions.push(
       decision({
         action: "continue_reporting",
@@ -505,14 +542,16 @@ function reviewMarkdown(review: OperationSupervisorReview) {
 }
 
 async function writeReview(worktree: string, review: OperationSupervisorReview) {
-  if (containsRawCredentialSecret(review)) throw new Error("operation supervisor reviews must not contain raw credential secrets")
+  const redactedReview = await redactOperationCredentialValues(review.operationID, review)
+  if (containsRawCredentialSecret(redactedReview)) throw new Error("operation supervisor reviews must not contain raw credential secrets")
+  assertOperationArtifactSafe(redactedReview.operationID, "operation-supervisor-review", redactedReview)
   const dir = path.join(operationPath(worktree, review.operationID), "supervisor")
-  const stamp = review.generatedAt.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")
+  const stamp = redactedReview.generatedAt.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")
   const files = {
     json: path.join(dir, `supervisor-review-${stamp}.json`),
     markdown: path.join(dir, "latest.md"),
   }
-  const persisted = { ...review, files }
+  const persisted = { ...redactedReview, files }
   await fs.mkdir(dir, { recursive: true })
   await fs.writeFile(files.json, JSON.stringify(persisted, null, 2) + "\n")
   await fs.writeFile(files.markdown, reviewMarkdown(persisted))

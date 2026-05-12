@@ -1,6 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, slug } from "./artifact"
+import { operationPath, redactOperationCredentialValues, slug } from "./artifact"
 import { containsRawCredentialSecret } from "./credential-safety"
 import { createOperationGoal } from "./operation-goal"
 import { REPORT_ONLY_OPERATION_LANES, writeOperationGraph, type OperationScanProfile, type OperationTrustLevel } from "./operation-graph"
@@ -144,13 +144,14 @@ function containsDestructiveAttackChainClaim(value: unknown): boolean {
 export async function updateOperationMemory(worktree: string, input: OperationMemoryInput): Promise<OperationMemoryResult> {
   const operationID = slug(input.operationID, "operation")
   const file = path.join(operationPath(worktree, operationID), "memory.md")
-  const current = (await readText(file)) ?? `# Operation Memory: ${operationID}
+  const rawCurrent = (await readText(file)) ?? `# Operation Memory: ${operationID}
 
 This file is for agents working this operation. Keep it short. Record only details that matter after compaction, resume, or subagent handoff.
 
 `
+  const current = await redactOperationCredentialValues(operationID, rawCurrent)
   if (input.action === "read") return { operationID, file, content: current, updated: false }
-  const note = input.note?.trim()
+  const note = (await redactOperationCredentialValues(operationID, input.note ?? "")).trim()
   if (!note) throw new Error("note is required when action is append or replace")
   if (containsRawCredentialSecret(note)) throw new Error("operation memory notes must not contain raw credential secrets")
   const now = new Date().toISOString()

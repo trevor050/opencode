@@ -64,9 +64,13 @@ export const OperationRecoverTool = Tool.define(
 
           if (!dryRun) {
             for (const item of restartable) {
+              const recoveryContext = {
+                ...ctx,
+                extra: { ...ctx.extra, recoverExistingOperationJob: true },
+              }
               const restarted = item.taskArgs
-                ? yield* taskDef.execute(item.taskArgs, ctx)
-                : yield* commandDef.execute(item.commandArgs!, ctx)
+                ? yield* taskDef.execute(item.taskArgs, recoveryContext)
+                : yield* commandDef.execute(item.commandArgs!, recoveryContext)
               results.push(
                 [
                   item.job.type === "task" ? `task_id: ${item.job.id}` : `command_job_id: ${item.job.id}`,

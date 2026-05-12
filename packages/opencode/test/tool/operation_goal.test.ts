@@ -122,7 +122,6 @@ describe("tool.operation_goal", () => {
                 action: "create",
                 operationID: "school",
                 objective: "Authorized 20 hour district assessment",
-                targetDurationHours: 20,
               },
               context,
             )
@@ -132,6 +131,38 @@ describe("tool.operation_goal", () => {
             expect(result.metadata.completed).toBe(false)
             expect(result.metadata.blockers).toContain("deliverables/runtime-summary.json is missing or invalid")
             expect(result.output).toContain("blockers_json:")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
+  test("blocks completion before target duration has elapsed", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationGoalTool
+            const def = yield* tool.init()
+            yield* def.execute(
+              {
+                action: "create",
+                operationID: "overnight",
+                objective: "Authorized overnight assessment",
+                targetDurationHours: 9,
+                completionPolicy: {
+                  requiresOperationAudit: false,
+                  requiresRuntimeSummary: false,
+                  requiresReportRender: false,
+                },
+              },
+              context,
+            )
+
+            const result = yield* def.execute({ action: "complete", operationID: "overnight" }, context)
+            expect(result.metadata.completed).toBe(false)
+            expect(result.metadata.blockers?.some((blocker) => blocker.includes("target duration not reached"))).toBe(true)
           }).pipe(Effect.provide(layer)),
         ),
     })

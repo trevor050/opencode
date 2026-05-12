@@ -573,6 +573,7 @@ try {
     supervisorIntervalMinutes: args.supervisorIntervalMinutes,
     supervisorReviewKind: args.supervisorReviewKind,
     requireLaptopPreflight: args.skipLaptopPreflight ? false : undefined,
+    includeInstalledModelRouteAudit: true,
     backgroundJobProvider: async () => cliModelBackgroundJobs(),
     recoverBackgroundJob: recoverCliModelJob,
     launchModelLane,

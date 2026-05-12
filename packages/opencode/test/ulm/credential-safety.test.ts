@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { containsRawCredentialSecret, expectedCredentialServices, missingCredentialServices } from "@/ulm/credential-safety"
+import {
+  containsRawCredentialSecret,
+  credentialGuessingPolicyGaps,
+  expectedCredentialServices,
+  missingCredentialServices,
+} from "@/ulm/credential-safety"
+import { scanOperationArtifactValue } from "@/ulm/operation-artifact-safety"
 
 describe("credential safety", () => {
   test("allows hyphenated evidence ids that end with secret-like words", () => {
@@ -94,5 +100,30 @@ describe("credential safety", () => {
         phases: [{ actions: ["Use submitted Genesis and Google credentials for authenticated checks."] }],
       }),
     ).toEqual(["genesis", "google"])
+  })
+
+  test("blocks default credential guessing unless vault provenance is present", () => {
+    expect(credentialGuessingPolicyGaps("try admin/password against the router login").length).toBeGreaterThan(0)
+    expect(credentialGuessingPolicyGaps("use operation_credentials materialized ULMCODE_CREDENTIAL_ROUTER_PASSWORD")).toEqual([])
+  })
+
+  test("scanner catches raw usernames, SSIDs, and restart prompts", () => {
+    const result = scanOperationArtifactValue("School", "runtime-summary", {
+      backgroundTasks: [
+        {
+          id: "task-1",
+          status: "stale",
+          restartArgs: {
+            prompt: "Retry the router with username=admin and password from chat",
+            command: "hydra -l admin -p password 10.0.0.1",
+          },
+        },
+      ],
+      networkName: "TrevorNet",
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.findings.map((finding) => finding.reason).join("\n")).toContain("raw username/handle/SSID")
+    expect(result.findings.map((finding) => finding.reason).join("\n")).toContain("sensitive restart prompt")
   })
 })

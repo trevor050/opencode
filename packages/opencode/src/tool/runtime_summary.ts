@@ -48,7 +48,7 @@ const Fetches = Schema.Struct({
 const BackgroundTask = Schema.Struct({
   id: Schema.String,
   agent: Schema.optional(Schema.String),
-  status: Schema.Literals(["running", "completed", "failed", "cancelled", "stale", "unknown"]),
+  status: Schema.Literals(["running", "completed", "failed", "cancelled", "stale", "superseded", "nonblocking", "needs_recovery", "unknown"]),
   summary: Schema.optional(Schema.String),
   restartArgs: Schema.optional(
     Schema.Struct({
@@ -58,6 +58,7 @@ const BackgroundTask = Schema.Struct({
       prompt: Schema.String,
       subagent_type: Schema.String,
       operationID: Schema.optional(Schema.String),
+      laneID: Schema.optional(Schema.String),
       command: Schema.optional(Schema.String),
     }),
   ),

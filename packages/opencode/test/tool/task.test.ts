@@ -590,6 +590,38 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("rejects default credential guessing in operation-scoped task prompts", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const task = yield* TaskTool
+      const taskDef = yield* task.init()
+      const exit = yield* Effect.exit(
+        taskDef.execute(
+          {
+            description: "guess router",
+            prompt: "Try admin/password and vendor defaults against the router login.",
+            subagent_type: "general",
+            background: true,
+            operationID: "school",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("credential guessing is blocked")
+    }),
+  )
+
   it.instance("prepends operation-scoped artifact guidance to child prompts", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
@@ -847,8 +879,9 @@ describe("tool.task", () => {
         const listed = yield* listDef.execute({ status: "stale" }, ctx)
         expect(listed.output).toContain(taskSession.id)
         expect(listed.output).toContain("restartable: true")
-        expect(listed.output).toContain('"prompt":"continue validating the stale operation lane"')
-        expect(listed.output).toContain('"subagent_type":"validator"')
+        expect(listed.output).toContain("restart_args: available via task_status or task_restart")
+        expect(listed.output).not.toContain('"prompt":"continue validating the stale operation lane"')
+        expect(listed.output).not.toContain('"subagent_type":"validator"')
         return yield* statusDef.execute({ task_id: taskSession.id }, ctx)
       }).pipe(Effect.provide(Layer.fresh(BackgroundJob.layer)))
 

@@ -83,6 +83,7 @@ This file is for future agents working in this repo. Keep notes that prevent rea
 ## Isolated Profile And Models
 
 - The isolated profile lives in `tools/ulmcode-profile`; validate with `tools/ulmcode-profile/test-profile.sh`.
+- `ulm:model-route-audit` is the fail-closed gate for ULM routing. It checks the repo profile, installed `~/.config/ulmcode/opencode.json`, installed `~/.config/ulmcode/ulmcode.json`, launch env, and operation graph route audit. For 20h+ daemon runs, do not bypass it; the installed `opencode.json` and `ulmcode.json` mirror must stay byte-identical.
 - ULM dev/profile launch must keep `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=$HOME/.config/ulmcode`, `OPENCODE_CONFIG=$HOME/.config/ulmcode/opencode.json`, `OPENCODE_DISABLE_PROJECT_CONFIG=1`, and `OPENCODE_MCP_ALLOWLIST=websearch,agent_browser,playwright,pentestMCP`.
 - The profile must not load personal/general OpenCode agents, prompts, Feature Forge, Sisyphus, OpenCode-Builder, or unrelated Vercel/context7 MCPs.
 - The ULM profile must not install, vendor, or load the Claude Code bridge plugin. ULM model routing is OpenAI-only; do not add non-OpenAI model routes without an explicit product decision and new verification.
@@ -95,6 +96,7 @@ This file is for future agents working in this repo. Keep notes that prevent rea
 - ULMCode Desktop is a forked OpenCode Electron app, not a rewrite. Branding/env defaults live in `packages/desktop/src/main/branding.ts`; ULM app state lives in `packages/app/src/context/ulm.tsx`, `packages/app/src/context/ulm-state.ts`, and `packages/app/src/pages/operations.tsx`.
 - Desktop UX is chat-first. Recent chats are the primary sidebar surface; operations attach as status/context and remain available through the operations console.
 - Desktop session rows deep-link to `/<workspace>/session/<id>`, not the operations board. Rail/folder actions should open the bound operation root or final deliverables, never the ULMCode source tree.
+- Slash commands are split by surface: `packages/app` commands do not affect the TUI. The TUI `/open-operation` command is native in `packages/opencode/src/cli/cmd/tui/routes/session/` and opens the current chat's bound operation root, while `/open` stays reserved for normal file/editor flows.
 - Desktop and the `~/.local/bin/ulmcode` wrapper must share the same profile: `XDG_CONFIG_HOME=~/.config/ulmcode-xdg`, `XDG_DATA_HOME=~/.local/share/ulmcode`, `XDG_STATE_HOME=~/.local/state/ulmcode`, `XDG_CACHE_HOME=~/.cache/ulmcode`, `OPENCODE_APP_NAME=ulmcode`, `OPENCODE_CONFIG_DIR=~/.config/ulmcode`, `OPENCODE_CONFIG=~/.config/ulmcode/opencode.json`, and `OPENCODE_DB=opencode-local.db`.
 - Desktop boot and CLI/server startup must use the configured `Database.Path` for SQLite migration sentinels. Hard-coding `opencode.db` makes ULM show migration/loading state repeatedly when the real DB is `opencode-local.db`.
 - Every desktop UI change needs a real Computer Use pass before "done". If Electron dev shows a stale blank/loading compositor while CDP/DOM is hydrated, record that CUA was blocked and include secondary CDP/browser evidence.
@@ -113,6 +115,8 @@ This file is for future agents working in this repo. Keep notes that prevent rea
 - Package scripts that read/write `.ulmcode` must resolve the real repo worktree instead of raw `process.cwd()`, otherwise `bun run --cwd packages/opencode ...` writes under `packages/opencode/.ulmcode`.
 - `opencode run --agent recon` style daemon child launches are allowed only with `ULMCODE_DAEMON_CHILD=1` and `ULMCODE_LANE_ID`; normal CLI runs should still reject subagents as primary agents.
 - Invoking the package as `ulmcode` sets `OPENCODE_APP_NAME=ulmcode`; global paths must use the `ulmcode` app name.
+- Credential materialization can cross the `opencode`/`ulmcode` profile boundary during supervised runs. Keep the fallback from the current storage service to the ULM profile secret store, and never debug credentials by echoing, catting, grepping, snapshotting, or otherwise printing raw env values. Treat usernames/credential handles from vault submissions as sensitive too; use redacted labels like `[REDACTED_ROUTER_USERNAME]`. Length-only checks are fine.
+- Do not test common/default credential guesses during unattended security runs. "admin/password", vendor defaults, and tiny manual lists still count as credential guessing/password spraying unless the exact value came from the operator-approved vault for the current operation.
 
 ## Verification Shortlist
 

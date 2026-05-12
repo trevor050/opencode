@@ -14,7 +14,6 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import path from "path"
-import open from "open"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"

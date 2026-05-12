@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Exit, Schema } from "effect"
 import * as Tool from "./tool"
 import DESCRIPTION from "./operation_resume.txt"
 import { BackgroundJob } from "@/background/job"
@@ -56,7 +56,7 @@ export const OperationResumeTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const recovery = yield* Effect.gen(function* () {
+          const recoveryEffect = Effect.gen(function* () {
             if (params.recoverStaleTasks !== true) return undefined
             const maxRecoveries =
               params.maxRecoveries === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(params.maxRecoveries))
@@ -143,6 +143,17 @@ export const OperationResumeTool = Tool.define(
               output: restarted.join("\n\n"),
             }
           })
+          const recoveryExit = yield* Effect.exit(recoveryEffect)
+          const recovery = Exit.isSuccess(recoveryExit)
+            ? recoveryExit.value
+            : {
+                requested: true,
+                restarted: 0,
+                skipped: 0,
+                checkpointUpdated: false,
+                worktree: currentWorktree(),
+                output: `recovery_skipped_reason: ${String(recoveryExit.cause)}`,
+              }
 
           const worktree = recovery?.worktree ?? currentWorktree()
           if (!worktree) throw new Error("operation_resume requires an instance worktree or recoverable task metadata worktree")

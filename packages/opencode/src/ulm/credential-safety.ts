@@ -65,6 +65,33 @@ export function containsRawCredentialSecret(value: unknown): boolean {
   })
 }
 
+const DEFAULT_CREDENTIAL_GUESS_PATTERNS = [
+  /\badmin\s*[:/]\s*admin\b/i,
+  /\badmin\s*[:/]\s*password\b/i,
+  /\badministrator\s*[:/]\s*password\b/i,
+  /\broot\s*[:/]\s*root\b/i,
+  /\bguest\s*[:/]\s*guest\b/i,
+  /\b(?:try|trying|test|testing|guess|guessing|spray|spraying)\b[\s\S]{0,120}\b(?:admin|administrator|root|guest)\b[\s\S]{0,80}\b(?:password|admin|default|vendor)\b/i,
+  /\b(?:hydra|medusa|ncrack|crackmapexec|netexec)\b[\s\S]{0,160}\b(?:password|user|username|login|credential)\b/i,
+  /\b(?:default|vendor|factory)\s+(?:password|credential|login|admin)\b/i,
+  /\bpassword\s+(?:spray|spraying|guess|guessing|brute|bruteforce|brute-force)\b/i,
+]
+
+export function credentialGuessingPolicyGaps(value: unknown): string[] {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "")
+  if (!text.trim()) return []
+  if (/\b(?:vault|operation_credentials|ULMCODE_CREDENTIAL_|credentialID|credential_id|redacted credential)\b/i.test(text)) {
+    return []
+  }
+  return DEFAULT_CREDENTIAL_GUESS_PATTERNS.filter((pattern) => pattern.test(text)).map(
+    () => "default/admin/vendor credential guessing is blocked unless the exact value comes from the operation credential vault",
+  )
+}
+
+export function containsCredentialGuessing(value: unknown) {
+  return credentialGuessingPolicyGaps(value).length > 0
+}
+
 export function credentialIndexGaps(credentials: unknown[]): string[] {
   const gaps: string[] = []
   const seen = new Set<string>()
