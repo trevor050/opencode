@@ -7,67 +7,23 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
-import { TaskListTool } from "./task_list"
-import { TaskRestartTool } from "./task_restart"
-import { TaskStatusTool } from "./task_status"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
-import { OperationAuditTool } from "./operation_audit"
-import { OperationCheckpointTool } from "./operation_checkpoint"
-import { OperationCredentialsTool } from "./operation_credentials"
-import { OperationGoalTool } from "./operation_goal"
-import { OperationGovernorTool } from "./operation_governor"
-import { OperationMemoryTool } from "./operation_memory"
-import { OperationNextTool } from "./operation_next"
-import { OperationPlanTool } from "./operation_plan"
-import { OperationQueueTool } from "./operation_queue"
-import { OperationQueueNextTool } from "./operation_queue_next"
-import { OperationRecoverTool } from "./operation_recover"
-import { OperationResumeTool } from "./operation_resume"
-import { OperationRunTool } from "./operation_run"
-import { OperationScheduleTool } from "./operation_schedule"
-import { OperationSuperviseTool } from "./operation_supervise"
-import { OperationStageGateTool } from "./operation_stage_gate"
-import { OperationStatusTool } from "./operation_status"
-import { OperationTemplateTool } from "./operation_template"
-import { AssetGraphTool } from "./asset_graph"
-import { AttackChainTool } from "./attack_chain"
-import { BrowserEvidenceTool } from "./browser_evidence"
-import { EvidenceRecordTool } from "./evidence_record"
-import { EvidenceNormalizeTool } from "./evidence_normalize"
-import { FindingRecordTool } from "./finding_record"
-import { DistrictProfileTool } from "./district_profile"
-import { IdentityGraphTool } from "./identity_graph"
-import { PersonProfileTool } from "./person_profile"
-import { ReportLintTool } from "./report_lint"
-import { ReportOutlineTool } from "./report_outline"
-import { ReportRenderTool } from "./report_render"
-import { RuntimeSummaryTool } from "./runtime_summary"
-import { EvalScorecardTool } from "./eval_scorecard"
-import { RuntimeSchedulerTool } from "./runtime_scheduler"
-import { RuntimeDaemonTool } from "./runtime_daemon"
-import { CommandSuperviseTool } from "./command_supervise"
-import { ToolAcquireTool } from "./tool_acquire"
-import { ToolInventoryTool } from "./tool_inventory"
-import { OperationAlertTool } from "./operation_alert"
-import { OutputNormalizeTool } from "./output_normalize"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
+import type { JSONSchema7, JSONSchema7Definition } from "@ai-sdk/provider"
 import { Schema } from "effect"
 import z from "zod"
-import { ZodOverride } from "@/util/effect-zod"
 import { Plugin } from "../plugin"
 import { Provider } from "@/provider/provider"
 import { ProviderID, type ModelID } from "../provider/schema"
 import { WebSearchTool } from "./websearch"
-import { CodeSearchTool } from "./codesearch"
 import { RepoCloneTool } from "./repo_clone"
 import { RepoOverviewTool } from "./repo_overview"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import * as Log from "@opencode-ai/core/util/log"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
@@ -92,15 +48,14 @@ import { Agent } from "../agent/agent"
 import { Git } from "@/git"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
-import { SessionStatus } from "@/session/status"
+import { Reference } from "@/reference/reference"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
+import { SessionStatus } from "@/session/status"
 
 const log = Log.create({ service: "tool.registry" })
 
-export function webSearchEnabled(
-  providerID: ProviderID,
-  flags = { exa: Flag.OPENCODE_ENABLE_EXA, parallel: Flag.OPENCODE_ENABLE_PARALLEL },
-) {
+export function webSearchEnabled(providerID: ProviderID, flags = { exa: false, parallel: false }) {
   return providerID === ProviderID.opencode || flags.exa || flags.parallel
 }
 
@@ -123,30 +78,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ToolRegistry") {}
 
-export const layer: Layer.Layer<
-  Service,
-  never,
-  | Config.Service
-  | Plugin.Service
-  | Question.Service
-  | Todo.Service
-  | Agent.Service
-  | Skill.Service
-  | Session.Service
-  | SessionStatus.Service
-  | Provider.Service
-  | Git.Service
-  | LSP.Service
-  | Instruction.Service
-  | AppFileSystem.Service
-  | Bus.Service
-  | BackgroundJob.Service
-  | HttpClient.HttpClient
-  | ChildProcessSpawner
-  | Ripgrep.Service
-  | Format.Service
-  | Truncate.Service
-> = Layer.effect(
+export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
@@ -154,12 +86,10 @@ export const layer: Layer.Layer<
     const agents = yield* Agent.Service
     const skill = yield* Skill.Service
     const truncate = yield* Truncate.Service
+    const flags = yield* RuntimeFlags.Service
 
     const invalid = yield* InvalidTool
     const task = yield* TaskTool
-    const taskList = yield* TaskListTool
-    const taskRestart = yield* TaskRestartTool
-    const taskStatus = yield* TaskStatusTool
     const read = yield* ReadTool
     const question = yield* QuestionTool
     const todo = yield* TodoWriteTool
@@ -167,7 +97,6 @@ export const layer: Layer.Layer<
     const plan = yield* PlanExitTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
-    const codesearch = yield* CodeSearchTool
     const repoClone = yield* RepoCloneTool
     const repoOverview = yield* RepoOverviewTool
     const shell = yield* ShellTool
@@ -177,45 +106,6 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
-    const operationAudit = yield* OperationAuditTool
-    const operationCheckpoint = yield* OperationCheckpointTool
-    const operationCredentials = yield* OperationCredentialsTool
-    const operationGoal = yield* OperationGoalTool
-    const operationGovernor = yield* OperationGovernorTool
-    const operationMemory = yield* OperationMemoryTool
-    const operationNext = yield* OperationNextTool
-    const operationPlan = yield* OperationPlanTool
-    const operationQueue = yield* OperationQueueTool
-    const operationQueueNext = yield* OperationQueueNextTool
-    const operationRecover = yield* OperationRecoverTool
-    const operationResume = yield* OperationResumeTool
-    const operationRun = yield* OperationRunTool
-    const operationSchedule = yield* OperationScheduleTool
-    const operationSupervise = yield* OperationSuperviseTool
-    const operationStageGate = yield* OperationStageGateTool
-    const operationStatus = yield* OperationStatusTool
-    const operationTemplate = yield* OperationTemplateTool
-    const assetGraph = yield* AssetGraphTool
-    const attackChain = yield* AttackChainTool
-    const browserEvidence = yield* BrowserEvidenceTool
-    const evidenceRecord = yield* EvidenceRecordTool
-    const evidenceNormalize = yield* EvidenceNormalizeTool
-    const findingRecord = yield* FindingRecordTool
-    const districtProfile = yield* DistrictProfileTool
-    const identityGraph = yield* IdentityGraphTool
-    const personProfile = yield* PersonProfileTool
-    const reportLint = yield* ReportLintTool
-    const reportOutline = yield* ReportOutlineTool
-    const reportRender = yield* ReportRenderTool
-    const runtimeSummary = yield* RuntimeSummaryTool
-    const evalScorecard = yield* EvalScorecardTool
-    const runtimeScheduler = yield* RuntimeSchedulerTool
-    const runtimeDaemon = yield* RuntimeDaemonTool
-    const commandSupervise = yield* CommandSuperviseTool
-    const toolAcquire = yield* ToolAcquireTool
-    const toolInventory = yield* ToolInventoryTool
-    const operationAlert = yield* OperationAlertTool
-    const outputNormalize = yield* OutputNormalizeTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -223,17 +113,19 @@ export const layer: Layer.Layer<
         const custom: Tool.Def[] = []
 
         function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
-          // Plugin tools define their args as a raw Zod shape. Wrap the
-          // derived Zod object in a `Schema.declare` so it slots into the
-          // Schema-typed framework, and annotate with `ZodOverride` so the
-          // walker emits the original Zod object for LLM JSON Schema.
-          const zodParams = z.object(def.args)
-          const parameters = Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success).annotate({
-            [ZodOverride]: zodParams,
-          })
+          // Plugin tools still expose Zod args publicly; keep that compatibility
+          // boxed at the registry boundary and give the LLM the original JSON Schema.
+          const entries = Object.entries(def.args)
+          const allZod = entries.every((entry) => isZodType(entry[1]))
+          const zodParams = allZod ? z.object(def.args) : undefined
+          const jsonSchema = zodParams ? zodJsonSchema(zodParams) : legacyJsonSchema(entries)
+          const parameters = zodParams
+            ? Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success)
+            : Schema.Unknown
           return {
             id,
             parameters,
+            jsonSchema,
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
@@ -246,11 +138,13 @@ export const layer: Layer.Layer<
                 const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
+                const attachments = typeof result === "string" ? undefined : result.attachments
                 const info = yield* agent.get(toolCtx.agent)
                 const out = yield* truncate.output(output, {}, info)
                 return {
-                  title: "",
+                  title: typeof result === "string" ? "" : (result.title ?? ""),
                   output: out.truncated ? out.content : output,
+                  attachments,
                   metadata: {
                     ...metadata,
                     truncated: out.truncated,
@@ -293,8 +187,7 @@ export const layer: Layer.Layer<
         }
 
         yield* config.get()
-        const questionEnabled =
-          ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
+        const questionEnabled = ["app", "cli", "desktop"].includes(flags.client) || flags.enableQuestionTool
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
@@ -305,55 +198,12 @@ export const layer: Layer.Layer<
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
-          taskList: Tool.init(taskList),
-          taskRestart: Tool.init(taskRestart),
-          taskStatus: Tool.init(taskStatus),
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
-          code: Tool.init(codesearch),
           repo_clone: Tool.init(repoClone),
           repo_overview: Tool.init(repoOverview),
           skill: Tool.init(skilltool),
-          operationAudit: Tool.init(operationAudit),
-          operationCheckpoint: Tool.init(operationCheckpoint),
-          operationCredentials: Tool.init(operationCredentials),
-          operationGoal: Tool.init(operationGoal),
-          operationGovernor: Tool.init(operationGovernor),
-          operationMemory: Tool.init(operationMemory),
-          operationNext: Tool.init(operationNext),
-          operationPlan: Tool.init(operationPlan),
-          operationQueue: Tool.init(operationQueue),
-          operationQueueNext: Tool.init(operationQueueNext),
-          operationRecover: Tool.init(operationRecover),
-          operationResume: Tool.init(operationResume),
-          operationRun: Tool.init(operationRun),
-          operationSchedule: Tool.init(operationSchedule),
-          operationSupervise: Tool.init(operationSupervise),
-          operationStageGate: Tool.init(operationStageGate),
-          operationStatus: Tool.init(operationStatus),
-          operationTemplate: Tool.init(operationTemplate),
-          assetGraph: Tool.init(assetGraph),
-          attackChain: Tool.init(attackChain),
-          browserEvidence: Tool.init(browserEvidence),
-          evidenceRecord: Tool.init(evidenceRecord),
-          evidenceNormalize: Tool.init(evidenceNormalize),
-          findingRecord: Tool.init(findingRecord),
-          districtProfile: Tool.init(districtProfile),
-          identityGraph: Tool.init(identityGraph),
-          personProfile: Tool.init(personProfile),
-          reportLint: Tool.init(reportLint),
-          reportOutline: Tool.init(reportOutline),
-          reportRender: Tool.init(reportRender),
-          runtimeSummary: Tool.init(runtimeSummary),
-          evalScorecard: Tool.init(evalScorecard),
-          runtimeScheduler: Tool.init(runtimeScheduler),
-          runtimeDaemon: Tool.init(runtimeDaemon),
-          commandSupervise: Tool.init(commandSupervise),
-          toolAcquire: Tool.init(toolAcquire),
-          toolInventory: Tool.init(toolInventory),
-          operationAlert: Tool.init(operationAlert),
-          outputNormalize: Tool.init(outputNormalize),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -372,56 +222,14 @@ export const layer: Layer.Layer<
             tool.edit,
             tool.write,
             tool.task,
-            tool.taskList,
-            tool.taskRestart,
-            tool.taskStatus,
             tool.fetch,
             tool.todo,
             tool.search,
-            ...(Flag.OPENCODE_EXPERIMENTAL_SCOUT ? [tool.code, tool.repo_clone, tool.repo_overview] : []),
+            ...(flags.experimentalScout ? [tool.repo_clone, tool.repo_overview] : []),
             tool.skill,
-            tool.operationAudit,
-            tool.operationCheckpoint,
-            tool.operationCredentials,
-            tool.operationGoal,
-            tool.operationGovernor,
-            tool.operationMemory,
-            tool.operationNext,
-            tool.operationPlan,
-            tool.operationQueue,
-            tool.operationQueueNext,
-            tool.operationRecover,
-            tool.operationResume,
-            tool.operationRun,
-            tool.operationSchedule,
-            tool.operationSupervise,
-            tool.operationStageGate,
-            tool.operationStatus,
-            tool.operationTemplate,
-            tool.assetGraph,
-            tool.attackChain,
-            tool.browserEvidence,
-            tool.evidenceRecord,
-            tool.evidenceNormalize,
-            tool.findingRecord,
-            tool.districtProfile,
-            tool.identityGraph,
-            tool.personProfile,
-            tool.reportLint,
-            tool.reportOutline,
-            tool.reportRender,
-            tool.runtimeSummary,
-            tool.evalScorecard,
-            tool.runtimeScheduler,
-            tool.runtimeDaemon,
-            tool.commandSupervise,
-            tool.toolAcquire,
-            tool.toolInventory,
-            tool.operationAlert,
-            tool.outputNormalize,
             tool.patch,
-            ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
+            ...(flags.experimentalLspTool ? [tool.lsp] : []),
+            ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
           ],
           task: tool.task,
           read: tool.read,
@@ -475,7 +283,7 @@ export const layer: Layer.Layer<
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const filtered = (yield* all()).filter((tool) => {
         if (tool.id === WebSearchTool.id) {
-          return webSearchEnabled(input.providerID)
+          return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel })
         }
 
         const usePatch =
@@ -493,8 +301,13 @@ export const layer: Layer.Layer<
           const output = {
             description: tool.description,
             parameters: tool.parameters,
+            jsonSchema: tool.jsonSchema,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
+          const jsonSchema =
+            output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
+              ? output.jsonSchema
+              : undefined
           return {
             id: tool.id,
             description: [
@@ -505,6 +318,7 @@ export const layer: Layer.Layer<
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,
+            jsonSchema,
             execute: tool.execute,
             formatValidationError: tool.formatValidationError,
           }
@@ -531,9 +345,9 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Skill.defaultLayer),
     Layer.provide(Agent.defaultLayer),
     Layer.provide(Session.defaultLayer),
-    Layer.provide(SessionStatus.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Git.defaultLayer),
+    Layer.provide(Reference.defaultLayer),
     Layer.provide(LSP.defaultLayer),
     Layer.provide(Instruction.defaultLayer),
     Layer.provide(AppFileSystem.defaultLayer),
@@ -543,8 +357,57 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
+  ).pipe(
+    Layer.provide(RuntimeFlags.defaultLayer),
     Layer.provide(BackgroundJob.defaultLayer),
+    Layer.provide(SessionStatus.defaultLayer),
   ),
 )
+
+function isZodType(value: unknown): value is z.ZodType {
+  return typeof value === "object" && value !== null && "_zod" in value
+}
+
+function isJsonSchemaDefinition(value: unknown): value is JSONSchema7Definition {
+  return typeof value === "boolean" || (typeof value === "object" && value !== null && !Array.isArray(value))
+}
+
+function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
+  const properties = Object.fromEntries(
+    entries.filter((entry): entry is [string, JSONSchema7Definition] => isJsonSchemaDefinition(entry[1])),
+  )
+  return {
+    type: "object",
+    properties,
+    required: Object.keys(properties),
+  }
+}
+
+function zodJsonSchema(schema: z.ZodType): JSONSchema7 {
+  const result = normalizeZodJsonSchema(z.toJSONSchema(schema, { io: "input" }))
+  if (!isJsonSchemaObject(result)) throw new Error("plugin tool Zod schema produced a non-object JSON Schema")
+  const { $defs, ...rest } = result
+  return (
+    $defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs as JSONSchema7["definitions"] } : rest
+  ) as JSONSchema7
+}
+
+function normalizeZodJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeZodJsonSchema(item))
+  if (typeof value !== "object" || value === null) return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry) =>
+        (entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"
+          ? false
+          : true,
+      )
+      .map(([key, item]) => [key, normalizeZodJsonSchema(item)]),
+  )
+}
+
+function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
 
 export * as ToolRegistry from "./registry"

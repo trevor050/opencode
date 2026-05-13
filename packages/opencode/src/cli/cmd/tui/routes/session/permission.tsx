@@ -11,34 +11,15 @@ import { useProject } from "../../context/project"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Locale } from "@/util/locale"
-import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "@/tool/shell/id"
 import { webSearchProviderLabel } from "@/tool/websearch"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
-import { OperatorAutoResume } from "./operator-auto-resume"
 import { useBindings, useCommandShortcut } from "../../keymap"
+import { usePathFormatter } from "../../context/path-format"
 
 type PermissionStage = "permission" | "always" | "reject"
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const home = Global.Path.home
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-
-  // outside cwd - use ~ or absolute
-  if (home && (absolute === home || absolute.startsWith(home + path.sep))) {
-    return absolute.replace(home, "~")
-  }
-  return absolute
-}
 
 function filetype(input?: string) {
   if (!input) return "none"
@@ -138,9 +119,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
-  let lastTouch = 0
-  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
-  const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
+  const pathFormatter = usePathFormatter()
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -157,17 +136,6 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   })
 
   const { theme } = useTheme()
-  function touchOperatorPrompt() {
-    if (!props.request.timeoutAt) return
-    const now = Date.now()
-    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
-    if (now - lastTouch < 5_000) return
-    lastTouch = now
-    void sdk.client.permission.touch({
-      requestID: props.request.id,
-      workspace: project.workspace.current(),
-    })
-  }
 
   return (
     <Switch>
@@ -211,7 +179,6 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
       </Match>
       <Match when={store.stage === "reject"}>
         <RejectPrompt
-          onActivity={touchOperatorPrompt}
           onConfirm={(message) => {
             void sdk.client.permission.reply({
               reply: "reject",
@@ -236,7 +203,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const filepath = typeof raw === "string" ? raw : ""
               return {
                 icon: "→",
-                title: `Edit ${normalizePath(filepath)}`,
+                title: `Edit ${pathFormatter.format(filepath)}`,
                 body: <EditBody request={props.request} />,
               }
             }
@@ -246,11 +213,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const filePath = typeof raw === "string" ? raw : ""
               return {
                 icon: "→",
-                title: `Read ${normalizePath(filePath)}`,
+                title: `Read ${pathFormatter.format(filePath)}`,
                 body: (
                   <Show when={filePath}>
                     <box paddingLeft={1}>
-                      <text fg={theme.textMuted}>{"Path: " + normalizePath(filePath)}</text>
+                      <text fg={theme.textMuted}>{"Path: " + pathFormatter.format(filePath)}</text>
                     </box>
                   </Show>
                 ),
@@ -292,11 +259,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const dir = typeof raw === "string" ? raw : ""
               return {
                 icon: "→",
-                title: `List ${normalizePath(dir)}`,
+                title: `List ${pathFormatter.format(dir)}`,
                 body: (
                   <Show when={dir}>
                     <box paddingLeft={1}>
-                      <text fg={theme.textMuted}>{"Path: " + normalizePath(dir)}</text>
+                      <text fg={theme.textMuted}>{"Path: " + pathFormatter.format(dir)}</text>
                     </box>
                   </Show>
                 ),
@@ -375,7 +342,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
                 typeof pattern === "string" ? (pattern.includes("*") ? path.dirname(pattern) : pattern) : undefined
 
               const raw = parent ?? filepath ?? derived
-              const dir = normalizePath(raw)
+              const dir = pathFormatter.format(raw)
               const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
 
               return {
@@ -442,9 +409,6 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
               escapeKey="reject"
               fullscreen
-              timeoutAt={props.request.timeoutAt}
-              resetTimeoutAt={resetTimeoutAt()}
-              onActivity={touchOperatorPrompt}
               onSelect={(option) => {
                 if (option === "always") {
                   setStore("stage", "always")
@@ -478,7 +442,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   )
 }
 
-function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void; onActivity?: () => void }) {
+function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void }) {
   let input: TextareaRenderable
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
@@ -493,30 +457,18 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         title: "Cancel permission rejection",
         category: "Permission",
         run() {
-          props.onActivity?.()
           props.onCancel()
         },
       },
     ],
     bindings: [
-      {
-        key: "escape",
-        desc: "Cancel permission rejection",
-        group: "Permission",
-        cmd: () => {
-          props.onActivity?.()
-          props.onCancel()
-        },
-      },
+      { key: "escape", desc: "Cancel permission rejection", group: "Permission", cmd: () => props.onCancel() },
       ...tuiConfig.keybinds.get("app.exit"),
       {
         key: "return",
         desc: "Confirm permission rejection",
         group: "Permission",
-        cmd: () => {
-          props.onActivity?.()
-          props.onConfirm(input.plainText)
-        },
+        cmd: () => props.onConfirm(input.plainText),
       },
     ],
   }))
@@ -580,9 +532,6 @@ function Prompt<const T extends Record<string, string>>(props: {
   escapeKey?: keyof T
   fullscreen?: boolean
   onSelect: (option: keyof T) => void
-  timeoutAt?: string
-  resetTimeoutAt?: string
-  onActivity?: () => void
 }) {
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
@@ -605,7 +554,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         category: "Permission",
         run() {
           if (!props.escapeKey) return
-          props.onActivity?.()
           props.onSelect(props.escapeKey)
         },
       },
@@ -615,7 +563,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         category: "Permission",
         run() {
           if (!props.fullscreen) return
-          props.onActivity?.()
           setStore("expanded", (v) => !v)
         },
       },
@@ -626,7 +573,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Previous permission option",
         group: "Permission",
         cmd: () => {
-          props.onActivity?.()
           const idx = keys.indexOf(store.selected)
           const next = keys[(idx - 1 + keys.length) % keys.length]
           setStore("selected", next)
@@ -637,7 +583,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Previous permission option",
         group: "Permission",
         cmd: () => {
-          props.onActivity?.()
           const idx = keys.indexOf(store.selected)
           const next = keys[(idx - 1 + keys.length) % keys.length]
           setStore("selected", next)
@@ -648,7 +593,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Next permission option",
         group: "Permission",
         cmd: () => {
-          props.onActivity?.()
           const idx = keys.indexOf(store.selected)
           const next = keys[(idx + 1) % keys.length]
           setStore("selected", next)
@@ -659,7 +603,6 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Next permission option",
         group: "Permission",
         cmd: () => {
-          props.onActivity?.()
           const idx = keys.indexOf(store.selected)
           const next = keys[(idx + 1) % keys.length]
           setStore("selected", next)
@@ -669,10 +612,7 @@ function Prompt<const T extends Record<string, string>>(props: {
         key: "return",
         desc: "Select permission option",
         group: "Permission",
-        cmd: () => {
-          props.onActivity?.()
-          props.onSelect(store.selected)
-        },
+        cmd: () => props.onSelect(store.selected),
       },
       ...(props.escapeKey
         ? [
@@ -680,10 +620,7 @@ function Prompt<const T extends Record<string, string>>(props: {
               key: "escape",
               desc: "Reject permission",
               group: "Permission",
-              cmd: () => {
-                props.onActivity?.()
-                props.onSelect(props.escapeKey!)
-              },
+              cmd: () => props.onSelect(props.escapeKey!),
             },
           ]
         : []),
@@ -749,7 +686,6 @@ function Prompt<const T extends Record<string, string>>(props: {
                 backgroundColor={option === store.selected ? theme.warning : theme.backgroundMenu}
                 onMouseOver={() => setStore("selected", option)}
                 onMouseUp={() => {
-                  props.onActivity?.()
                   setStore("selected", option)
                   props.onSelect(option)
                 }}
@@ -762,7 +698,6 @@ function Prompt<const T extends Record<string, string>>(props: {
           </For>
         </box>
         <box flexDirection="row" gap={2} flexShrink={0}>
-          <OperatorAutoResume timeoutAt={props.timeoutAt} resetTimeoutAt={props.resetTimeoutAt} />
           <Show when={props.fullscreen}>
             <text fg={theme.text}>
               {fullscreenHint()} <span style={{ fg: theme.textMuted }}>{hint()}</span>

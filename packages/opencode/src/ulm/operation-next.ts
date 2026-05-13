@@ -5,6 +5,7 @@ import { readOperationGoal, type OperationGoalRecord } from "./operation-goal"
 import type { GovernorDecision } from "./runtime-governor"
 import { evaluateRuntimeGovernor } from "./runtime-governor"
 import type { OperationGraphRecord, OperationLane } from "./operation-graph"
+import { discoveryResearchMinutesForDuration } from "./pentest-kickoff"
 
 export type OperationNextAction =
   | {
@@ -25,6 +26,22 @@ export type OperationNextAction =
     }
   | {
       operationID: string
+      action: "expand_work"
+      reason: string
+      recommendedTools: string[]
+      blockers: string[]
+    }
+  | {
+      operationID: string
+      action: "research_charter"
+      reason: string
+      laneID: string
+      prompt: string
+      recommendedTools: string[]
+      blockers: string[]
+    }
+  | {
+      operationID: string
       action: "launch_lane"
       reason: string
       lane: OperationLane
@@ -33,6 +50,20 @@ export type OperationNextAction =
       blockers: string[]
       governor: GovernorDecision
     }
+
+type DiscoveryCharterRecord = {
+  planningApproval?: {
+    status?: string
+  }
+  discoveryCharter?: {
+    purpose?: string
+    researchQuestions?: string[]
+    reconInvestments?: string[]
+    operatorQuestions?: string[]
+    candidateDeepWorkLanes?: string[]
+    decisionCriteriaForFullPlan?: string[]
+  }
+}
 
 async function readJson<T>(file: string): Promise<T | undefined> {
   try {
@@ -83,6 +114,18 @@ function selectReadyLane(graph: OperationGraphRecord) {
   })
 }
 
+async function readOperationScopeRules(worktree: string, operationID: string) {
+  const root = operationPath(worktree, operationID)
+  const plan = await readJson<{ scopeRules?: unknown[] }>(path.join(root, "plans", "operation-plan.json"))
+  return Array.isArray(plan?.scopeRules)
+    ? plan.scopeRules.filter((rule): rule is string => typeof rule === "string" && rule.trim().length > 0)
+    : []
+}
+
+function scopeRulePromptLines(scopeRules: string[]) {
+  return scopeRules.length ? ["Operation scope rules:", ...scopeRules.map((rule) => `- ${rule}`), ""] : []
+}
+
 function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date) {
   if (!goal || goal.status !== "active" || goal.targetDurationHours === undefined) return false
   const createdAt = Date.parse(goal.createdAt)
@@ -91,13 +134,46 @@ function targetWindowStillOpen(goal: OperationGoalRecord | undefined, now: Date)
   return elapsedHours < goal.targetDurationHours * 0.8
 }
 
-function promptForLane(lane: OperationLane) {
+function listLines(title: string, values: string[] | undefined) {
+  const items = values?.filter((item) => item.trim()) ?? []
+  return items.length ? [title, ...items.map((item) => `- ${item}`), ""] : []
+}
+
+function promptForDiscoveryResearch(input: {
+  operationID: string
+  charter: DiscoveryCharterRecord
+  goal?: OperationGoalRecord
+}) {
+  const targetMinutes = discoveryResearchMinutesForDuration(input.goal?.targetDurationHours)
+  const charter = input.charter.discoveryCharter
+  return [
+    `Run the Discovery Charter research pass for operation "${input.operationID}".`,
+    "",
+    targetMinutes ? `Target research effort: about ${targetMinutes} minutes before final planning.` : undefined,
+    "This is not the final operation plan. Your goal is research: learn enough to write a duration-sized final plan without guessing.",
+    "",
+    charter?.purpose ? `Charter purpose: ${charter.purpose}` : undefined,
+    "",
+    ...listLines("Research questions to answer:", charter?.researchQuestions),
+    ...listLines("Recon investments to perform safely:", charter?.reconInvestments),
+    ...listLines("Operator questions to sharpen or answer:", charter?.operatorQuestions),
+    ...listLines("Candidate deep-work lanes to prove or reject:", charter?.candidateDeepWorkLanes),
+    ...listLines("Decision criteria before the full plan:", charter?.decisionCriteriaForFullPlan),
+    "Use tool_inventory, useful source/web research, and passive/basic local recon first. Any active network probe goes through command_supervise or a background task with the approved safety profile.",
+    "Record useful facts with evidence_record, append plan-shaping discoveries and unresolved questions to operation_memory, and write an operation_checkpoint summarizing what the final plan now knows.",
+    "Do not schedule broad execution yet. After the research pass, ask only concrete round 3 follow-up questions that remain, then call operation_plan with planningMode=full-duration only when duration-fit evidence and overflow backlog are defensible.",
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n")
+}
+
+function promptForLane(lane: OperationLane, scopeRules: string[]) {
   const specific =
     lane.id === "finding_validation"
       ? "Before running the validation gate, inspect operation_status plus normalized leads/findings, then use finding_record to promote evidence-backed issues to validated/report_ready or reject non-issues."
       : lane.id === "report_writing"
-        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering; for long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
-      : undefined
+        ? "Draft or expand the substantive authored report to reports/report.md with the write tool before linting or rendering. Write a scaffold or first section immediately, then expand in bounded chunks with tool calls/checkpoints instead of spending minutes silently composing the whole report. For long-run/20h reports, satisfy the outline budget with roughly 12,000+ words, substantial coverage in every outline section, finding-specific writeups, and a rendered PDF close to the 50-page final gate. Run strict report_lint options before completing: requireReport, requireOutlineBudget, requireOutlineSections, requireFindingSections, minWords 12000, minPdfPages 50, minOutlineTargetPages 50."
+        : undefined
   return [
     `Run operation lane "${lane.id}" for operation "${lane.operationID}".`,
     "",
@@ -107,6 +183,7 @@ function promptForLane(lane: OperationLane) {
     `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
     `Restart policy: max ${lane.restartPolicy.maxAttempts} attempts, stale after ${lane.restartPolicy.staleAfterMinutes} minutes.`,
     "",
+    ...scopeRulePromptLines(scopeRules),
     "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
     "Work only within the lane scope, checkpoint progress, preserve evidence references, and return a concise lane summary with blockers.",
     "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
@@ -128,11 +205,36 @@ export async function decideOperationNext(worktree: string, input: { operationID
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const graph = await readJson<OperationGraphRecord>(path.join(root, "plans", "operation-graph.json"))
+  const operationPlan = await readJson<Record<string, unknown>>(path.join(root, "plans", "operation-plan.json"))
+  const discoveryCharter = await readJson<DiscoveryCharterRecord>(path.join(root, "plans", "discovery-charter.json"))
   const runtime = await readJson<RuntimeSummaryRecord>(path.join(root, "deliverables", "runtime-summary.json"))
   const goal = (await readOperationGoal(worktree, operationID)).goal
   const now = input.now instanceof Date ? input.now : input.now ? new Date(input.now) : new Date()
 
   if (!graph) {
+    if (!operationPlan && discoveryCharter?.planningApproval?.status === "approved") {
+      const action: OperationNextAction = {
+        operationID,
+        action: "research_charter",
+        reason: "approved Discovery Charter is ready for the dedicated research pass before the full plan",
+        laneID: "discovery_research",
+        prompt: promptForDiscoveryResearch({ operationID, charter: discoveryCharter, goal }),
+        recommendedTools: [
+          "task",
+          "tool_inventory",
+          "websearch",
+          "webfetch",
+          "command_supervise",
+          "evidence_record",
+          "operation_memory",
+          "operation_checkpoint",
+          "operation_status",
+          "operation_plan",
+        ],
+        blockers: goal ? [] : ["operation goal is missing"],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
     const action: OperationNextAction = {
       operationID,
       action: "schedule",
@@ -171,6 +273,16 @@ export async function decideOperationNext(worktree: string, input: { operationID
   if (!lane) {
     const incomplete = graph.lanes.find((item) => item.status !== "complete")
     const coverage = (goal?.targetDurationHours ?? 0) >= 1 ? await evaluateCoverageReadiness(worktree, operationID) : undefined
+    if (!incomplete && targetWindowStillOpen(goal, now)) {
+      const action: OperationNextAction = {
+        operationID,
+        action: "expand_work",
+        reason: `base graph is complete but target runtime window is still open for active ${goal?.targetDurationHours}h goal`,
+        recommendedTools: ["operation_gap_audit", "operation_supervise", "operation_queue", "asset_graph", "attack_chain", "runtime_scheduler", "operation_status"],
+        blockers: coverage?.ok === false ? coverage.gaps : [],
+      }
+      return { action, path: await writeNextAction(worktree, action) }
+    }
     if (!incomplete && coverage && !coverage.ok) {
       const action: OperationNextAction = {
         operationID,
@@ -181,12 +293,12 @@ export async function decideOperationNext(worktree: string, input: { operationID
       }
       return { action, path: await writeNextAction(worktree, action) }
     }
-    if (!incomplete && targetWindowStillOpen(goal, now)) {
+    if (!incomplete && coverage?.ok) {
       const action: OperationNextAction = {
         operationID,
-        action: "wait",
-        reason: `target runtime window is still open for active ${goal?.targetDurationHours}h goal`,
-        recommendedTools: ["operation_supervise", "runtime_scheduler", "operation_status", "operation_audit"],
+        action: "stop",
+        reason: "all operation lanes are complete and coverage contract is release-ready",
+        recommendedTools: ["operation_checkpoint", "operation_audit", "report_lint"],
         blockers: [],
       }
       return { action, path: await writeNextAction(worktree, action) }
@@ -201,7 +313,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
         ? "no lane is ready because dependencies are still incomplete"
         : "all operation lanes are complete",
       laneID: incomplete?.id,
-      recommendedTools: incomplete ? ["operation_status", "task_status"] : ["operation_audit", "report_lint"],
+      recommendedTools: incomplete ? ["operation_status", "task_status"] : ["operation_checkpoint", "operation_audit", "report_lint"],
       blockers,
     }
     return { action, path: await writeNextAction(worktree, action) }
@@ -226,7 +338,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
     action: "launch_lane",
     reason: `lane ${lane.id} is ready and within governor limits`,
     lane,
-    prompt: promptForLane(lane),
+    prompt: promptForLane(lane, await readOperationScopeRules(worktree, operationID)),
     recommendedTools: lane.allowedTools,
     blockers: [],
     governor,

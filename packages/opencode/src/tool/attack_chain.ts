@@ -31,7 +31,10 @@ export const AttackChainTool = Tool.define<typeof Parameters, Metadata, never>(
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const result = yield* Effect.tryPromise(() => writeAttackChain(Instance.worktree, params)).pipe(Effect.orDie)
+        const result = yield* Effect.tryPromise({
+          try: () => writeAttackChain(Instance.worktree, params),
+          catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+        }).pipe(Effect.orDie)
         return {
           title: `Attack chain ${result.chainID}`,
           output: [`operation_id: ${result.operationID}`, `chain_id: ${result.chainID}`, `json: ${result.json}`, `markdown: ${result.markdown}`, `steps: ${result.steps}`].join("\n"),

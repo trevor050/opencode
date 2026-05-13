@@ -130,8 +130,6 @@ import type {
   SessionChildrenResponses,
   SessionCommandErrors,
   SessionCommandResponses,
-  SessionCostErrors,
-  SessionCostResponses,
   SessionCreateErrors,
   SessionCreateResponses,
   SessionDeleteErrors,
@@ -224,6 +222,9 @@ import type {
   UlmOperationStatusResponses,
   UlmOperationTemplateStartResponses,
   V2ModelListResponses,
+  V2ProviderGetErrors,
+  V2ProviderGetResponses,
+  V2ProviderListResponses,
   V2SessionCompactResponses,
   V2SessionContextResponses,
   V2SessionListErrors,
@@ -241,6 +242,7 @@ import type {
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
+  WorktreeListErrors,
   WorktreeListResponses,
   WorktreeRemoveErrors,
   WorktreeRemoveInput,
@@ -532,9 +534,9 @@ export class Global extends HeyApiClient {
   }
 
   /**
-   * Upgrade opencode
+   * Upgrade ULMCode
    *
-   * Upgrade opencode to the specified version or latest if not specified.
+   * Upgrade ULMCode to the specified version or latest if not specified.
    */
   public upgrade<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -1283,7 +1285,7 @@ export class Worktree extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).get<WorktreeListResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<WorktreeListResponses, WorktreeListErrors, ThrowOnError>({
       url: "/experimental/worktree",
       ...options,
       ...params,
@@ -2703,9 +2705,8 @@ export class Question extends HeyApiClient {
   public touch<ThrowOnError extends boolean = false>(
     parameters: {
       requestID: string
-      directory?: string
-      workspace?: string
       holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      answers?: Array<QuestionAnswer>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2715,9 +2716,8 @@ export class Question extends HeyApiClient {
         {
           args: [
             { in: "path", key: "requestID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "holdMillis" },
+            { in: "body", key: "answers" },
           ],
         },
       ],
@@ -2815,8 +2815,6 @@ export class Permission extends HeyApiClient {
   public touch<ThrowOnError extends boolean = false>(
     parameters: {
       requestID: string
-      directory?: string
-      workspace?: string
       holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
     },
     options?: Options<never, ThrowOnError>,
@@ -2827,8 +2825,6 @@ export class Permission extends HeyApiClient {
         {
           args: [
             { in: "path", key: "requestID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "holdMillis" },
           ],
         },
@@ -3317,38 +3313,6 @@ export class Session2 extends HeyApiClient {
   }
 
   /**
-   * Get session cost rollup
-   *
-   * Get the cumulative cost of this session plus the rolled-up cost of all descendant subagent sessions.
-   */
-  public cost<ThrowOnError extends boolean = false>(
-    parameters: {
-      sessionID: string
-      directory?: string
-      workspace?: string
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "sessionID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).get<SessionCostResponses, SessionCostErrors, ThrowOnError>({
-      url: "/session/{sessionID}/cost",
-      ...options,
-      ...params,
-    })
-  }
-
-  /**
    * Get session todos
    *
    * Retrieve the todo list associated with a specific session, showing tasks and action items.
@@ -3521,7 +3485,6 @@ export class Session2 extends HeyApiClient {
       messageID: string
       directory?: string
       workspace?: string
-      force?: "true" | "false"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3534,7 +3497,6 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "messageID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
-            { in: "query", key: "force" },
           ],
         },
       ],
@@ -4302,6 +4264,13 @@ export class Session3 extends HeyApiClient {
     parameters?: {
       directory?: string
       workspace?: string
+      limit?: number
+      order?: "asc" | "desc"
+      path?: string
+      roots?: boolean | "true" | "false"
+      start?: number
+      search?: string
+      cursor?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4312,6 +4281,13 @@ export class Session3 extends HeyApiClient {
           args: [
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "limit" },
+            { in: "query", key: "order" },
+            { in: "query", key: "path" },
+            { in: "query", key: "roots" },
+            { in: "query", key: "start" },
+            { in: "query", key: "search" },
+            { in: "query", key: "cursor" },
           ],
         },
       ],
@@ -4470,6 +4446,9 @@ export class Session3 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      limit?: number
+      order?: "asc" | "desc"
+      cursor?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4481,6 +4460,9 @@ export class Session3 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "limit" },
+            { in: "query", key: "order" },
+            { in: "query", key: "cursor" },
           ],
         },
       ],
@@ -4497,28 +4479,43 @@ export class Model extends HeyApiClient {
   /**
    * List v2 models
    *
-   * Retrieve available provider models with cost, capability, provider, and variant details.
+   * Retrieve available v2 models ordered by release date.
    */
-  public list<ThrowOnError extends boolean = false>(
-    parameters?: {
-      directory?: string
-      workspace?: string
+  public list<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<V2ModelListResponses, unknown, ThrowOnError>({
+      url: "/api/model",
+      ...options,
+    })
+  }
+}
+
+export class Provider2 extends HeyApiClient {
+  /**
+   * List v2 providers
+   *
+   * Retrieve active v2 AI providers so clients can show provider availability and configuration.
+   */
+  public list<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<V2ProviderListResponses, unknown, ThrowOnError>({
+      url: "/api/provider",
+      ...options,
+    })
+  }
+
+  /**
+   * Get v2 provider
+   *
+   * Retrieve a single v2 AI provider so clients can inspect its availability and endpoint settings.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).get<V2ModelListResponses, unknown, ThrowOnError>({
-      url: "/api/model",
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "providerID" }] }])
+    return (options?.client ?? this.client).get<V2ProviderGetResponses, V2ProviderGetErrors, ThrowOnError>({
+      url: "/api/provider/{providerID}",
       ...options,
       ...params,
     })
@@ -4534,6 +4531,11 @@ export class V2 extends HeyApiClient {
   private _model?: Model
   get model(): Model {
     return (this._model ??= new Model({ client: this.client }))
+  }
+
+  private _provider?: Provider2
+  get provider(): Provider2 {
+    return (this._provider ??= new Provider2({ client: this.client }))
   }
 }
 
@@ -4992,8 +4994,6 @@ export class Template extends HeyApiClient {
    */
   public start<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
-      workspace?: string
       operationID?: string
       template?:
         | "single-url-web"
@@ -5017,8 +5017,6 @@ export class Template extends HeyApiClient {
       [
         {
           args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "operationID" },
             { in: "body", key: "template" },
             { in: "body", key: "objective" },
@@ -5052,8 +5050,6 @@ export class Audit extends HeyApiClient {
   public write<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       eventLimit?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       staleAfterMinutes?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       minWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
@@ -5071,8 +5067,6 @@ export class Audit extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "eventLimit" },
             { in: "body", key: "staleAfterMinutes" },
             { in: "body", key: "minWords" },
@@ -5107,8 +5101,6 @@ export class Daemon extends HeyApiClient {
   public start<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
@@ -5122,8 +5114,6 @@ export class Daemon extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "maxRuntimeSeconds" },
             { in: "body", key: "cycleIntervalSeconds" },
             { in: "body", key: "maxCycles" },
@@ -5152,8 +5142,6 @@ export class Daemon extends HeyApiClient {
   public stop<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
@@ -5167,8 +5155,6 @@ export class Daemon extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "maxRuntimeSeconds" },
             { in: "body", key: "cycleIntervalSeconds" },
             { in: "body", key: "maxCycles" },
@@ -5197,8 +5183,6 @@ export class Daemon extends HeyApiClient {
   public status<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
       maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
@@ -5212,8 +5196,6 @@ export class Daemon extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "maxRuntimeSeconds" },
             { in: "body", key: "cycleIntervalSeconds" },
             { in: "body", key: "maxCycles" },
@@ -5245,8 +5227,6 @@ export class FinalArtifact extends HeyApiClient {
     parameters: {
       operationID: string
       artifactID: string
-      directory?: string
-      workspace?: string
       body?: {
         [key: string]: unknown
       }
@@ -5260,8 +5240,6 @@ export class FinalArtifact extends HeyApiClient {
           args: [
             { in: "path", key: "operationID" },
             { in: "path", key: "artifactID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { key: "body", map: "body" },
           ],
         },
@@ -5289,23 +5267,10 @@ export class Review extends HeyApiClient {
   public submit<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "operationID" }] }])
     return (options?.client ?? this.client).post<UlmOperationCredentialReviewSubmitResponses, unknown, ThrowOnError>({
       url: "/ulm/operation/{operationID}/credentials/submit",
       ...options,
@@ -5323,8 +5288,6 @@ export class Credential extends HeyApiClient {
   public create<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       credentialID?: string
       label?: string
       type?: string
@@ -5345,8 +5308,6 @@ export class Credential extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "credentialID" },
             { in: "body", key: "label" },
             { in: "body", key: "type" },
@@ -5383,8 +5344,6 @@ export class Credential extends HeyApiClient {
     parameters: {
       operationID: string
       credentialID: string
-      directory?: string
-      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5395,8 +5354,6 @@ export class Credential extends HeyApiClient {
           args: [
             { in: "path", key: "operationID" },
             { in: "path", key: "credentialID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
           ],
         },
       ],
@@ -5416,8 +5373,6 @@ export class Credential extends HeyApiClient {
   public materializeEnv<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       credentialIDs?: Array<string>
     },
     options?: Options<never, ThrowOnError>,
@@ -5428,8 +5383,6 @@ export class Credential extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "credentialIDs" },
           ],
         },
@@ -5461,24 +5414,11 @@ export class Operation extends HeyApiClient {
    */
   public list<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
-      workspace?: string
       eventLimit?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-            { in: "query", key: "eventLimit" },
-          ],
-        },
-      ],
-    )
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "eventLimit" }] }])
     return (options?.client ?? this.client).get<UlmOperationListResponses, unknown, ThrowOnError>({
       url: "/ulm/operation",
       ...options,
@@ -5493,24 +5433,11 @@ export class Operation extends HeyApiClient {
    */
   public close<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
-      workspace?: string
       ulmCloseOperationsPayload?: UlmCloseOperationsPayload
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-            { key: "ulmCloseOperationsPayload", map: "body" },
-          ],
-        },
-      ],
-    )
+    const params = buildClientParams([parameters], [{ args: [{ key: "ulmCloseOperationsPayload", map: "body" }] }])
     return (options?.client ?? this.client).post<UlmOperationCloseResponses, unknown, ThrowOnError>({
       url: "/ulm/operation/close",
       ...options,
@@ -5531,8 +5458,6 @@ export class Operation extends HeyApiClient {
   public status<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       eventLimit?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -5543,8 +5468,6 @@ export class Operation extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "query", key: "eventLimit" },
           ],
         },
@@ -5565,8 +5488,6 @@ export class Operation extends HeyApiClient {
   public resume<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       eventLimit?: string
       staleAfterMinutes?: string
     },
@@ -5578,8 +5499,6 @@ export class Operation extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "query", key: "eventLimit" },
             { in: "query", key: "staleAfterMinutes" },
           ],
@@ -5601,8 +5520,6 @@ export class Operation extends HeyApiClient {
   public audit<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       eventLimit?: string
       staleAfterMinutes?: string
       minWords?: string
@@ -5622,8 +5539,6 @@ export class Operation extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "query", key: "eventLimit" },
             { in: "query", key: "staleAfterMinutes" },
             { in: "query", key: "minWords" },
@@ -5653,8 +5568,6 @@ export class Operation extends HeyApiClient {
   public recover<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
       dryRun?: boolean
       maxTasks?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
     },
@@ -5666,8 +5579,6 @@ export class Operation extends HeyApiClient {
         {
           args: [
             { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
             { in: "body", key: "dryRun" },
             { in: "body", key: "maxTasks" },
           ],
@@ -5694,23 +5605,10 @@ export class Operation extends HeyApiClient {
   public finalArtifacts<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "operationID" }] }])
     return (options?.client ?? this.client).get<UlmOperationFinalArtifactsResponses, unknown, ThrowOnError>({
       url: "/ulm/operation/{operationID}/final-artifacts",
       ...options,
@@ -5727,8 +5625,6 @@ export class Operation extends HeyApiClient {
     parameters: {
       operationID: string
       artifactID: string
-      directory?: string
-      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5739,8 +5635,6 @@ export class Operation extends HeyApiClient {
           args: [
             { in: "path", key: "operationID" },
             { in: "path", key: "artifactID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
           ],
         },
       ],
@@ -5760,23 +5654,10 @@ export class Operation extends HeyApiClient {
   public credentials<ThrowOnError extends boolean = false>(
     parameters: {
       operationID: string
-      directory?: string
-      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "operationID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "operationID" }] }])
     return (options?.client ?? this.client).get<UlmOperationCredentialsResponses, unknown, ThrowOnError>({
       url: "/ulm/operation/{operationID}/credentials",
       ...options,

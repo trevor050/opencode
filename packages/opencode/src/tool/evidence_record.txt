@@ -1,3 +1,5 @@
 Record durable evidence for a ULMCode operation.
 
 Use this for command output, HTTP observations, screenshots, file references, notes, and logs that may support a finding or report claim. Store the evidence before citing it from `finding_record`.
+
+Never include raw passwords, tokens, cookies, API keys, or other secret values in evidence summaries, commands, paths, or content. Cite redacted credential IDs or vault-backed handles only.

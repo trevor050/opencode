@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import fs from "fs/promises"
+import path from "path"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Effect, Layer } from "effect"
 import { Agent } from "@/agent/agent"
@@ -32,6 +34,51 @@ const layer = Layer.mergeAll(
 )
 
 describe("tool.operation_resume", () => {
+  test("normalizes legacy sparse operation checkpoints", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const root = path.join(Instance.worktree, ".ulmcode", "operations", "school")
+            yield* Effect.promise(() => fs.mkdir(root, { recursive: true }))
+            yield* Effect.promise(() =>
+              fs.writeFile(
+                path.join(root, "operation.json"),
+                JSON.stringify({
+                  operationID: "school",
+                  objective: "Authorized school assessment",
+                  status: "active",
+                  createdAt: "2026-05-12T02:20:00Z",
+                }),
+              ),
+            )
+
+            const tool = yield* OperationResumeTool
+            const def = yield* tool.init()
+            const result = yield* def.execute(
+              { operationID: "school" },
+              {
+                sessionID: "session-1" as any,
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+
+            expect(result.title).toBe("Resume school: attention_required")
+            expect(result.output).toContain("operation plan is missing")
+            expect(result.output).toContain("\"stage\": \"intake\"")
+            expect(result.output).toContain("\"status\": \"running\"")
+          }).pipe(Effect.scoped, Effect.provide(layer)),
+        ),
+    })
+  })
+
   test("prints a restart brief before raw resume json", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({

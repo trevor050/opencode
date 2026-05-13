@@ -43,6 +43,29 @@ describe("ULM evidence normalizer", () => {
     expect(JSON.parse(await fs.readFile(result.leadsPath, "utf8")).leads).toHaveLength(2)
   })
 
+  test("rejects raw credential secrets before writing evidence indexes and leads", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const artifact = path.join(root, "evidence", "raw", "httpx.jsonl")
+    await fs.mkdir(path.dirname(artifact), { recursive: true })
+    await fs.writeFile(
+      artifact,
+      JSON.stringify({
+        url: "https://portal.school.example/login?token=raw-token-123",
+        host: "portal.school.example",
+        status_code: 200,
+        title: "Student Portal",
+      }) + "\n",
+    )
+
+    await expect(
+      normalizeEvidence(dir.path, {
+        operationID: "School",
+        artifactPaths: ["evidence/raw/httpx.jsonl"],
+      }),
+    ).rejects.toThrow("evidence normalization outputs must not contain raw credential secrets")
+  })
+
   test("discovers command plans and parses Nmap XML into host and service leads", async () => {
     await using dir = await tmpdir({ git: true })
     const root = operationPath(dir.path, "School")
@@ -172,5 +195,30 @@ describe("ULM evidence normalizer", () => {
         artifactPaths: ["../../outside.txt"],
       }),
     ).rejects.toThrow("artifact is outside operation root")
+  })
+
+  test("accepts operation-root-prefixed artifact paths from tool output", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const artifact = path.join(root, "evidence", "raw", "httpx.jsonl")
+    await fs.mkdir(path.dirname(artifact), { recursive: true })
+    await fs.writeFile(
+      artifact,
+      JSON.stringify({
+        url: "https://admin.school.example",
+        host: "admin.school.example",
+        status_code: 200,
+        title: "Admin Portal",
+      }) + "\n",
+    )
+
+    const result = await normalizeEvidence(dir.path, {
+      operationID: "School",
+      artifactPaths: [".ulmcode/operations/school/evidence/raw/httpx.jsonl"],
+      writeEvidenceRecords: false,
+    })
+
+    expect(result.artifacts).toEqual(["evidence/raw/httpx.jsonl"])
+    expect(result.leads).toHaveLength(1)
   })
 })

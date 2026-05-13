@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import { randomInt, randomUUID } from "crypto"
 import { operationPath, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export type OperationGoalStatus = "active" | "complete"
 
@@ -73,6 +74,11 @@ export type OperationGoalCompleteResult = {
   blockers: string[]
   goal?: OperationGoalRecord
   files: OperationGoalFiles
+}
+
+type OperationAuditGate = {
+  ok?: unknown
+  blockers?: unknown
 }
 
 const defaultCompletionPolicy: OperationGoalCompletionPolicy = {
@@ -266,6 +272,7 @@ export async function createOperationGoal(
   input: OperationGoalCreateInput,
   options: { now?: string } = {},
 ): Promise<OperationGoalCreateResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("operation goals must not contain raw credential secrets")
   const operationID = await resolveOperationID(worktree, input.operationID)
   const files = goalFiles(worktree, operationID)
   const existing = await readJson<OperationGoalRecord>(files.json)
@@ -281,17 +288,45 @@ export async function readOperationGoal(worktree: string, operationID: string): 
   return { operationID: id, goal: await readJson<OperationGoalRecord>(files.json), files }
 }
 
-async function completionBlockers(worktree: string, goal: OperationGoalRecord) {
+async function completionBlockers(worktree: string, goal: OperationGoalRecord, now: string) {
   const root = operationPath(worktree, goal.operationID)
   const blockers: string[] = []
+  if (goal.targetDurationHours !== undefined) {
+    const createdAt = Date.parse(goal.createdAt)
+    const checkedAt = Date.parse(now)
+    if (!Number.isFinite(createdAt)) {
+      blockers.push("operation goal createdAt is invalid, cannot verify target duration")
+    } else if (!Number.isFinite(checkedAt)) {
+      blockers.push("operation goal completion time is invalid, cannot verify target duration")
+    } else {
+      const elapsedHours = (checkedAt - createdAt) / (60 * 60 * 1000)
+      if (elapsedHours < goal.targetDurationHours) {
+        const remainingHours = Math.max(0, goal.targetDurationHours - elapsedHours)
+        blockers.push(
+          `target duration not reached: ${elapsedHours.toFixed(2)}h elapsed of ${goal.targetDurationHours}h target (${remainingHours.toFixed(2)}h remaining)`,
+        )
+      }
+    }
+  }
   if (goal.completionPolicy.requiresRuntimeSummary && !(await readableJson(path.join(root, "deliverables", "runtime-summary.json")))) {
     blockers.push("deliverables/runtime-summary.json is missing or invalid")
   }
   if (goal.completionPolicy.requiresReportRender && !(await readableJson(path.join(root, "deliverables", "final", "manifest.json")))) {
     blockers.push("deliverables/final/manifest.json is missing or invalid")
   }
-  if (goal.completionPolicy.requiresOperationAudit && !(await readableJson(path.join(root, "deliverables", "operation-audit.json")))) {
-    blockers.push("deliverables/operation-audit.json is missing or invalid")
+  if (goal.completionPolicy.requiresOperationAudit) {
+    const audit = await readJson<OperationAuditGate>(path.join(root, "deliverables", "operation-audit.json"))
+    if (!audit) {
+      blockers.push("deliverables/operation-audit.json is missing or invalid")
+    } else {
+      const auditBlockers = Array.isArray(audit.blockers)
+        ? audit.blockers.filter((blocker): blocker is string => typeof blocker === "string" && blocker.trim().length > 0)
+        : []
+      if (audit.ok !== true) blockers.push("deliverables/operation-audit.json ok is not true")
+      if (auditBlockers.length) {
+        blockers.push(`deliverables/operation-audit.json has unresolved blockers: ${auditBlockers.slice(0, 3).join("; ")}`)
+      }
+    }
   }
   const stage = goal.completionPolicy.requiresStageGate
   if (stage && !(await readableJson(path.join(root, "deliverables", "stage-gates", `${slug(stage, "stage")}.json`)))) {
@@ -310,12 +345,12 @@ export async function completeOperationGoal(
   const goal = await readJson<OperationGoalRecord>(files.json)
   if (!goal) return { operationID, completed: false, blockers: ["operation goal is missing"], files }
   if (goal.status === "complete") return { operationID, completed: true, blockers: [], goal, files }
-  const blockers = await completionBlockers(worktree, goal)
+  const now = options.now ?? new Date().toISOString()
+  const blockers = await completionBlockers(worktree, goal, now)
   if (blockers.length) {
-    await writeJson(files.blockers, { operationID, checkedAt: options.now ?? new Date().toISOString(), blockers })
+    await writeJson(files.blockers, { operationID, checkedAt: now, blockers })
     return { operationID, completed: false, blockers, goal, files }
   }
-  const now = options.now ?? new Date().toISOString()
   const completed = {
     ...goal,
     status: "complete" as const,

@@ -1,10 +1,10 @@
-import { Effect, Schema } from "effect"
+import { Effect, Exit, Schema } from "effect"
 import * as Tool from "./tool"
 import DESCRIPTION from "./operation_resume.txt"
 import { BackgroundJob } from "@/background/job"
 import { Instance } from "@/project/instance"
-import { InstanceState } from "@/effect/instance-state"
 import { commandRestartArgs, taskRestartArgs } from "./task_restart_args"
+import { backgroundJobWorktree, relevantBackgroundJobs } from "./background_job_scope"
 import { TaskTool } from "./task"
 import { CommandSuperviseTool } from "./command_supervise"
 import { buildOperationResumeBrief, formatOperationResumeBrief, readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
@@ -26,25 +26,21 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-function operationID(job: BackgroundJob.Info) {
-  const value = job.metadata?.operationID
-  return typeof value === "string" && value ? value : undefined
-}
-
 function metadataWorktree(job: BackgroundJob.Info) {
-  const value = job.metadata?.worktree
-  return typeof value === "string" && value ? value : undefined
+  return backgroundJobWorktree(job)
 }
 
 function recoverableStatus(status: BackgroundJob.Status) {
   return status === "stale" || status === "error" || status === "cancelled"
 }
 
-const currentWorktree = Effect.gen(function* () {
-  const ctx = yield* InstanceState.context.pipe(Effect.option)
-  if (ctx._tag === "Some") return ctx.value.worktree
-  return Instance.worktree
-})
+function currentWorktree() {
+  try {
+    return Instance.worktree
+  } catch {
+    return undefined
+  }
+}
 
 export const OperationResumeTool = Tool.define(
   "operation_resume",
@@ -60,18 +56,20 @@ export const OperationResumeTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const recovery = yield* Effect.gen(function* () {
+          const recoveryEffect = Effect.gen(function* () {
             if (params.recoverStaleTasks !== true) return undefined
             const maxRecoveries =
               params.maxRecoveries === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(params.maxRecoveries))
-            const candidates = (yield* jobs.list())
-              .filter((job) => operationID(job) === params.operationID)
+            const current = currentWorktree()
+            const candidates = relevantBackgroundJobs({ operationID: params.operationID, jobs: yield* jobs.list(), worktree: current })
               .filter((job) => recoverableStatus(job.status))
               .map((job) => ({ job, taskArgs: taskRestartArgs(job), commandArgs: commandRestartArgs(job) }))
-            const candidateWorktree = candidates.map((item) => metadataWorktree(item.job)).find(Boolean) ?? (yield* currentWorktree)
-            const currentStatus = yield* Effect.tryPromise(() => readOperationStatus(candidateWorktree, params.operationID)).pipe(
-              Effect.catch(() => Effect.succeed(undefined)),
-            )
+            const candidateWorktree = candidates.map((item) => metadataWorktree(item.job)).find(Boolean) ?? current
+            const currentStatus = candidateWorktree
+              ? yield* Effect.tryPromise(() => readOperationStatus(candidateWorktree, params.operationID)).pipe(
+                  Effect.catch(() => Effect.succeed(undefined)),
+                )
+              : undefined
             if (currentStatus?.operation?.status === "complete") {
               return {
                 requested: true,
@@ -103,7 +101,8 @@ export const OperationResumeTool = Tool.define(
 
             const checkpointUpdated = yield* Effect.gen(function* () {
               if (restartable.length === 0) return false
-              const worktree = restartable.map((item) => metadataWorktree(item.job)).find(Boolean) ?? (yield* currentWorktree)
+              const worktree = restartable.map((item) => metadataWorktree(item.job)).find(Boolean) ?? current
+              if (!worktree) return false
               const status = yield* Effect.tryPromise(() => readOperationStatus(worktree, params.operationID)).pipe(
                 Effect.catch(() => Effect.succeed(undefined)),
               )
@@ -140,12 +139,24 @@ export const OperationResumeTool = Tool.define(
               restarted: restartable.length,
               skipped,
               checkpointUpdated,
-              worktree: restartable.map((item) => metadataWorktree(item.job)).find(Boolean),
+              worktree: restartable.map((item) => metadataWorktree(item.job)).find(Boolean) ?? current,
               output: restarted.join("\n\n"),
             }
           })
+          const recoveryExit = yield* Effect.exit(recoveryEffect)
+          const recovery = Exit.isSuccess(recoveryExit)
+            ? recoveryExit.value
+            : {
+                requested: true,
+                restarted: 0,
+                skipped: 0,
+                checkpointUpdated: false,
+                worktree: currentWorktree(),
+                output: `recovery_skipped_reason: ${String(recoveryExit.cause)}`,
+              }
 
-          const worktree = recovery?.worktree ?? (yield* currentWorktree)
+          const worktree = recovery?.worktree ?? currentWorktree()
+          if (!worktree) throw new Error("operation_resume requires an instance worktree or recoverable task metadata worktree")
           const result = yield* Effect.tryPromise(() =>
             buildOperationResumeBrief(worktree, params.operationID, {
               eventLimit: params.eventLimit,

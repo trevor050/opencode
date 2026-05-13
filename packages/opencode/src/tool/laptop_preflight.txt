@@ -1,0 +1,17 @@
+Audit whether a long unattended ULMCode laptop run is ready to launch.
+
+Use this before starting `runtime_daemon` or handing off launchd/systemd
+supervisor instructions for a school-laptop run. It verifies the operation graph,
+duration-sized plan, runtime supervisor files, tool preflight, model route audit,
+long-report outline, credential vault handoff when needed, and explicit operator
+confirmations for wall power, sleep settings, Wi-Fi/scope reachability, and
+clock/timezone.
+
+If operator confirmations are not available yet, run the tool anyway; the
+missing confirmations will be returned as launch blockers instead of being
+silently waived.
+
+Set `preparePrerequisites=true` during launch prep to write missing
+`tools/tool-preflight.json` and `deliverables/model-route-audit.json` before the
+audit. This does not install tools; blocked tools remain blockers for the final
+preflight.

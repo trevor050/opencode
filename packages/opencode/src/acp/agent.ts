@@ -150,8 +150,6 @@ export class Agent implements ACPAgent {
   private shellSnapshots = new Map<string, string>()
   private toolStarts = new Set<string>()
   private permissionQueues = new Map<string, Promise<void>>()
-  private messageCompletionResolvers = new Map<string, () => void>()
-  private completedAssistantMessageIds = new Set<string>()
   private permissionOptions: PermissionOption[] = [
     { optionId: "once", kind: "allow_once", name: "Allow once" },
     { optionId: "always", kind: "allow_always", name: "Always allow" },
@@ -275,19 +273,6 @@ export class Agent implements ACPAgent {
         return
       }
 
-      case "message.updated": {
-        const info = event.properties.info
-        if (info.role === "assistant" && info.time.completed !== undefined) {
-          this.completedAssistantMessageIds.add(info.id)
-          const resolver = this.messageCompletionResolvers.get(info.id)
-          if (resolver) {
-            this.messageCompletionResolvers.delete(info.id)
-            resolver()
-          }
-        }
-        return
-      }
-
       case "message.part.updated": {
         log.info("message part updated", { event: event.properties })
         const props = event.properties
@@ -362,33 +347,7 @@ export class Agent implements ACPAgent {
               this.toolStarts.delete(part.callID)
               this.shellSnapshots.delete(part.callID)
               const kind = toToolKind(part.tool)
-              const content: ToolCallContent[] = [
-                {
-                  type: "content",
-                  content: {
-                    type: "text",
-                    text: part.state.output,
-                  },
-                },
-              ]
-
-              if (kind === "edit") {
-                const input = part.state.input
-                const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
-                const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
-                const newText =
-                  typeof input["newString"] === "string"
-                    ? input["newString"]
-                    : typeof input["content"] === "string"
-                      ? input["content"]
-                      : ""
-                content.push({
-                  type: "diff",
-                  path: filePath,
-                  oldText,
-                  newText,
-                })
-              }
+              const content = completedToolContent(part, kind)
 
               if (part.tool === "todowrite") {
                 const parsedTodos = decodeTodos(part.state.output)
@@ -428,10 +387,7 @@ export class Agent implements ACPAgent {
                     content,
                     title: part.state.title,
                     rawInput: part.state.input,
-                    rawOutput: {
-                      output: part.state.output,
-                      metadata: part.state.metadata,
-                    },
+                    rawOutput: completedToolRawOutput(part),
                   },
                 })
                 .catch((error) => {
@@ -547,36 +503,6 @@ export class Agent implements ACPAgent {
         return
       }
     }
-  }
-
-  // Wait until the event subscription has observed the assistant completion
-  // event. The event loop forwards part deltas sequentially, so this prevents
-  // ACP clients from receiving trailing chunks after prompt() has returned
-  // stopReason=end_turn.
-  private waitForMessageCompletion(messageId: string, timeoutMs: number): Promise<void> {
-    if (this.completedAssistantMessageIds.has(messageId)) {
-      this.completedAssistantMessageIds.delete(messageId)
-      return Promise.resolve()
-    }
-    return new Promise<void>((resolve) => {
-      let settled = false
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const finish = (timedOut: boolean) => {
-        if (settled) return
-        settled = true
-        if (timer) clearTimeout(timer)
-        this.messageCompletionResolvers.delete(messageId)
-        if (timedOut) {
-          log.warn("timeout waiting for ACP message completion event", {
-            messageID: messageId,
-            timeoutMs,
-          })
-        }
-        resolve()
-      }
-      this.messageCompletionResolvers.set(messageId, () => finish(false))
-      timer = setTimeout(() => finish(true), timeoutMs)
-    })
   }
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -905,33 +831,7 @@ export class Agent implements ACPAgent {
             this.toolStarts.delete(part.callID)
             this.shellSnapshots.delete(part.callID)
             const kind = toToolKind(part.tool)
-            const content: ToolCallContent[] = [
-              {
-                type: "content",
-                content: {
-                  type: "text",
-                  text: part.state.output,
-                },
-              },
-            ]
-
-            if (kind === "edit") {
-              const input = part.state.input
-              const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
-              const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
-              const newText =
-                typeof input["newString"] === "string"
-                  ? input["newString"]
-                  : typeof input["content"] === "string"
-                    ? input["content"]
-                    : ""
-              content.push({
-                type: "diff",
-                path: filePath,
-                oldText,
-                newText,
-              })
-            }
+            const content = completedToolContent(part, kind)
 
             if (part.tool === "todowrite") {
               const parsedTodos = decodeTodos(part.state.output)
@@ -971,10 +871,7 @@ export class Agent implements ACPAgent {
                   content,
                   title: part.state.title,
                   rawInput: part.state.input,
-                  rawOutput: {
-                    output: part.state.output,
-                    metadata: part.state.metadata,
-                  },
+                  rawOutput: completedToolRawOutput(part),
                 },
               })
               .catch((err) => {
@@ -1197,8 +1094,8 @@ export class Agent implements ACPAgent {
 
     const currentModeId = await (async () => {
       if (!availableModes.length) return undefined
-      const defaultAgentName = await AppRuntime.runPromise(AgentModule.Service.use((svc) => svc.defaultAgent()))
-      const resolvedModeId = availableModes.find((mode) => mode.name === defaultAgentName)?.id ?? availableModes[0].id
+      const defaultAgent = await AppRuntime.runPromise(AgentModule.Service.use((svc) => svc.defaultInfo()))
+      const resolvedModeId = availableModes.find((mode) => mode.name === defaultAgent.name)?.id ?? availableModes[0].id
       this.sessionManager.setMode(sessionId, resolvedModeId)
       return resolvedModeId
     })()
@@ -1431,7 +1328,8 @@ export class Agent implements ACPAgent {
     if (!current) {
       this.sessionManager.setModel(session.id, model)
     }
-    const agent = session.modeId ?? (await AppRuntime.runPromise(AgentModule.Service.use((svc) => svc.defaultAgent())))
+    const agent =
+      session.modeId ?? (await AppRuntime.runPromise(AgentModule.Service.use((svc) => svc.defaultInfo()))).name
 
     const parts: Array<
       | { type: "text"; text: string; synthetic?: boolean; ignored?: boolean }
@@ -1550,10 +1448,6 @@ export class Agent implements ACPAgent {
       })
       const msg = response.data?.info
 
-      if (msg?.id) {
-        await this.waitForMessageCompletion(msg.id, 5000)
-      }
-
       await sendUsageUpdate(this.connection, this.sdk, sessionID, directory)
 
       return {
@@ -1576,10 +1470,6 @@ export class Agent implements ACPAgent {
         directory,
       })
       const msg = response.data?.info
-
-      if (msg?.id) {
-        await this.waitForMessageCompletion(msg.id, 5000)
-      }
 
       await sendUsageUpdate(this.connection, this.sdk, sessionID, directory)
 
@@ -1706,6 +1596,70 @@ function toLocations(toolName: string, input: Record<string, any>): { path: stri
     default:
       return []
   }
+}
+
+function completedToolContent(part: ToolPart, kind: ToolKind): ToolCallContent[] {
+  if (part.state.status !== "completed") return []
+
+  const content: ToolCallContent[] = [
+    {
+      type: "content",
+      content: {
+        type: "text",
+        text: part.state.output,
+      },
+    },
+  ]
+
+  if (kind === "edit") {
+    const input = part.state.input
+    const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
+    const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
+    const newText =
+      typeof input["newString"] === "string"
+        ? input["newString"]
+        : typeof input["content"] === "string"
+          ? input["content"]
+          : ""
+    content.push({
+      type: "diff",
+      path: filePath,
+      oldText,
+      newText,
+    })
+  }
+
+  content.push(...imageContents(part.state.attachments ?? []))
+  return content
+}
+
+function completedToolRawOutput(part: ToolPart) {
+  if (part.state.status !== "completed") return {}
+  return {
+    output: part.state.output,
+    metadata: part.state.metadata,
+    ...(part.state.attachments?.length ? { attachments: part.state.attachments } : {}),
+  }
+}
+
+function imageContents(attachments: Array<{ mime: string; url: string }>): ToolCallContent[] {
+  return attachments.flatMap((attachment): ToolCallContent[] => {
+    const match = attachment.url.match(/^data:([^;,]+)(?:;[^,]*)*;base64,(.*)$/)
+    const mime = match?.[1] ?? attachment.mime
+    if (!mime.startsWith("image/")) return []
+    const data = match?.[2]
+    if (data === undefined) return []
+    return [
+      {
+        type: "content" as const,
+        content: {
+          type: "image" as const,
+          mimeType: mime,
+          data,
+        },
+      },
+    ]
+  })
 }
 
 async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ providerID: ProviderID; modelID: ModelID }> {

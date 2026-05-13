@@ -123,8 +123,8 @@ export type PermissionRequest = {
 }
 
 export type SnapshotFileDiff = {
-  file: string
-  patch: string
+  file?: string
+  patch?: string
   additions: number
   deletions: number
   status?: "added" | "deleted" | "modified"
@@ -749,6 +749,16 @@ export type Session = {
     files: number
     diffs?: Array<SnapshotFileDiff>
   }
+  cost?: number
+  tokens?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
   share?: {
     url: string
   }
@@ -779,6 +789,7 @@ export type Prompt = {
   text: string
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
+  references?: Array<PromptReferenceAttachment>
 }
 
 export type GlobalEvent = {
@@ -953,7 +964,6 @@ export type PermissionConfig =
       question?: PermissionActionConfig
       webfetch?: PermissionActionConfig
       websearch?: PermissionActionConfig
-      codesearch?: PermissionActionConfig
       repo_clone?: PermissionRuleConfig
       repo_overview?: PermissionRuleConfig
       lsp?: PermissionRuleConfig
@@ -1069,7 +1079,7 @@ export type ProviderConfig = {
         output: Array<"text" | "audio" | "image" | "video" | "pdf">
       }
       experimental?: boolean
-      status?: "alpha" | "beta" | "deprecated"
+      status?: "alpha" | "beta" | "deprecated" | "active"
       provider?: {
         npm?: string
         api?: string
@@ -1141,6 +1151,17 @@ export type McpRemoteConfig = {
  */
 export type LayoutConfig = "auto" | "stretch"
 
+export type ImageAttachmentConfig = {
+  auto_resize?: boolean
+  max_width?: number
+  max_height?: number
+  max_base64_bytes?: number
+}
+
+export type AttachmentConfig = {
+  image?: ImageAttachmentConfig
+}
+
 export type Config = {
   $schema?: string
   shell?: string
@@ -1183,7 +1204,6 @@ export type Config = {
   enabled_providers?: Array<string>
   model?: string
   small_model?: string
-  max_retries?: number
   default_agent?: string
   username?: string
   mode?: {
@@ -1256,6 +1276,7 @@ export type Config = {
   tools?: {
     [key: string]: boolean
   }
+  attachment?: AttachmentConfig
   enterprise?: {
     url?: string
   }
@@ -1272,7 +1293,6 @@ export type Config = {
   }
   experimental?: {
     disable_paste_summary?: boolean
-    enable_sse_json_repair?: boolean
     batch_tool?: boolean
     openTelemetry?: boolean
     primary_tools?: Array<string>
@@ -1323,6 +1343,18 @@ export type Model = {
       read: number
       write: number
     }
+    tiers?: Array<{
+      input: number
+      output: number
+      cache: {
+        read: number
+        write: number
+      }
+      tier: {
+        type: "context"
+        size: number
+      }
+    }>
     experimentalOver200K?: {
       input: number
       output: number
@@ -1386,6 +1418,20 @@ export type ToolList = Array<ToolListItem>
 
 export type ToolIds = Array<string>
 
+export type WorktreeError = {
+  name:
+    | "WorktreeNotGitError"
+    | "WorktreeNameGenerationFailedError"
+    | "WorktreeCreateFailedError"
+    | "WorktreeStartCommandFailedError"
+    | "WorktreeRemoveFailedError"
+    | "WorktreeResetFailedError"
+    | "WorktreeListFailedError"
+  data: {
+    message: string
+  }
+}
+
 export type WorktreeCreateInput = {
   name?: string
   /**
@@ -1396,7 +1442,7 @@ export type WorktreeCreateInput = {
 
 export type Worktree = {
   name: string
-  branch: string
+  branch?: string
   directory: string
 }
 
@@ -1427,6 +1473,16 @@ export type GlobalSession = {
     deletions: number
     files: number
     diffs?: Array<SnapshotFileDiff>
+  }
+  cost?: number
+  tokens?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
   }
   share?: {
     url: string
@@ -1531,7 +1587,7 @@ export type VcsFileStatus = {
 
 export type VcsFileDiff = {
   file: string
-  patch: string
+  patch?: string
   additions: number
   deletions: number
   status?: "added" | "deleted" | "modified"
@@ -1674,6 +1730,21 @@ export type ProviderAuthAuthorization = {
   instructions: string
 }
 
+export type ProviderAuthError1 = {
+  name:
+    | "BadRequest"
+    | "ProviderAuthOauthMissing"
+    | "ProviderAuthOauthCodeMissing"
+    | "ProviderAuthOauthCallbackFailed"
+    | "ProviderAuthValidationFailed"
+  data: {
+    providerID?: string
+    field?: string
+    message?: string
+    kind?: string
+  }
+}
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -1790,6 +1861,13 @@ export type EventTuiSessionSelect2 = {
   }
 }
 
+export type UlmOperationSessionBinding = {
+  sessionID: string
+  operationID: string
+  boundAt: string
+  source?: string
+}
+
 export type UlmEvidenceRef = {
   id: string
   path?: string
@@ -1899,6 +1977,7 @@ export type UlmRuntimeSnapshot = {
 export type UlmOperationStatusSummary = {
   operationID: string
   root: string
+  sessions?: Array<UlmOperationSessionBinding>
   operation?: UlmOperationRecord
   goal?: UlmOperationGoalStatus
   supervisor?: UlmSupervisorStatus
@@ -2109,12 +2188,14 @@ export type UlmCredentialRecord = {
 export type UlmCredentialListResult = {
   operationID: string
   index: string
+  expectedServices: Array<string>
   credentials: Array<UlmCredentialRecord>
 }
 
 export type UlmCredentialReviewSubmitResult = {
   operationID: string
   submittedAt: string
+  expectedServices: Array<string>
   file: string
   credentials: Array<UlmCredentialRecord>
 }
@@ -2140,9 +2221,9 @@ export type Workspace = {
   id: string
   type: string
   name: string
-  branch: string | null
-  directory: string | null
-  extra: unknown | null
+  branch?: string | null
+  directory?: string | null
+  extra?: unknown | null
   projectID: string
   timeUsed: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
 }
@@ -2237,6 +2318,16 @@ export type SyncEventSessionUpdated = {
         deletions: number
         files: number
         diffs?: Array<SnapshotFileDiff>
+      } | null
+      cost?: number | null
+      tokens?: {
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
       } | null
       share?: {
         url?: string | null
@@ -2950,7 +3041,7 @@ export type EventWorktreeReady = {
   type: "worktree.ready"
   properties: {
     name: string
-    branch: string
+    branch?: string
   }
 }
 
@@ -3100,6 +3191,18 @@ export type PromptFileAttachment = {
 
 export type PromptAgentAttachment = {
   name: string
+  source?: PromptSource
+}
+
+export type PromptReferenceAttachment = {
+  name: string
+  kind: "local" | "git" | "invalid"
+  uri?: string
+  repository?: string
+  branch?: string
+  target?: string
+  targetUri?: string
+  problem?: string
   source?: PromptSource
 }
 
@@ -3457,6 +3560,16 @@ export type SessionInfo = {
     providerID: string
     variant: string
   }
+  cost: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
   time: {
     created: number
     updated: number
@@ -3506,6 +3619,7 @@ export type SessionMessageUser = {
   text: string
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
+  references?: Array<PromptReferenceAttachment>
   type: "user"
 }
 
@@ -3669,12 +3783,16 @@ export type SessionMessage =
   | SessionMessageAssistant
   | SessionMessageCompaction
 
-export type ModelInfo = {
+export type ModelV2Info = {
   id: string
+  apiID: string
   providerID: string
   family?: string
   name: string
   endpoint:
+    | {
+        type: "unknown"
+      }
     | {
         type: "openai/responses"
         url: string
@@ -3695,6 +3813,11 @@ export type ModelInfo = {
         type: "anthropic/messages"
         url: string
       }
+    | {
+        type: "aisdk"
+        package: string
+        url?: string
+      }
   capabilities: {
     tools: boolean
     input: Array<string>
@@ -3707,6 +3830,14 @@ export type ModelInfo = {
     body: {
       [key: string]: unknown
     }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
     variant?: string
   }
   variants: Array<{
@@ -3716,6 +3847,14 @@ export type ModelInfo = {
     }
     body: {
       [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
     }
   }>
   time: {
@@ -3734,10 +3873,78 @@ export type ModelInfo = {
     }
   }>
   status: "alpha" | "beta" | "deprecated" | "active"
+  enabled: boolean
   limit: {
     context: number
     input?: number
     output: number
+  }
+}
+
+export type ProviderV2Info = {
+  id: string
+  name: string
+  enabled:
+    | false
+    | {
+        via: "env"
+        name: string
+      }
+    | {
+        via: "auth"
+        service: string
+      }
+    | {
+        via: "custom"
+        data: {
+          [key: string]: unknown
+        }
+      }
+  env: Array<string>
+  endpoint:
+    | {
+        type: "unknown"
+      }
+    | {
+        type: "openai/responses"
+        url: string
+        websocket?: boolean
+      }
+    | {
+        type: "openai/completions"
+        url: string
+        reasoning?:
+          | {
+              type: "reasoning_content"
+            }
+          | {
+              type: "reasoning_details"
+            }
+      }
+    | {
+        type: "anthropic/messages"
+        url: string
+      }
+    | {
+        type: "aisdk"
+        package: string
+        url?: string
+      }
+  options: {
+    headers: {
+      [key: string]: string
+    }
+    body: {
+      [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
   }
 }
 
@@ -3753,11 +3960,11 @@ export type EventTuiToastShow1 = {
 }
 
 export type BadRequestError = {
-  data: unknown
-  errors: Array<{
-    [key: string]: unknown
-  }>
-  success: false
+  name: "BadRequest"
+  data: {
+    message: string
+    kind?: "Params" | "Headers" | "Query" | "Body" | "Payload"
+  }
 }
 
 export type AuthRemoveData = {
@@ -4235,9 +4442,9 @@ export type WorktreeRemoveData = {
 
 export type WorktreeRemoveErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeRemoveError = WorktreeRemoveErrors[keyof WorktreeRemoveErrors]
@@ -4261,6 +4468,15 @@ export type WorktreeListData = {
   url: "/experimental/worktree"
 }
 
+export type WorktreeListErrors = {
+  /**
+   * WorktreeError
+   */
+  400: WorktreeError
+}
+
+export type WorktreeListError = WorktreeListErrors[keyof WorktreeListErrors]
+
 export type WorktreeListResponses = {
   /**
    * List of worktree directories
@@ -4282,9 +4498,9 @@ export type WorktreeCreateData = {
 
 export type WorktreeCreateErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
@@ -4310,9 +4526,9 @@ export type WorktreeResetData = {
 
 export type WorktreeResetErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeResetError = WorktreeResetErrors[keyof WorktreeResetErrors]
@@ -5403,14 +5619,12 @@ export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejec
 export type QuestionTouchData = {
   body?: {
     holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    answers?: Array<QuestionAnswer>
   }
   path: {
     requestID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/question/{requestID}/touch"
 }
 
@@ -5499,10 +5713,7 @@ export type PermissionTouchData = {
   path: {
     requestID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/permission/{requestID}/touch"
 }
 
@@ -5596,9 +5807,9 @@ export type ProviderOauthAuthorizeData = {
 
 export type ProviderOauthAuthorizeErrors = {
   /**
-   * Bad request
+   * ProviderAuthError
    */
-  400: BadRequestError
+  400: ProviderAuthError1
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -5632,9 +5843,9 @@ export type ProviderOauthCallbackData = {
 
 export type ProviderOauthCallbackErrors = {
   /**
-   * Bad request
+   * ProviderAuthError
    */
-  400: BadRequestError
+  400: ProviderAuthError1
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]
@@ -5868,7 +6079,7 @@ export type SessionChildrenErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -5883,44 +6094,6 @@ export type SessionChildrenResponses = {
 }
 
 export type SessionChildrenResponse = SessionChildrenResponses[keyof SessionChildrenResponses]
-
-export type SessionCostData = {
-  body?: never
-  path: {
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/session/{sessionID}/cost"
-}
-
-export type SessionCostErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * NotFoundError
-   */
-  404: NotFoundError
-}
-
-export type SessionCostError = SessionCostErrors[keyof SessionCostErrors]
-
-export type SessionCostResponses = {
-  /**
-   * Cost rollup
-   */
-  200: {
-    self: number
-    subagents: number
-    subagent_count: number
-  }
-}
-
-export type SessionCostResponse = SessionCostResponses[keyof SessionCostResponses]
 
 export type SessionTodoData = {
   body?: never
@@ -5940,7 +6113,7 @@ export type SessionTodoErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6050,7 +6223,7 @@ export type SessionPromptErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6078,7 +6251,6 @@ export type SessionDeleteMessageData = {
   query?: {
     directory?: string
     workspace?: string
-    force?: "true" | "false"
   }
   url: "/session/{sessionID}/message/{messageID}"
 }
@@ -6089,7 +6261,7 @@ export type SessionDeleteMessageErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6159,6 +6331,10 @@ export type SessionForkData = {
 
 export type SessionForkErrors = {
   /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
    * NotFoundError
    */
   404: NotFoundError
@@ -6192,10 +6368,6 @@ export type SessionAbortErrors = {
    * Bad request
    */
   400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
 }
 
 export type SessionAbortError = SessionAbortErrors[keyof SessionAbortErrors]
@@ -6231,7 +6403,7 @@ export type SessionInitErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6386,7 +6558,7 @@ export type SessionPromptAsyncErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6435,7 +6607,7 @@ export type SessionCommandErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6480,7 +6652,7 @@ export type SessionShellErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6520,7 +6692,7 @@ export type SessionRevertErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6554,7 +6726,7 @@ export type SessionUnrevertErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6591,7 +6763,7 @@ export type PermissionRespondErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6627,7 +6799,7 @@ export type PartDeleteErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6663,7 +6835,7 @@ export type PartUpdateErrors = {
    */
   400: BadRequestError
   /**
-   * Not found
+   * NotFoundError
    */
   404: NotFoundError
 }
@@ -6815,6 +6987,16 @@ export type V2SessionListData = {
   query?: {
     directory?: string
     workspace?: string
+    limit?: number
+    order?: "asc" | "desc"
+    path?: string
+    roots?: boolean | "true" | "false"
+    start?: number
+    search?: string
+    /**
+     * Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response. Do not combine with order or filters.
+     */
+    cursor?: string
   }
   url: "/api/session"
 }
@@ -6932,6 +7114,12 @@ export type V2SessionMessagesData = {
   query?: {
     directory?: string
     workspace?: string
+    limit?: number
+    order?: "asc" | "desc"
+    /**
+     * Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response. Do not combine with order.
+     */
+    cursor?: string
   }
   url: "/api/session/{sessionID}/message"
 }
@@ -6957,10 +7145,7 @@ export type V2SessionMessagesResponse2 = V2SessionMessagesResponses[keyof V2Sess
 export type V2ModelListData = {
   body?: never
   path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/api/model"
 }
 
@@ -6968,10 +7153,53 @@ export type V2ModelListResponses = {
   /**
    * Success
    */
-  200: Array<ModelInfo>
+  200: Array<ModelV2Info>
 }
 
 export type V2ModelListResponse = V2ModelListResponses[keyof V2ModelListResponses]
+
+export type V2ProviderListData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/provider"
+}
+
+export type V2ProviderListResponses = {
+  /**
+   * Success
+   */
+  200: Array<ProviderV2Info>
+}
+
+export type V2ProviderListResponse = V2ProviderListResponses[keyof V2ProviderListResponses]
+
+export type V2ProviderGetData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: never
+  url: "/api/provider/{providerID}"
+}
+
+export type V2ProviderGetErrors = {
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type V2ProviderGetError = V2ProviderGetErrors[keyof V2ProviderGetErrors]
+
+export type V2ProviderGetResponses = {
+  /**
+   * ProviderV2.Info
+   */
+  200: ProviderV2Info
+}
+
+export type V2ProviderGetResponse = V2ProviderGetResponses[keyof V2ProviderGetResponses]
 
 export type TuiAppendPromptData = {
   body?: {
@@ -7281,8 +7509,6 @@ export type UlmOperationListData = {
   body?: never
   path?: never
   query?: {
-    directory?: string
-    workspace?: string
     eventLimit?: string
   }
   url: "/ulm/operation"
@@ -7316,10 +7542,7 @@ export type UlmOperationTemplateStartData = {
     budgetUSD?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
   }
   path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/template"
 }
 
@@ -7336,10 +7559,7 @@ export type UlmOperationTemplateStartResponse =
 export type UlmOperationCloseData = {
   body?: UlmCloseOperationsPayload
   path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/close"
 }
 
@@ -7358,8 +7578,6 @@ export type UlmOperationStatusData = {
     operationID: string
   }
   query?: {
-    directory?: string
-    workspace?: string
     eventLimit?: string
   }
   url: "/ulm/operation/{operationID}/status"
@@ -7380,8 +7598,6 @@ export type UlmOperationResumeData = {
     operationID: string
   }
   query?: {
-    directory?: string
-    workspace?: string
     eventLimit?: string
     staleAfterMinutes?: string
   }
@@ -7403,8 +7619,6 @@ export type UlmOperationAuditData = {
     operationID: string
   }
   query?: {
-    directory?: string
-    workspace?: string
     eventLimit?: string
     staleAfterMinutes?: string
     minWords?: string
@@ -7442,10 +7656,7 @@ export type UlmOperationAuditWriteData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/audit"
 }
 
@@ -7466,10 +7677,7 @@ export type UlmOperationRecoverData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/recover"
 }
 
@@ -7492,10 +7700,7 @@ export type UlmOperationDaemonStartData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/daemon/start"
 }
 
@@ -7518,10 +7723,7 @@ export type UlmOperationDaemonStopData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/daemon/stop"
 }
 
@@ -7544,10 +7746,7 @@ export type UlmOperationDaemonStatusData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/daemon/status"
 }
 
@@ -7566,10 +7765,7 @@ export type UlmOperationFinalArtifactsData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/final-artifacts"
 }
 
@@ -7589,10 +7785,7 @@ export type UlmOperationFinalArtifactData = {
     operationID: string
     artifactID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}"
 }
 
@@ -7614,10 +7807,7 @@ export type UlmOperationFinalArtifactOpenData = {
     operationID: string
     artifactID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}/open"
 }
 
@@ -7636,10 +7826,7 @@ export type UlmOperationCredentialsData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/credentials"
 }
 
@@ -7669,10 +7856,7 @@ export type UlmOperationCredentialCreateData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/credentials"
 }
 
@@ -7691,10 +7875,7 @@ export type UlmOperationCredentialReviewSubmitData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/credentials/submit"
 }
 
@@ -7714,10 +7895,7 @@ export type UlmOperationCredentialDeleteData = {
     operationID: string
     credentialID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/credentials/{credentialID}"
 }
 
@@ -7738,10 +7916,7 @@ export type UlmOperationCredentialMaterializeEnvData = {
   path: {
     operationID: string
   }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
+  query?: never
   url: "/ulm/operation/{operationID}/credentials/materialize-env"
 }
 
@@ -7803,7 +7978,7 @@ export type ExperimentalWorkspaceCreateData = {
   body?: {
     id?: string
     type: string
-    branch: string | null
+    branch?: string | null
     extra?: unknown | null
   }
   path?: never

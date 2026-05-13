@@ -2,6 +2,7 @@ import { render, TimeToFirstDraw, useRenderer, useTerminalDimensions } from "@op
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import * as Clipboard from "@tui/util/clipboard"
 import * as Selection from "@tui/util/selection"
+import * as TuiAudio from "@tui/util/audio"
 import { createCliRenderer, MouseButton, type CliRendererConfig } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"
 import {
@@ -24,7 +25,7 @@ import { DialogProvider, useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
 import { ErrorComponent } from "@tui/component/error-component"
 import { PluginRouteMissing } from "@tui/component/plugin-route-missing"
-import { ProjectProvider } from "@tui/context/project"
+import { ProjectProvider, useProject } from "@tui/context/project"
 import { EditorContextProvider } from "@tui/context/editor"
 import { useEvent } from "@tui/context/event"
 import { SDKProvider, useSDK } from "@tui/context/sdk"
@@ -64,17 +65,31 @@ import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
 import { createTuiApi } from "@/cli/cmd/tui/plugin/api"
 import type { RouteMap } from "@/cli/cmd/tui/plugin/api"
+import { createTuiAttention } from "@/cli/cmd/tui/attention"
 import { FormatError, FormatUnknownError } from "@/cli/error"
 import { CommandPaletteProvider, useCommandPalette } from "./context/command-palette"
 import { OpencodeKeymapProvider, registerOpencodeKeymap, useBindings, useOpencodeKeymap } from "./keymap"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { resolveOpenOperationPath } from "./routes/session/open-operation"
+import type { SessionID } from "@/session/schema"
 
 const appBindingCommands = [
   "command.palette.show",
   "session.list",
   "session.new",
+  "session.cycle_recent",
+  "session.cycle_recent_reverse",
+  "session.quick_switch.1",
+  "session.quick_switch.2",
+  "session.quick_switch.3",
+  "session.quick_switch.4",
+  "session.quick_switch.5",
+  "session.quick_switch.6",
+  "session.quick_switch.7",
+  "session.quick_switch.8",
+  "session.quick_switch.9",
   "model.list",
   "model.cycle_recent",
   "model.cycle_recent_reverse",
@@ -94,7 +109,6 @@ const appBindingCommands = [
   "theme.mode.lock",
   "help.show",
   "docs.open",
-  "app.exit",
   "app.debug",
   "app.console",
   "app.heap_snapshot",
@@ -167,10 +181,10 @@ export function tui(input: {
       unguard?.()
       resolve()
     }
-
     const onBeforeExit = async () => {
       offKeymap()
       await TuiPluginRuntime.dispose()
+      TuiAudio.dispose()
     }
 
     const renderer = await createCliRenderer(rendererConfig(input.config))
@@ -266,6 +280,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const themeState = useTheme()
   const { theme, mode, setMode, locked, lock, unlock } = themeState
   const sync = useSync()
+  const project = useProject()
   const exit = useExit()
   const promptRef = usePromptRef()
   const routes: RouteMap = new Map()
@@ -274,6 +289,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     routeRev()
     return routes.get(name)?.at(-1)?.render
   }
+  const attention = createTuiAttention({ renderer, config: tuiConfig, kv })
 
   const api = createTuiApi({
     tuiConfig,
@@ -289,11 +305,13 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     theme: themeState,
     toast,
     renderer,
+    attention,
   })
   const [ready, setReady] = createSignal(false)
   TuiPluginRuntime.init({
     api,
     config: tuiConfig,
+    dispose: () => attention.dispose(),
   })
     .catch((error) => {
       console.error("Failed to load TUI plugins", error)
@@ -311,7 +329,10 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     },
     { priority: 1 },
   )
-  onCleanup(offSelectionKeys)
+  onCleanup(() => {
+    offSelectionKeys()
+    attention.dispose()
+  })
 
   // Wire up console copy-to-clipboard via opentui's onCopySelection callback
   renderer.console.onCopySelection = async (text: string) => {
@@ -469,6 +490,37 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           dialog.clear()
         },
       },
+      ...(Flag.OPENCODE_EXPERIMENTAL_SESSION_SWITCHING
+        ? [
+            {
+              name: "session.cycle_recent",
+              title: "Cycle to previous recent session",
+              category: "Session",
+              hidden: true,
+              run: () => {
+                local.session.cycleRecent(1)
+              },
+            },
+            {
+              name: "session.cycle_recent_reverse",
+              title: "Cycle to next recent session",
+              category: "Session",
+              hidden: true,
+              run: () => {
+                local.session.cycleRecent(-1)
+              },
+            },
+            ...Array.from({ length: 9 }, (_, i) => ({
+              name: `session.quick_switch.${i + 1}`,
+              title: `Switch to session in quick slot ${i + 1}`,
+              category: "Session",
+              hidden: true,
+              run: () => {
+                local.session.quickSwitch(i + 1)
+              },
+            })),
+          ]
+        : []),
       {
         name: "model.list",
         title: "Switch model",
@@ -606,6 +658,31 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         category: "System",
       },
       {
+        name: "operation.openFiles",
+        title: "Open operation files",
+        slashName: "open-operation",
+        slashAliases: ["open-operations"],
+        run: async () => {
+          try {
+            const current = project.instance.path()
+            const target = await resolveOpenOperationPath({
+              worktree: current.worktree,
+              directory: current.directory || sdk.directory,
+              sessionID: route.data.type === "session" ? (route.data.sessionID as SessionID) : undefined,
+            })
+            await open(target)
+            toast.show({ message: `Opened operation files: ${target}`, variant: "success" })
+          } catch (error) {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to open operation files",
+              variant: "error",
+            })
+          }
+          dialog.clear()
+        },
+        category: "System",
+      },
+      {
         name: "opencode.status",
         title: "View status",
         slashName: "status",
@@ -665,11 +742,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         title: "Exit the app",
         slashName: "exit",
         slashAliases: ["quit", "q"],
-        enabled: () => {
-          const current = promptRef.current
-          if (!current?.focused) return true
-          return current.current.input === ""
-        },
         run: () => exit(),
         category: "System",
       },
@@ -799,7 +871,25 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
   useBindings(() => ({
     enabled: command.matcher,
-    bindings: tuiConfig.keybinds.gather("app", appBindingCommands),
+    bindings: tuiConfig.keybinds.gather(
+      "app",
+      Flag.OPENCODE_EXPERIMENTAL_SESSION_SWITCHING
+        ? appBindingCommands
+        : appBindingCommands.filter(
+            (c) => !c.startsWith("session.cycle_recent") && !c.startsWith("session.quick_switch"),
+          ),
+    ),
+  }))
+
+  useBindings(() => ({
+    enabled: () => {
+      const ok = command.matcher.get()
+      if (!ok) return false
+      const current = promptRef.current
+      if (!current?.focused) return true
+      return current.current.input === ""
+    },
+    bindings: tuiConfig.keybinds.gather("app_exit", ["app.exit"]),
   }))
 
   event.on(TuiEvent.CommandExecute.type, (evt) => {
@@ -885,7 +975,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     await DialogAlert.show(
       dialog,
       "Update Complete",
-      `Successfully updated to OpenCode v${result.data.version}. Please restart the application.`,
+      `Successfully updated to ULMCode v${result.data.version}. Please restart the application.`,
     )
 
     void exit()

@@ -10,8 +10,8 @@ import { GlobalBus } from "@/bus/global"
 import { Auth } from "@/auth"
 import { SyncEvent } from "@/sync"
 import { EventSequenceTable, EventTable } from "@/sync/event.sql"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import * as Log from "@opencode-ai/core/util/log"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Filesystem } from "@/util/filesystem"
 import { ProjectID } from "@/project/schema"
 import { Slug } from "@opencode-ai/core/util/slug"
@@ -28,8 +28,6 @@ import { errorData } from "@/util/error"
 import { waitEvent } from "./util"
 import { WorkspaceContext } from "./workspace-context"
 import { EffectBridge } from "@/effect/bridge"
-import { withStatics } from "@/util/schema"
-import { zod as effectZod, zodObject } from "@/util/effect-zod"
 import { Vcs } from "@/project/vcs"
 import { InstanceStore } from "@/project/instance-store"
 import { InstanceBootstrap } from "@/project/bootstrap"
@@ -37,9 +35,7 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 export const Info = Schema.Struct({
   ...WorkspaceInfoSchema.fields,
   timeUsed: Schema.Number,
-})
-  .annotate({ identifier: "Workspace" })
-  .pipe(withStatics((s) => ({ zod: effectZod(s) })))
+}).annotate({ identifier: "Workspace" })
 export type Info = WorkspaceInfo & { timeUsed: number }
 
 export const ConnectionStatus = Schema.Struct({
@@ -88,14 +84,14 @@ export const CreateInput = Schema.Struct({
   branch: Info.fields.branch,
   projectID: ProjectID,
   extra: Schema.optional(Info.fields.extra),
-}).pipe(withStatics((s) => ({ zod: effectZod(s), zodObject: zodObject(s) })))
+})
 export type CreateInput = Schema.Schema.Type<typeof CreateInput>
 
 export const SessionWarpInput = Schema.Struct({
   workspaceID: Schema.NullOr(WorkspaceID),
   sessionID: SessionID,
   copyChanges: Schema.optional(Schema.Boolean),
-}).pipe(withStatics((s) => ({ zod: effectZod(s), zodObject: zodObject(s) })))
+})
 export type SessionWarpInput = Schema.Schema.Type<typeof SessionWarpInput>
 
 export class SyncHttpError extends Schema.TaggedErrorClass<SyncHttpError>()("WorkspaceSyncHttpError", {
@@ -179,6 +175,7 @@ export const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
     const sync = yield* SyncEvent.Service
     const vcs = yield* Vcs.Service
+    const flags = yield* RuntimeFlags.Service
     const connections = new Map<WorkspaceID, ConnectionStatus>()
     const syncFibers = yield* FiberMap.make<WorkspaceID, void, SyncLoopError>()
 
@@ -486,7 +483,7 @@ export const layer = Layer.effect(
     })
 
     const startSync = Effect.fn("Workspace.startSync")(function* (space: Info) {
-      if (!Flag.OPENCODE_EXPERIMENTAL_WORKSPACES) return
+      if (!flags.experimentalWorkspaces) return
 
       const adapter = getAdapter(space.projectID, space.type)
       const target = yield* EffectBridge.fromPromise(() => adapter.target(space)).pipe(
@@ -645,7 +642,7 @@ export const layer = Layer.effect(
 
             // "claim" this session so any future events coming from
             // the old workspace are ignored
-            SyncEvent.claim(input.sessionID, input.workspaceID ?? previous.projectID)
+            yield* sync.claim(input.sessionID, input.workspaceID ?? previous.projectID)
           }
         }
 
@@ -680,14 +677,12 @@ export const layer = Layer.effect(
         }
 
         if (input.workspaceID === null) {
-          yield* Effect.sync(() =>
-            SyncEvent.run(Session.Event.Updated, {
-              sessionID: input.sessionID,
-              info: {
-                workspaceID: null,
-              },
-            }),
-          )
+          yield* sync.run(Session.Event.Updated, {
+            sessionID: input.sessionID,
+            info: {
+              workspaceID: null,
+            },
+          })
 
           log.info("session warp complete", {
             workspaceID: input.workspaceID,
@@ -1046,6 +1041,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Project.defaultLayer),
   Layer.provide(Vcs.defaultLayer),
   Layer.provide(FetchHttpClient.layer),
+  Layer.provide(RuntimeFlags.defaultLayer),
 )
 
 const TIMEOUT = 5000

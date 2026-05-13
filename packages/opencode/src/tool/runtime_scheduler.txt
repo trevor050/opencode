@@ -11,3 +11,5 @@ use `runtime_daemon` inside OpenCode so background jobs are refreshed every tick
 or use the `ulm:runtime-daemon` package script for terminal-driven artifact
 loops. Both wrappers add interval sleeps, a daemon lock, stale-lock recovery,
 signal shutdown, and a 20-hour default runtime window.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in operation IDs, job metadata, manifest paths, or scheduler options.

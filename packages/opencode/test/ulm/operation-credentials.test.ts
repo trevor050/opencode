@@ -46,6 +46,11 @@ function memoryStorage() {
   })
 }
 
+async function writeJson(file: string, value: unknown) {
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, JSON.stringify(value, null, 2) + "\n")
+}
+
 describe("ULM operation credentials", () => {
   test("stores operation credentials in app storage with a permissioned redacted index", async () => {
     await using dir = await tmpdir({ git: true })
@@ -133,5 +138,97 @@ describe("ULM operation credentials", () => {
     expect(inspected.credentials[0]?.secretPreview).toContain("operator note: router closet upstairs")
     expect(inspected.credentials[0]?.notes).toBe("Use only for home network validation.")
     expect(inspected.credentials[0]?.rules).toBe("No credential spraying.")
+  })
+
+  test("surfaces expected credential services from the operation plan", async () => {
+    await using dir = await tmpdir({ git: true })
+    const storage = memoryStorage()
+    const operationID = "School Laptop"
+    const root = path.join(dir.path, ".ulmcode", "operations", "school-laptop")
+    await writeJson(path.join(root, "plans", "operation-plan.json"), {
+      operationID: "school-laptop",
+      templateName: "school-laptop-48h",
+      timeBudget: { targetHours: 48 },
+    })
+
+    const empty = await readOperationCredentials(dir.path, { operationID })
+    expect(empty.expectedServices).toEqual(["genesis", "google"])
+
+    await writeOperationCredential(storage, dir.path, {
+      operationID,
+      label: "Genesis SIS test account",
+      username: "genesis-user",
+      password: "********",
+    })
+    const submission = await submitOperationCredentialReview(dir.path, { operationID })
+    const review = await readOperationCredentialReview(dir.path, { operationID })
+
+    expect(submission.expectedServices).toEqual(["genesis", "google"])
+    expect(review.expectedServices).toEqual(["genesis", "google"])
+  })
+
+  test("refreshes expected credential services when the plan changes after review submission", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "School Laptop"
+    const root = path.join(dir.path, ".ulmcode", "operations", "school-laptop")
+    await writeJson(path.join(root, "plans", "operation-plan.json"), {
+      operationID: "school-laptop",
+      templateName: "school-laptop-48h",
+      credentialTargets: ["genesis", "google"],
+      timeBudget: { targetHours: 48 },
+    })
+
+    await submitOperationCredentialReview(dir.path, { operationID })
+    await writeJson(path.join(root, "plans", "operation-plan.json"), {
+      operationID: "school-laptop",
+      templateName: "school-laptop-48h",
+      credentialTargets: ["genesis", "google", "classlink"],
+      timeBudget: { targetHours: 48 },
+    })
+
+    const review = await readOperationCredentialReview(dir.path, { operationID })
+
+    expect(review.expectedServices).toEqual(["genesis", "google", "classlink"])
+  })
+
+  test("fills the canonical review path for older review submissions without a file field", async () => {
+    await using dir = await tmpdir({ git: true })
+    const operationID = "School Laptop"
+    const root = path.join(dir.path, ".ulmcode", "operations", "school-laptop")
+    await writeJson(path.join(root, "credentials", "review-submission.json"), {
+      operationID: "school-laptop",
+      submittedAt: "2026-05-10T12:00:00Z",
+      expectedServices: ["genesis"],
+      credentials: [{ credentialID: "genesis-test", label: "Genesis test account", password: "********" }],
+    })
+
+    const review = await readOperationCredentialReview(dir.path, { operationID })
+
+    expect(review.file).toBe(path.join(root, "credentials", "review-submission.json"))
+    expect(review.submittedAt).toBe("2026-05-10T12:00:00Z")
+  })
+
+  test("preserves parallel credential creates in one operation index", async () => {
+    await using dir = await tmpdir({ git: true })
+    const storage = memoryStorage()
+
+    await Promise.all(
+      ["Genesis SIS", "Google Workspace", "Campus Wi-Fi"].map((label) =>
+        writeOperationCredential(storage, dir.path, {
+          operationID: "Parallel School Rehearsal",
+          label,
+          username: `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-reviewer`,
+          tags: ["synthetic"],
+        }),
+      ),
+    )
+
+    const review = await submitOperationCredentialReview(dir.path, { operationID: "Parallel School Rehearsal" })
+
+    expect(review.credentials.map((credential) => credential.credentialID).sort()).toEqual([
+      "campus-wi-fi",
+      "genesis-sis",
+      "google-workspace",
+    ])
   })
 })

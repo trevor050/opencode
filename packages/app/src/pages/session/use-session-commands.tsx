@@ -13,6 +13,7 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
+import { useUlm } from "@/context/ulm"
 import { showToast } from "@opencode-ai/ui/toast"
 import { findLast } from "@opencode-ai/core/util/array"
 import { createSessionTabs } from "@/pages/session/helpers"
@@ -20,6 +21,7 @@ import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { isUlmDirectory } from "@/utils/ulm-workspace"
+import { operationFilesOpenPathForSession } from "@/utils/ulm-operation-ui"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -49,6 +51,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sync = useSync()
   const terminal = useTerminal()
   const layout = useLayout()
+  const ulm = useUlm()
   const navigate = useNavigate()
   const { params, tabs, view } = useSessionLayout()
   const ulmWorkspace = () => isUlmDirectory(sdk.directory)
@@ -77,8 +80,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     import.meta.env.VITE_OPENCODE_CHANNEL !== "beta" ||
     settings.general.showFileTree()
 
-  const idle = { type: "idle" as const }
-  const status = () => sync.data.session_status[params.id ?? ""] ?? idle
   const messages = () => {
     const id = params.id
     if (!id) return []
@@ -228,6 +229,19 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     })
   }
 
+  const openOperationFiles = () => {
+    const target = operationFilesOpenPathForSession(ulm.store.operations, params.id, sdk.directory)
+    if (!target || !platform.openPath) {
+      showToast({
+        title: "Operation files unavailable",
+        description: "No operation file store is available for this workspace.",
+        variant: "error",
+      })
+      return
+    }
+    void platform.openPath(target)
+  }
+
   const closeTab = () => {
     const tab = closableTab()
     if (!tab) return
@@ -292,7 +306,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const sessionID = params.id
     if (!sessionID) return
 
-    if (status().type !== "idle") {
+    if (sync.data.session_working(params.id ?? "")) {
       await sdk.client.session.abort({ sessionID }).catch(() => {})
     }
 
@@ -433,6 +447,18 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       slash: "open",
       onSelect: openFile,
     }),
+    ...(ulmWorkspace()
+      ? [
+          fileCommand({
+            id: "operation.openFiles",
+            title: "Open operation files",
+            description: "Open the current operation artifact folder",
+            slash: "open-operation",
+            disabled: !platform.openPath,
+            onSelect: openOperationFiles,
+          }),
+        ]
+      : []),
     fileCommand({
       id: "tab.close",
       title: language.t("command.tab.close"),

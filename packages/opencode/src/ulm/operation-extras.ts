@@ -1,8 +1,9 @@
 import fs from "fs/promises"
 import path from "path"
-import { operationPath, slug } from "./artifact"
+import { operationPath, redactOperationCredentialValues, slug } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 import { createOperationGoal } from "./operation-goal"
-import { writeOperationGraph, type OperationScanProfile, type OperationTrustLevel } from "./operation-graph"
+import { REPORT_ONLY_OPERATION_LANES, writeOperationGraph, type OperationScanProfile, type OperationTrustLevel } from "./operation-graph"
 import { writeOperationDiscoveryCharter, writeOperationPlan, writeReportOutline, type Stage } from "./artifact"
 
 export type OperationTemplateID =
@@ -10,6 +11,7 @@ export type OperationTemplateID =
   | "external-k12-district"
   | "authenticated-webapp"
   | "internal-network"
+  | "school-laptop-48h"
   | "cloud-posture"
   | "code-audit"
   | "report-only"
@@ -109,17 +111,49 @@ function mdList(items: string[] | undefined, fallback = "- none recorded") {
   return items?.length ? items.map((item) => `- ${item}`) : [fallback]
 }
 
+function isBoundaryLanguage(value: string) {
+  return /\b(?:do not|don't|did not|does not|must not|should not|avoid|without|stop condition|non-destructive|never|no|no destructive|no live|no credentials|no secrets|no student records|no production|no persistence|not performed|not execute|not accessed|not used|was not|were not|synthetic|lab-only|lab evidence|supplied evidence|boundary|validation limit|evidence gap)\b/i.test(
+    value,
+  )
+}
+
+function containsDestructiveAttackChainClaim(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsDestructiveAttackChainClaim(item))
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n/)
+      .some((line) => {
+        if (isBoundaryLanguage(line)) return false
+        return (
+          /(?:ran the exploit against production|triggered account takeover|changed grades|modified grades|destructive exploit|drop table|delete records|wipe|ransomware)/i.test(
+            line,
+          ) ||
+          /(?:dumped|dump|downloaded|download|exfiltrated|exfiltrate|exported|export|copied|copy)[\s\S]{0,140}(?:student records|guardian data|sis database|gradebook|payroll|iep|504 records|bulk roster)[\s\S]{0,140}(?:to prove impact|for proof|as proof|into the report|deliverables\/final)?/i.test(
+            line,
+          ) ||
+          /(?:created|added|installed|uploaded|dropped|left)[\s\S]{0,120}(?:backdoor|persistence|web shell|reverse shell|new admin user|ssh key|cron persistence|startup item)/i.test(
+            line,
+          )
+        )
+      })
+  }
+  if (!value || typeof value !== "object") return false
+  return Object.values(value as Record<string, unknown>).some((entry) => containsDestructiveAttackChainClaim(entry))
+}
+
 export async function updateOperationMemory(worktree: string, input: OperationMemoryInput): Promise<OperationMemoryResult> {
   const operationID = slug(input.operationID, "operation")
   const file = path.join(operationPath(worktree, operationID), "memory.md")
-  const current = (await readText(file)) ?? `# Operation Memory: ${operationID}
+  const rawCurrent = (await readText(file)) ?? `# Operation Memory: ${operationID}
 
 This file is for agents working this operation. Keep it short. Record only details that matter after compaction, resume, or subagent handoff.
 
 `
+  const current = await redactOperationCredentialValues(operationID, rawCurrent)
   if (input.action === "read") return { operationID, file, content: current, updated: false }
-  const note = input.note?.trim()
+  const note = (await redactOperationCredentialValues(operationID, input.note ?? "")).trim()
   if (!note) throw new Error("note is required when action is append or replace")
+  if (containsRawCredentialSecret(note)) throw new Error("operation memory notes must not contain raw credential secrets")
   const now = new Date().toISOString()
   const content =
     input.action === "replace"
@@ -139,6 +173,7 @@ export async function readOperationMemory(worktree: string, operationID: string,
 }
 
 export async function writeAssetGraph(worktree: string, input: AssetGraphInput) {
+  if (containsRawCredentialSecret(input)) throw new Error("asset graph records must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const record = {
@@ -173,6 +208,10 @@ export async function writeAssetGraph(worktree: string, input: AssetGraphInput) 
 }
 
 export async function writeAttackChain(worktree: string, input: AttackChainInput) {
+  if (containsRawCredentialSecret(input)) throw new Error("attack chain records must not contain raw credential secrets")
+  if (containsDestructiveAttackChainClaim(input)) {
+    throw new Error("attack chain records must not contain destructive exploit execution claims")
+  }
   const operationID = slug(input.operationID, "operation")
   const chainID = slug(input.chainID ?? input.title, "attack-chain")
   const root = operationPath(worktree, operationID)
@@ -208,6 +247,7 @@ export async function writeAttackChain(worktree: string, input: AttackChainInput
 }
 
 export async function writeBrowserEvidence(worktree: string, input: BrowserEvidenceInput) {
+  if (containsRawCredentialSecret(input)) throw new Error("browser evidence records must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const evidenceID = slug(input.evidenceID ?? input.title, "browser-evidence")
   const root = operationPath(worktree, operationID)
@@ -245,6 +285,7 @@ export async function writeBrowserEvidence(worktree: string, input: BrowserEvide
 }
 
 export async function writeOperationAlert(worktree: string, input: OperationAlertInput) {
+  if (containsRawCredentialSecret(input)) throw new Error("operation alerts must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const alertID = slug(input.alertID ?? `${input.kind}-${input.title}`, "alert")
   const root = operationPath(worktree, operationID)
@@ -287,6 +328,7 @@ function normalizeLines(input: string) {
 }
 
 export async function normalizeToolOutput(worktree: string, input: OutputNormalizeInput) {
+  if (containsRawCredentialSecret(input)) throw new Error("normalized tool output must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const lines = normalizeLines(input.content)
@@ -347,6 +389,7 @@ const templateStages: Record<OperationTemplateID, Stage[]> = {
   "external-k12-district": ["intake", "recon", "mapping", "validation", "reporting", "handoff"],
   "authenticated-webapp": ["intake", "mapping", "validation", "reporting", "handoff"],
   "internal-network": ["intake", "recon", "mapping", "validation", "reporting", "handoff"],
+  "school-laptop-48h": ["intake", "recon", "mapping", "validation", "reporting", "handoff"],
   "cloud-posture": ["intake", "recon", "mapping", "validation", "reporting", "handoff"],
   "code-audit": ["intake", "mapping", "validation", "reporting", "handoff"],
   "report-only": ["reporting", "handoff"],
@@ -357,9 +400,10 @@ function templateTimeBudget(input: { targetDurationHours?: number; stages: Stage
   const targetHours = input.targetDurationHours
   if (!targetHours) return undefined
   const base = Math.max(0.25, Number((targetHours / input.stages.length).toFixed(2)))
+  const finalizationWindowHours = Math.max(1, Math.min(4, Math.round(targetHours * 0.15)))
   return {
     targetHours,
-    finalizationWindowHours: Math.max(1, Math.min(4, Math.round(targetHours * 0.15))),
+    finalizationWindowHours,
     durationFit: {
       confidence: targetHours >= 2 ? "duration_sized" as const : "medium" as const,
       evidence: [
@@ -377,6 +421,60 @@ function templateTimeBudget(input: { targetDurationHours?: number; stages: Stage
       hours: index === input.stages.length - 1 ? Math.max(0.25, Number((targetHours - base * (input.stages.length - 1)).toFixed(2))) : base,
       work: `${stage} work for the template operation.`,
     })),
+    executionBlocks: templateExecutionBlocks({ targetDurationHours: targetHours, stages: input.stages, finalizationWindowHours }),
+  }
+}
+
+function templateExecutionBlocks(input: { targetDurationHours: number; stages: Stage[]; finalizationWindowHours: number }) {
+  if (input.targetDurationHours < 2) return undefined
+  const executionMinutes = Math.max(15, Math.round((input.targetDurationHours - input.finalizationWindowHours) * 60))
+  const blockMinutes = input.targetDurationHours >= 8 ? 60 : 30
+  const blockCount = Math.max(1, Math.ceil(executionMinutes / blockMinutes))
+  const workStages = input.stages.filter((stage) => stage !== "reporting" && stage !== "handoff")
+  const stages = workStages.length ? workStages : input.stages
+  return Array.from({ length: blockCount }, (_, index) => {
+    const stage = stages[index % stages.length] ?? "recon"
+    const remainingMinutes = executionMinutes - index * blockMinutes
+    const durationMinutes = Math.max(15, Math.min(blockMinutes, remainingMinutes))
+    const id = `template-block-${index + 1}`
+    return {
+      id,
+      stage,
+      laneID: templateExecutionLaneID(stage),
+      title: `Template execution block ${index + 1}`,
+      startMinute: index * blockMinutes,
+      durationMinutes,
+      objective: `Complete focused ${stage} work for the duration-sized template run.`,
+      actions: [
+        "Run the next bounded command profile or model lane for this block.",
+        "Record evidence, blockers, and fallback decisions before moving to the next block.",
+      ],
+      successCriteria: [
+        "A durable block note exists under work-blocks/.",
+        "Evidence references or explicit blockers are recorded for this block.",
+      ],
+      fallbackWork: [
+        "If the primary profile is blocked, switch to lower-risk inventory, normalization, validation, or backlog grooming.",
+      ],
+      subagents: stage === "validation" ? ["validator"] : ["recon", "attack-map"],
+      expectedArtifacts: [`work-blocks/${id}.md`],
+    }
+  })
+}
+
+function templateExecutionLaneID(stage: Stage) {
+  switch (stage) {
+    case "intake":
+    case "recon":
+      return "recon"
+    case "mapping":
+      return "web_inventory"
+    case "validation":
+      return "finding_validation"
+    case "reporting":
+      return "report_writing"
+    case "handoff":
+      return "operator_summary"
   }
 }
 
@@ -395,7 +493,9 @@ function templateDiscoveryCharter(input: { template: OperationTemplateID; object
     ],
     operatorQuestions: [
       "Confirm scope exclusions and safety limits.",
-      "Confirm whether credentials are available through the secure vault.",
+      input.template === "report-only"
+        ? "Confirm credentialed testing is not required for this report-only closeout."
+        : "Confirm whether credentials are available through the secure vault.",
     ],
     candidateDeepWorkLanes: input.stages.map((stage) => `${stage} lane`),
     decisionCriteriaForFullPlan: [
@@ -414,19 +514,25 @@ export async function createOperationFromTemplate(
     targetDurationHours?: number
     trustLevel?: OperationTrustLevel
     scanProfile?: OperationScanProfile
+    credentialTargets?: string[]
+    scopeRules?: string[]
     budgetUSD?: number
+    forceReschedule?: boolean
   },
 ) {
+  const targetDurationHours = input.targetDurationHours ?? (input.template === "school-laptop-48h" ? 48 : undefined)
+  const trustLevel = input.trustLevel ?? (input.template === "school-laptop-48h" ? "unattended" : undefined)
+  const scanProfile = input.scanProfile ?? (input.template === "school-laptop-48h" ? "aggressive" : undefined)
   const goal = await createOperationGoal(worktree, {
     operationID: input.operationID,
     objective: input.objective,
-    targetDurationHours: input.targetDurationHours,
+    targetDurationHours,
   })
   const stages = templateStages[input.template]
   const discoveryCharter = templateDiscoveryCharter({
     template: input.template,
     objective: input.objective,
-    targetDurationHours: input.targetDurationHours,
+    targetDurationHours,
     stages,
   })
   const planningApproval = discoveryCharter
@@ -441,8 +547,8 @@ export async function createOperationFromTemplate(
     await writeOperationDiscoveryCharter(worktree, {
       operationID: goal.operationID,
       templateName: input.template,
-      trustLevel: input.trustLevel,
-      scanProfile: input.scanProfile,
+      trustLevel,
+      scanProfile,
       browserEvidence: input.template.includes("web") || input.template === "external-k12-district",
       operationMemory: true,
       planningApproval,
@@ -465,15 +571,57 @@ export async function createOperationFromTemplate(
     subagents: stage === "reporting" ? ["report-writer", "report-reviewer"] : stage === "validation" ? ["validator"] : ["recon", "attack-map"],
     noSubagents: ["Do not spawn broad workers without a bounded objective."],
   }))
+  const credentialTargets = [
+    ...(input.template === "school-laptop-48h" ? ["genesis", "google"] : []),
+    ...(input.credentialTargets ?? []),
+  ]
+    .map((target) => target.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((target, index, targets) => targets.indexOf(target) === index)
+  const scopeRules = [
+    ...(input.template === "school-laptop-48h"
+        ? [
+          "Only test assets and services explicitly authorized for this school laptop operation.",
+          "Stay non-destructive unless the operator records separate written approval.",
+          "Person and account research must stay limited to role, authorization, identity, and workflow risk; exclude private-life dossier material.",
+        ]
+      : []),
+    ...(input.scopeRules ?? []),
+  ]
+    .map((rule) => rule.trim())
+    .filter(Boolean)
+    .filter((rule, index, rules) => rules.indexOf(rule) === index)
+  const coverageRequiredLanes =
+    input.template === "report-only"
+      ? [...REPORT_ONLY_OPERATION_LANES]
+      : [
+          "recon",
+          "web_inventory",
+          "evidence_normalization",
+          "finding_validation",
+          "report_writing",
+          "report_review",
+          "operator_summary",
+        ]
+  const reportTargetPages =
+    input.template === "report-only"
+      ? targetDurationHours !== undefined && targetDurationHours <= 2
+        ? 12
+        : 35
+      : input.template === "school-laptop-48h"
+        ? 75
+        : 50
   const plan = await writeOperationPlan(worktree, {
     operationID: goal.operationID,
     templateName: input.template,
-    trustLevel: input.trustLevel,
-    scanProfile: input.scanProfile,
+    trustLevel,
+    scanProfile,
+    credentialTargets: credentialTargets.length ? credentialTargets : undefined,
+    scopeRules: scopeRules.length ? scopeRules : undefined,
     planningApproval,
     discoveryCharter,
-    timeBudget: templateTimeBudget({ targetDurationHours: input.targetDurationHours, stages }),
-    coverageContract: input.targetDurationHours
+    timeBudget: templateTimeBudget({ targetDurationHours, stages }),
+    coverageContract: targetDurationHours !== undefined
       ? {
           status: "unmet",
           goals: [
@@ -481,15 +629,7 @@ export async function createOperationFromTemplate(
             "Produce durable evidence for every claimed finding and every explicit non-finding decision.",
           ],
           minimumEvidence: ["operation graph lane proof", "raw command evidence", "normalized evidence index", "final report package"],
-          requiredLanes: [
-            "recon",
-            "web_inventory",
-            "evidence_normalization",
-            "finding_validation",
-            "report_writing",
-            "report_review",
-            "operator_summary",
-          ],
+          requiredLanes: coverageRequiredLanes,
           allowedSkippedLanes: [],
           fallbackRules: ["Retry timed-out command profiles with lower concurrency before marking a lane blocked."],
           retryRules: ["Retry transient provider/tool failures before using a fallback model or command profile."],
@@ -502,6 +642,9 @@ export async function createOperationFromTemplate(
     phases,
     assumptions: [`Template: ${input.template}`],
     reportingCloseout: [
+      ...(input.template === "school-laptop-48h"
+        ? ["Run laptop_preflight before starting runtime_daemon or supervisor handoff."]
+        : []),
       "Produce a polished HTML/PDF final report from durable artifacts.",
       "Run report_lint with finalHandoff=true before delivery.",
       "Run report_render to produce the final HTML/PDF package.",
@@ -512,14 +655,15 @@ export async function createOperationFromTemplate(
   const graph = await writeOperationGraph(worktree, {
     operationID: goal.operationID,
     template: input.template,
-    includeSupervisor: (input.targetDurationHours ?? 0) >= 1,
+    includeSupervisor: (targetDurationHours ?? 0) >= 1,
     budgetUSD: input.budgetUSD,
-    trustLevel: input.trustLevel,
-    scanProfile: input.scanProfile,
+    trustLevel,
+    scanProfile,
+    forceReschedule: input.forceReschedule,
   })
   const outline = await writeReportOutline(worktree, {
     operationID: goal.operationID,
-    targetPages: input.template === "report-only" ? 35 : 50,
+    targetPages: reportTargetPages,
     designProfile: "premium",
     includeCoverageSection: true,
     includeHandoffChecklist: true,
@@ -528,7 +672,10 @@ export async function createOperationFromTemplate(
     operationID: goal.operationID,
     action: "append",
     section: "Template",
-    note: `Started from ${input.template}; trust=${input.trustLevel ?? "moderate"}; scan=${input.scanProfile ?? "balanced"}.`,
+    note:
+      input.template === "school-laptop-48h"
+        ? `Started from ${input.template}; trust=${trustLevel ?? "moderate"}; scan=${scanProfile ?? "balanced"}. Surface/private Wi-Fi first-real-test defaults: 48h target, laptop_preflight before daemon launch, supervisor required, 75-page final report target.`
+        : `Started from ${input.template}; trust=${trustLevel ?? "moderate"}; scan=${scanProfile ?? "balanced"}.`,
   })
   return { operationID: goal.operationID, goal, plan, graph, outline, memory: memory.file }
 }

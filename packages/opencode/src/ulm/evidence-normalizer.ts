@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import type { Dirent } from "fs"
 import path from "path"
 import { operationPath, slug, writeEvidence, type EvidenceRef } from "./artifact"
+import { containsRawCredentialSecret } from "./credential-safety"
 
 export type EvidenceParser =
   | "auto"
@@ -93,7 +94,11 @@ async function readJson<T>(file: string): Promise<T | undefined> {
 }
 
 function resolveOperationFile(root: string, file: string) {
-  const resolved = path.isAbsolute(file) ? path.resolve(file) : path.resolve(root, file)
+  const normalized = file.replaceAll("\\", "/")
+  const operationID = path.basename(root)
+  const operationPrefix = `.ulmcode/operations/${operationID}/`
+  const shortFile = normalized.startsWith(operationPrefix) ? normalized.slice(operationPrefix.length) : file
+  const resolved = path.isAbsolute(shortFile) ? path.resolve(shortFile) : path.resolve(root, shortFile)
   const relative = path.relative(root, resolved)
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`artifact is outside operation root: ${file}`)
   return resolved
@@ -436,6 +441,7 @@ function mergeLeads(leads: EvidenceLead[]) {
 }
 
 export async function normalizeEvidence(worktree: string, input: EvidenceNormalizeInput): Promise<EvidenceNormalizationResult> {
+  if (containsRawCredentialSecret(input)) throw new Error("evidence normalization outputs must not contain raw credential secrets")
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
   const requested = input.parser ?? "auto"
@@ -496,6 +502,7 @@ export async function normalizeEvidence(worktree: string, input: EvidenceNormali
     indexPath,
     leadsPath,
   }
+  if (containsRawCredentialSecret(result)) throw new Error("evidence normalization outputs must not contain raw credential secrets")
   await fs.mkdir(root, { recursive: true })
   await fs.writeFile(indexPath, JSON.stringify({ operationID, generatedAt, artifacts: result.artifacts, evidence }, null, 2) + "\n")
   await fs.writeFile(leadsPath, JSON.stringify({ operationID, generatedAt, leads: deduped }, null, 2) + "\n")

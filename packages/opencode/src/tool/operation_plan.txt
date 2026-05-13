@@ -12,13 +12,17 @@ For pentest operations, plan depth must match the time budget:
 
 The Discovery Charter is intentionally not the final execution plan. It is the plan for learning enough to write the real plan. It should say how to split the pre-plan time across research, passive/basic recon, tool inventory, scope questions, target classification, credential/safety questions, and candidate deep-work lanes. Its job is to give the operator something reviewable before the system commits to a 3h, 12h, or 36h operation order.
 
-Pentest kickoff should be staged before this durable plan exists: round 1 time budget and autonomy, tiny local/passive context collection, round 2 scope/safety/credential/report questions, credential-vault review if needed, bounded discovery/research, then round 3 discovery-informed follow-up questions. Record these as `questionsAsked` and `questionsDeferred` instead of flattening them into one generic questionnaire.
+After the Discovery Charter is approved, the next pass is research. Treat that pass as the first real job, not a five-minute limbo step: answer the charter's research questions, run only safe scoped recon, supervise active probes, read external/source material when useful, record evidence, append plan-shaping notes to operation memory, and checkpoint what the final plan now knows. Only then ask round 3 follow-up questions and write the full duration-aware plan.
 
-When the operator says credentials are available, immediately use `operation_credentials` with `action: "open_vault"` so the operator can enter secrets in the secure local vault and click the final submit button. Then use `operation_credentials review_status/list/get/materialize_env` for credential records. Do not put raw usernames, passwords, tokens, or auth cookies in operation memory, evidence, findings, reports, command text, task metadata, or the operation plan. The durable plan may reference credential IDs and authorized use, but not the secret values.
+Pentest kickoff should be staged before this durable plan exists: round 1 time budget and autonomy, tiny local/passive context collection, round 2 scope/safety/credential/report questions, credential-vault review if needed, Discovery Charter approval, duration-scaled charter research, then round 3 discovery-informed follow-up questions. Record these as `questionsAsked` and `questionsDeferred` instead of flattening them into one generic questionnaire.
+
+When the operator says credentials are available, immediately use `operation_credentials` with `action: "open_vault"` so the operator can enter secrets in the secure local vault and click the final submit button. Then use `operation_credentials review_status/list/get/materialize_env` for credential records. Do not put raw usernames, passwords, tokens, or auth cookies in operation memory, evidence, findings, reports, command text, task metadata, runtime summaries, Discovery Charters, approval notes, or the operation plan. The durable plan may reference credential IDs and authorized use, but not the secret values.
 
 Discovery Charter and full-plan visibility are part of the operator contract. The approval question must summarize the charter or plan purpose, time budget, candidate lanes, approval status, markdown path, and the rendered plan preview from this tool output when available. Do not point operators at fake slash commands or hidden artifact paths as the primary review UX. After the operator approves the Discovery Charter, make sure the durable charter approval is `approved` before calling `operation_resume`, `operation_supervise`, or broad discovery.
 
-Do not write the actual full plan until the Discovery Charter has produced enough confidence that there is safe, useful, scoped work to fill the requested budget. The final plan must include `timeBudget.durationFit.confidence = duration_sized`, concrete evidence for that confidence, and an overflow backlog of safe work.
+Do not write the actual full plan until the Discovery Charter has produced enough confidence that there is safe, useful, scoped work to fill the requested budget. The final plan must include `timeBudget.durationFit.confidence = duration_sized`, concrete evidence for that confidence, an overflow backlog of safe work, and `timeBudget.executionBlocks`.
+
+`timeBudget.executionBlocks` is the anti-copout contract. For 2-8 hour runs, break the non-finalization window into 20-30 minute executable blocks. For 8+ hour runs, use 30-60 minute blocks. Each block needs a `laneID`, `stage`, `title`, `startMinute`, `durationMinutes`, concrete `objective`, concrete `actions`, measurable `successCriteria`, and safe `fallbackWork`. `operation_schedule` turns these into `planned_work_*` lanes with harness-owned wall-clock minimums, so do not promise fake fast completion; finish each block with durable evidence, limitations, and a block note. Reporting/finalization time belongs in the protected finalization window; do not satisfy a 7h plan with three broad phases and then sprint to the final report.
 
 For long or overnight operations, run a Plannotator-style critique lane after the Discovery Charter and before approving the full durable operation plan when that lane is available. The critique must look for:
 
@@ -38,14 +42,19 @@ Pentest plans should include these fields in the plan text even if the JSON sche
 - `discoveryCharter`: the approved investment strategy for research, recon, operator questions, candidate deep-work lanes, and decision criteria before the real plan exists
 - `planningApproval`: explicit approval status for the Discovery Charter before broad execution
 - `timeBudget`: stage-by-stage allocation, duration-fit evidence, overflow backlog, and a finalization/reporting window
+- `timeBudget.executionBlocks`: concrete bounded work blocks that cover the non-finalization time budget before reporting closeout is allowed
 - `coverageContract`: coverage goals, minimum evidence thresholds, required lanes, allowed skips, retry/fallback rules, subagent opportunities, and report gates
 - `supervisorHandoff`: when the supervisor reviews progress and what it is allowed to block
 - `foregroundCommandPolicy`: confirmation that expected >2 minute commands go to supervised/background execution
 - `reportCloseout`: report writer, report reviewer, report lint, report render, runtime summary, and operation audit sequence
 - `districtAndPeopleRecon`: district profile, specific people/role profile lanes, identity graph construction, and how private/irrelevant information is excluded
 
+`coverageContract.requiredLanes` must contain exact `operation_schedule` lane IDs, not human labels or gate names. Examples: `recon`, `web_inventory`, `person_recon`, `identity_graph`, `identity_auth_review`, `evidence_normalization`, `finding_validation`, `report_evidence_index`, `report_writing`, `report_technical_review`, `report_executive_review`, `report_review`, `operator_summary`, `supervisor`. Put prose such as "report lint/render/runtime audit" in `reportGates`, not `requiredLanes`.
+
 The plan must design enough safe work for the requested budget: primary lanes, fallback lanes, retry lanes for timed-out scans, reporting lanes, and safe operator questions. It may finish early only when the coverage contract, report gates, runtime summary, and supervisor release all agree that no useful safe work remains.
 
 Do not silently skip ambiguous work. A skipped or blocked lane needs a durable reason, coverage impact, and either alternate safe work or an operator question.
 
 Do not use chat todos as the plan of record. The durable plan must be written here, then scheduled through `operation_schedule` before broad execution.
+
+After execution starts, do not rewrite the plan or hand-edit `.ulmcode/operations/<operation>/plans/operation-plan.*`. Continue through `operation_status`, `operation_run`, `operation_resume`, `operation_recover`, report tools, runtime summary, and final audit instead.

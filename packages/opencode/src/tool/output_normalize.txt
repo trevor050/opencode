@@ -1,3 +1,5 @@
 Convert noisy tool output into compact operation artifacts.
 
 Use this after commands like nmap, nuclei, httpx, ffuf, gobuster, nikto, sqlmap, and subfinder when raw output is too bulky. The output is a triage aid, not validation proof.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values.

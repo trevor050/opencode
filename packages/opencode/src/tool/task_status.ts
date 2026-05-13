@@ -7,7 +7,7 @@ import { SessionStatus } from "@/session/status"
 import { PositiveInt } from "@/util/schema"
 import { BackgroundJob } from "@/background/job"
 import { taskRestartArgs } from "./task_restart_args"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Exit, Option, Schema } from "effect"
 
 const DEFAULT_TIMEOUT = 60_000
 const ULM_OPERATION_WAIT_TIMEOUT = 30_000
@@ -23,7 +23,7 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-type State = "running" | "completed" | "error" | "stale"
+type State = "running" | "completed" | "error" | "stale" | "unknown"
 type InspectResult = { state: State; text: string }
 type Metadata = { task_id: SessionID; state: State; timed_out: boolean }
 
@@ -74,6 +74,46 @@ function timeoutText(input: { timeout: number; job?: BackgroundJob.Info }) {
   ].join("\n")
 }
 
+function similarTaskIDs(input: { requested: string; jobs: BackgroundJob.Info[] }) {
+  const requested = input.requested
+  return input.jobs
+    .map((job) => {
+      let prefix = 0
+      while (prefix < requested.length && prefix < job.id.length && requested[prefix] === job.id[prefix]) prefix++
+      const lengthDelta = Math.abs(requested.length - job.id.length)
+      return { job, score: prefix - lengthDelta * 3 }
+    })
+    .toSorted((a, b) => b.score - a.score || b.job.startedAt - a.job.startedAt)
+    .slice(0, 5)
+    .map((item) => item.job)
+}
+
+export function unknownTaskText(input: { taskID: string; jobs: BackgroundJob.Info[] }) {
+  const candidates = similarTaskIDs({ requested: input.taskID, jobs: input.jobs })
+  return [
+    `Unknown task_id: ${input.taskID}`,
+    candidates.length
+      ? [
+          "Known background task_ids:",
+          ...candidates.map((job) => {
+            const operationID = typeof job.metadata?.operationID === "string" ? job.metadata.operationID : undefined
+            const laneID = typeof job.metadata?.laneID === "string" ? job.metadata.laneID : undefined
+            return [
+              `- ${job.id}`,
+              `status=${job.status}`,
+              operationID ? `operationID=${operationID}` : undefined,
+              laneID ? `laneID=${laneID}` : undefined,
+              job.title ? `title=${job.title}` : undefined,
+            ]
+              .filter((part): part is string => !!part)
+              .join(" ")
+          }),
+          "Retry task_status with the exact task_id from this list, or use task_list/operation_status if none match.",
+        ].join("\n")
+      : "No background task IDs are currently known. Use task_list or operation_status to rediscover active work.",
+  ].join("\n")
+}
+
 export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.Service | SessionStatus.Service | BackgroundJob.Service>(
   "task_status",
   Effect.gen(function* () {
@@ -84,7 +124,9 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
     const inspect: (taskID: SessionID) => Effect.Effect<InspectResult> = Effect.fn("TaskStatusTool.inspect")(function* (
       taskID,
     ) {
-      const current = yield* status.get(taskID)
+      const current = yield* status
+        .get(taskID)
+        .pipe(Effect.catch(() => Effect.succeed({ type: "idle" as const })))
       if (current.type === "busy" || current.type === "retry") {
         return {
           state: "running" as const,
@@ -92,13 +134,17 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
         }
       }
 
-      const latestAssistant = yield* sessions.findMessage(taskID, (item) => item.info.role === "assistant")
+      const latestAssistant = yield* sessions
+        .findMessage(taskID, (item) => item.info.role === "assistant")
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())))
       if (Option.isNone(latestAssistant)) return { state: "running" as const, text: "Task has not produced output yet." }
       if (latestAssistant.value.info.role !== "assistant") {
         return { state: "running" as const, text: "Task has not produced output yet." }
       }
 
-      const latestUser = yield* sessions.findMessage(taskID, (item) => item.info.role === "user")
+      const latestUser = yield* sessions
+        .findMessage(taskID, (item) => item.info.role === "user")
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())))
       if (
         Option.isSome(latestUser) &&
         latestUser.value.info.role === "user" &&
@@ -131,9 +177,24 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
     })
 
     const run = Effect.fn("TaskStatusTool.execute")(function* (params: Schema.Schema.Type<typeof Parameters>) {
-      yield* sessions.get(params.task_id)
-
       const job = yield* jobs.get(params.task_id)
+      const session = yield* sessions.get(params.task_id).pipe(Effect.exit)
+      if (Exit.isFailure(session) && !job) {
+        const knownJobs = yield* jobs.list()
+        return {
+          title: "Task status: unknown task_id",
+          metadata: {
+            task_id: params.task_id,
+            state: "unknown" as const,
+            timed_out: false,
+          },
+          output: format({
+            taskID: params.task_id,
+            state: "unknown",
+            text: unknownTaskText({ taskID: params.task_id, jobs: knownJobs }),
+          }),
+        }
+      }
       const effectiveTimeout = taskStatusWaitTimeout({
         job,
         requestedTimeout: params.timeout_ms,

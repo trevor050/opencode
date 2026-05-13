@@ -10,6 +10,8 @@ import { OperatorAutoResume } from "./operator-auto-resume"
 import { useTuiConfig } from "../../context/tui-config"
 import { useBindings } from "../../keymap"
 
+const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
+
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
   const { theme } = useTheme()
@@ -29,7 +31,6 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   let textarea: TextareaRenderable | undefined
   let lastTouch = 0
-  const initialTimeoutWindowMillis = Math.ceil(Math.max(0, Date.parse(props.request.timeoutAt ?? "") - Date.now()) / 1000) * 1000
   const [resetTimeoutAt, setResetTimeoutAt] = createSignal<string | undefined>()
 
   const question = createMemo(() => questions()[store.tab])
@@ -48,11 +49,12 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   function touchOperatorPrompt() {
     if (!props.request.timeoutAt) return
     const now = Date.now()
-    setResetTimeoutAt(new Date(now + initialTimeoutWindowMillis).toISOString())
+    setResetTimeoutAt(new Date(now + OPERATOR_ACTIVITY_RESET_MILLIS).toISOString())
     if (now - lastTouch < 5_000) return
     lastTouch = now
     void sdk.client.question.touch({
       requestID: props.request.id,
+      answers: questions().map((_, i) => store.answers[i] ?? []),
     })
   }
 
@@ -169,7 +171,6 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         desc: "Submit answer edit",
         group: "Question",
         cmd: () => {
-          touchOperatorPrompt()
           const text = textarea?.plainText?.trim() ?? ""
           const prev = store.custom[store.tab]
 
@@ -184,6 +185,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
               setStore("answers", answers)
             }
             setStore("editing", false)
+            touchOperatorPrompt()
             return
           }
 
@@ -203,11 +205,13 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
             answers[store.tab] = next
             setStore("answers", answers)
             setStore("editing", false)
+            touchOperatorPrompt()
             return
           }
 
           pick(text, true)
           setStore("editing", false)
+          touchOperatorPrompt()
         },
       },
     ],
@@ -226,6 +230,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           title: "Reject question",
           category: "Question",
           run() {
+            touchOperatorPrompt()
             reject()
           },
         },
@@ -235,28 +240,67 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
           key: "left",
           desc: "Previous question",
           group: "Question",
-          cmd: () => selectTab((store.tab - 1 + tabs()) % tabs()),
+          cmd: () => {
+            touchOperatorPrompt()
+            selectTab((store.tab - 1 + tabs()) % tabs())
+          },
         },
         {
           key: "h",
           desc: "Previous question",
           group: "Question",
-          cmd: () => selectTab((store.tab - 1 + tabs()) % tabs()),
+          cmd: () => {
+            touchOperatorPrompt()
+            selectTab((store.tab - 1 + tabs()) % tabs())
+          },
         },
-        { key: "right", desc: "Next question", group: "Question", cmd: () => selectTab((store.tab + 1) % tabs()) },
-        { key: "l", desc: "Next question", group: "Question", cmd: () => selectTab((store.tab + 1) % tabs()) },
+        {
+          key: "right",
+          desc: "Next question",
+          group: "Question",
+          cmd: () => {
+            touchOperatorPrompt()
+            selectTab((store.tab + 1) % tabs())
+          },
+        },
+        {
+          key: "l",
+          desc: "Next question",
+          group: "Question",
+          cmd: () => {
+            touchOperatorPrompt()
+            selectTab((store.tab + 1) % tabs())
+          },
+        },
         {
           key: "tab",
           desc: "Next question",
           group: "Question",
           cmd: ({ event }: { event: { shift: boolean } }) => {
+            touchOperatorPrompt()
             selectTab((store.tab + (event.shift ? -1 : 1) + tabs()) % tabs())
           },
         },
         ...(confirm()
           ? [
-              { key: "return", desc: "Submit answer", group: "Question", cmd: () => submit() },
-              { key: "escape", desc: "Reject question", group: "Question", cmd: () => reject() },
+              {
+                key: "return",
+                desc: "Submit answer",
+                group: "Question",
+                cmd: () => {
+                  touchOperatorPrompt()
+                  submit()
+                },
+              },
+              {
+                key: "escape",
+                desc: "Reject question",
+                group: "Question",
+                cmd: () => {
+                  touchOperatorPrompt()
+                  reject()
+                },
+              },
               ...tuiConfig.keybinds.get("app.exit"),
             ]
           : [
@@ -267,24 +311,63 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                 cmd: () => {
                   moveTo(index)
                   selectOption()
+                  touchOperatorPrompt()
                 },
               })),
               {
                 key: "up",
                 desc: "Previous answer",
                 group: "Question",
-                cmd: () => moveTo((store.selected - 1 + total) % total),
+                cmd: () => {
+                  touchOperatorPrompt()
+                  moveTo((store.selected - 1 + total) % total)
+                },
               },
               {
                 key: "k",
                 desc: "Previous answer",
                 group: "Question",
-                cmd: () => moveTo((store.selected - 1 + total) % total),
+                cmd: () => {
+                  touchOperatorPrompt()
+                  moveTo((store.selected - 1 + total) % total)
+                },
               },
-              { key: "down", desc: "Next answer", group: "Question", cmd: () => moveTo((store.selected + 1) % total) },
-              { key: "j", desc: "Next answer", group: "Question", cmd: () => moveTo((store.selected + 1) % total) },
-              { key: "return", desc: "Select answer", group: "Question", cmd: () => selectOption() },
-              { key: "escape", desc: "Reject question", group: "Question", cmd: () => reject() },
+              {
+                key: "down",
+                desc: "Next answer",
+                group: "Question",
+                cmd: () => {
+                  touchOperatorPrompt()
+                  moveTo((store.selected + 1) % total)
+                },
+              },
+              {
+                key: "j",
+                desc: "Next answer",
+                group: "Question",
+                cmd: () => {
+                  touchOperatorPrompt()
+                  moveTo((store.selected + 1) % total)
+                },
+              },
+              {
+                key: "return",
+                desc: "Select answer",
+                group: "Question",
+                cmd: () => {
+                  selectOption()
+                  touchOperatorPrompt()
+                },
+              },
+              {
+                key: "escape",
+                desc: "Reject question",
+                group: "Question",
+                cmd: () => {
+                  touchOperatorPrompt()
+                  reject()
+                },
+              },
               ...tuiConfig.keybinds.get("app.exit"),
             ]),
       ],

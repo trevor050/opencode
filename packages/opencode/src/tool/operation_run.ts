@@ -7,6 +7,11 @@ import { BackgroundJob } from "@/background/job"
 import { TaskTool } from "./task"
 import { activeOperationForContext } from "@/ulm/operation-context"
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 export const Parameters = Schema.Struct({
   operationID: Schema.optional(Schema.String),
   mode: Schema.optional(Schema.Literals(["advance", "complete_lane", "skip_lane", "block_lane", "fail_lane"])),
@@ -39,19 +44,22 @@ export const OperationRunTool = Tool.define(
           const backgroundJobs = yield* jobs.list()
           const operationID =
             params.operationID?.trim() ||
-            (yield* Effect.tryPromise(() =>
-              activeOperationForContext({
-                worktree: Instance.worktree,
-                directory: Instance.directory,
-                sessionID: ctx.sessionID,
-              }),
-            ).pipe(Effect.orDie))?.operationID
+            (yield* Effect.tryPromise({
+              try: () =>
+                activeOperationForContext({
+                  worktree: Instance.worktree,
+                  directory: Instance.directory,
+                  sessionID: ctx.sessionID,
+                }),
+              catch: (error) => new Error(`operation_run could not resolve active operation: ${errorMessage(error)}`),
+            }).pipe(Effect.catch((error) => Effect.die(error))))?.operationID
           if (!operationID) {
             throw new Error("operationID is required unless this session is bound to an active ULM operation")
           }
-          const result = yield* Effect.tryPromise(() =>
-            runOperationStep(Instance.worktree, { ...params, operationID, backgroundJobs, controller: "tool" }),
-          ).pipe(Effect.orDie)
+          const result = yield* Effect.tryPromise({
+            try: () => runOperationStep(Instance.worktree, { ...params, operationID, backgroundJobs, controller: "tool" }),
+            catch: (error) => new Error(`operation_run failed: ${errorMessage(error)}`),
+          }).pipe(Effect.catch((error) => Effect.die(error)))
           const launched =
             params.launchModelLane === true && result.taskParams
               ? yield* taskDef.execute(result.taskParams, ctx)

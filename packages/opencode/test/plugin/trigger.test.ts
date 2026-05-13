@@ -1,27 +1,48 @@
-import { afterAll, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { describe, expect } from "bun:test"
+import { Effect, Layer, Option } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import path from "path"
 import { pathToFileURL } from "url"
+import { Account } from "../../src/account/account"
+import { Auth } from "../../src/auth"
+import { Bus } from "../../src/bus"
+import { Config } from "../../src/config/config"
+import { Env } from "../../src/env"
+import { RuntimeFlags } from "../../src/effect/runtime-flags"
+import { Plugin } from "../../src/plugin/index"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { NpmTest } from "../fake/npm"
 
-const disableDefault = process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS
-process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS = "1"
-
-const { Plugin } = await import("../../src/plugin/index")
-const it = testEffect(Layer.mergeAll(Plugin.defaultLayer, CrossSpawnSpawner.defaultLayer))
-const systemHook = "experimental.chat.system.transform"
-const preChatHook = "pre_chat.messages.transform"
-
-afterAll(() => {
-  if (disableDefault === undefined) {
-    delete process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS
-    return
-  }
-  process.env.OPENCODE_DISABLE_DEFAULT_PLUGINS = disableDefault
+const emptyAccount = Layer.mock(Account.Service)({
+  active: () => Effect.succeed(Option.none()),
+  activeOrg: () => Effect.succeed(Option.none()),
 })
+const emptyAuth = Layer.mock(Auth.Service)({
+  all: () => Effect.succeed({}),
+})
+const configLayer = Config.layer.pipe(
+  Layer.provide(EffectFlock.defaultLayer),
+  Layer.provide(AppFileSystem.defaultLayer),
+  Layer.provide(Env.defaultLayer),
+  Layer.provide(emptyAuth),
+  Layer.provide(emptyAccount),
+  Layer.provide(NpmTest.noop),
+)
+const it = testEffect(
+  Layer.mergeAll(
+    Plugin.layer.pipe(
+      Layer.provide(Bus.layer),
+      Layer.provide(configLayer),
+      Layer.provide(RuntimeFlags.layer({ disableDefaultPlugins: true })),
+    ),
+    CrossSpawnSpawner.defaultLayer,
+  ),
+)
+const systemHook = "experimental.chat.system.transform"
 
 function withProject<A, E, R>(source: string, self: Effect.Effect<A, E, R>) {
   return provideTmpdirInstance((dir) =>
@@ -67,32 +88,6 @@ const triggerSystemTransform = Effect.fn("PluginTriggerTest.triggerSystemTransfo
   return out.system
 })
 
-const triggerPreChatTransform = Effect.fn("PluginTriggerTest.triggerPreChatTransform")(function* () {
-  const plugin = yield* Plugin.Service
-  const out = {
-    messages: [
-      {
-        info: { id: "msg_1", role: "user" },
-        parts: [{ id: "prt_1", type: "text", text: "before" }],
-      },
-    ],
-  } as any
-  const result = yield* plugin.trigger(
-    preChatHook,
-    {
-      sessionID: "ses_1",
-      agent: "build",
-      model: {
-        providerID: ProviderID.make("test"),
-        modelID: ModelID.make("test-model"),
-      },
-      messages: out.messages,
-    },
-    out,
-  )
-  return result.messages
-})
-
 describe("plugin.trigger", () => {
   it.live("runs synchronous hooks without crashing", () =>
     withProject(
@@ -123,24 +118,6 @@ describe("plugin.trigger", () => {
       ].join("\n"),
       Effect.gen(function* () {
         expect(yield* triggerSystemTransform()).toEqual(["async"])
-      }),
-    ),
-  )
-
-  it.live("allows pre-chat hooks to replace messages", () =>
-    withProject(
-      [
-        "export default async () => ({",
-        `  ${JSON.stringify(preChatHook)}: (_input, output) => {`,
-        '    output.messages = [{ info: { id: "msg_2", role: "user" }, parts: [{ id: "prt_2", type: "text", text: "after" }] }]',
-        "  },",
-        "})",
-        "",
-      ].join("\n"),
-      Effect.gen(function* () {
-        const messages = yield* triggerPreChatTransform()
-        expect(messages).toHaveLength(1)
-        expect(messages[0]?.parts[0]).toMatchObject({ type: "text", text: "after" })
       }),
     ),
   )

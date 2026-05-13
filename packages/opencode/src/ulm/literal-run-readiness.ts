@@ -1,6 +1,14 @@
 import fs from "fs/promises"
 import path from "path"
 import { operationPath, operationPlanRequiresCredentialHandoff, slug } from "./artifact"
+import {
+  containsRawCredentialSecret,
+  credentialIndexGaps,
+  credentialSubmittedAtGaps,
+  expectedCredentialServices,
+  missingCredentialServices,
+  validCredentialSubmittedAt,
+} from "./credential-safety"
 
 export type LiteralRunReadinessStatus = "passed" | "ready" | "incomplete" | "blocked"
 export type LiteralRunCheckStatus = "ok" | "warn" | "fail"
@@ -25,6 +33,33 @@ export type LiteralRunReadinessResult = {
   targetElapsedSeconds: number
   checkedAt: string
   literalElapsedSeconds?: number
+  modelRouteAudit: {
+    ok: boolean
+    gaps: string[]
+  }
+  credentialLeakAudit: {
+    ok: boolean
+    findings: Array<{ label: string; reason: string }>
+  }
+  configDrift: {
+    checked: boolean
+    ok: boolean
+    gaps: string[]
+  }
+  supervisorIncidentCount: number
+  staleTaskSummary: {
+    stale: number
+    superseded: number
+    nonblocking: number
+    needsRecovery: number
+  }
+  deterministicCloseout: {
+    ok: boolean
+    finalPackage: boolean
+    finalOperationAudit: boolean
+    rerenderedAfterHeartbeat: boolean
+    noRunningStatusInFinalDeliverables: boolean
+  }
   checks: LiteralRunCheck[]
   gaps: string[]
   auditPath: string
@@ -58,6 +93,77 @@ async function exists(file: string) {
   }
 }
 
+async function finalManifestArtifactExists(finalDir: string, artifactPath: unknown) {
+  if (typeof artifactPath !== "string" || !artifactPath.trim()) return false
+  const resolved = path.resolve(finalDir, artifactPath)
+  if (!resolved.startsWith(finalDir + path.sep)) return false
+  return exists(resolved)
+}
+
+function finalManifestArtifactPath(finalDir: string, artifactPath: unknown) {
+  if (typeof artifactPath !== "string" || !artifactPath.trim()) return undefined
+  const resolved = path.resolve(finalDir, artifactPath)
+  return resolved.startsWith(finalDir + path.sep) ? resolved : undefined
+}
+
+function pdfPageCount(pdf: string | undefined) {
+  const match = pdf?.match(/\/Type\s*\/Pages\b[\s\S]*?\/Count\s+(\d+)/)
+  const pages = Number.parseInt(match?.[1] ?? "", 10)
+  return Number.isFinite(pages) && pages > 0 ? pages : undefined
+}
+
+async function finalStakeholderPackageGaps(finalDir: string, artifacts: Record<string, unknown> | undefined) {
+  if (!artifacts) return ["stakeholder artifacts object is missing"]
+  const textChecks = [
+    { key: "html", label: "report.html", terms: ["<!doctype html", "Finding State Counts", "Operation:"] },
+    { key: "readme", label: "README.md", terms: ["## Files", "## Findings", "## Evidence"] },
+    { key: "operatorReview", label: "operator-review.md", terms: ["Operation:", "## Handoff State", "## Review Before Client Delivery"] },
+    { key: "executiveSummary", label: "executive-summary.md", terms: ["Operation:", "## Overview", "## Priority Items"] },
+    { key: "technicalAppendix", label: "technical-appendix.md", terms: ["Operation:", "## Scope And Methodology", "## Evidence Index"] },
+    { key: "boardReport", label: "board-report.md", terms: ["Operation:", "## Executive Decision Summary", "## Recommended Board Actions"] },
+    { key: "cehTechnicalReport", label: "ceh-technical-report.md", terms: ["Operation:", "## Scope And Methodology", "## Validated Findings", "## Evidence Map"] },
+    { key: "ulmTeamReport", label: "ulm-team-report.md", terms: ["Operation:", "## Harness Run State", "## Residual Harness Risks"] },
+    { key: "runtimeSummaryMarkdown", label: "runtime-summary.md", terms: ["# Runtime Summary"] },
+  ]
+  const pdfChecks = [
+    { key: "pdf", label: "report.pdf" },
+    { key: "boardReportPdf", label: "board-report.pdf" },
+    { key: "cehTechnicalReportPdf", label: "ceh-technical-report.pdf" },
+    { key: "ulmTeamReportPdf", label: "ulm-team-report.pdf" },
+  ]
+  const gaps: string[] = []
+  for (const item of textChecks) {
+    const file = finalManifestArtifactPath(finalDir, artifacts[item.key])
+    const body = file ? await readText(file) : undefined
+    if (!body?.trim()) {
+      gaps.push(`${item.label}:empty`)
+      continue
+    }
+    for (const term of item.terms) {
+      if (!body.includes(term)) gaps.push(`${item.label}:missing:${term}`)
+    }
+    if (/\bstatus:\s*running\b/i.test(body)) gaps.push(`${item.label}:stale-running-status`)
+    if (
+      item.label === "ulm-team-report.md" &&
+      /## Supervisor Incidents[\s\S]*?-\s+(?!None recorded\.)/i.test(body) &&
+      /## Residual Harness Risks[\s\S]*?-\s+No residual harness risks/i.test(body)
+    ) {
+      gaps.push("ulm-team-report.md:conflicting-risk-claim")
+    }
+  }
+  for (const item of pdfChecks) {
+    const file = finalManifestArtifactPath(finalDir, artifacts[item.key])
+    const body = file ? await readText(file) : undefined
+    if (!body?.startsWith("%PDF-")) {
+      gaps.push(`${item.label}:not-pdf`)
+      continue
+    }
+    if (!body.includes("/ULMCodeRenderer (styled-html)")) gaps.push(`${item.label}:missing-styled-renderer`)
+    if (!pdfPageCount(body)) gaps.push(`${item.label}:page-count-missing`)
+  }
+  return gaps
+}
+
 function numberArg(command: string[] | undefined, name: string) {
   if (!command) return undefined
   const index = command.indexOf(name)
@@ -70,13 +176,38 @@ function check(input: LiteralRunCheck): LiteralRunCheck {
   return input
 }
 
-const runtimeProofChecks = new Set(["literal-runtime-proof", "daemon-heartbeat-continuity", "literal-work-proof"])
+const runtimeProofChecks = new Set([
+  "literal-runtime-proof",
+  "daemon-heartbeat-continuity",
+  "literal-work-proof",
+  "laptop-preflight-proof",
+  "laptop-preflight-bypass",
+])
 const handoffProofChecks = new Set([
   "final-package",
   "final-operation-audit",
   "credential-handoff-proof",
   "report-outline-proof",
 ])
+const requiredFinalManifestArtifacts = [
+  "html",
+  "pdf",
+  "readme",
+  "findingsJson",
+  "evidenceIndex",
+  "peopleProfiles",
+  "identityGraph",
+  "operatorReview",
+  "executiveSummary",
+  "technicalAppendix",
+  "boardReport",
+  "boardReportPdf",
+  "cehTechnicalReport",
+  "cehTechnicalReportPdf",
+  "ulmTeamReport",
+  "ulmTeamReportPdf",
+  "runtimeSummaryMarkdown",
+] as const
 
 function statusFor(checks: LiteralRunCheck[], literalElapsedSeconds: number | undefined, targetElapsedSeconds: number) {
   const requiredSetupFailed = checks.some(
@@ -99,6 +230,29 @@ function countItems(input: unknown) {
   return Array.isArray(input) ? input.length : 0
 }
 
+function supervisorIncidentCount(report: string | undefined) {
+  const section = report?.match(/## Supervisor Incidents\s+([\s\S]*?)(?:\n## |\s*$)/i)?.[1] ?? ""
+  if (!section.trim() || /-\s+None recorded\./i.test(section)) return 0
+  return section.split(/\r?\n/).filter((line) => /^\s*-\s+\S/.test(line)).length
+}
+
+function countRuntimeStatuses(runtimeSummary: { backgroundTasks?: Array<{ status?: string }> } | undefined) {
+  const tasks = runtimeSummary?.backgroundTasks ?? []
+  return {
+    stale: tasks.filter((task) => task.status === "stale").length,
+    superseded: tasks.filter((task) => task.status === "superseded").length,
+    nonblocking: tasks.filter((task) => task.status === "nonblocking").length,
+    needsRecovery: tasks.filter((task) => task.status === "needs_recovery").length,
+  }
+}
+
+function syntheticCredentialReason(credentials: unknown[]) {
+  const synthetic = credentials
+    .map((credential) => JSON.stringify(credential).toLowerCase())
+    .find((text) => /\b(?:synthetic|rehearsal|placeholder|fixture|fake)\b/.test(text))
+  return synthetic ? "credential review contains a synthetic credential placeholder" : undefined
+}
+
 function timestamp(value: string | undefined) {
   const parsed = value ? Date.parse(value) : Number.NaN
   return Number.isFinite(parsed) ? parsed : undefined
@@ -108,6 +262,18 @@ function reportOutlineTargetPages(outline: string | undefined) {
   const match = outline?.match(/^\s*-\s*target_pages:\s*(\d+)\s*$/im)
   const pages = Number.parseInt(match?.[1] ?? "", 10)
   return Number.isFinite(pages) ? pages : undefined
+}
+
+function requiredReportTargetPages(
+  operationPlan: { templateName?: string; template?: string; timeBudget?: { targetHours?: number } } | undefined,
+  requiresLongRunProof: boolean,
+) {
+  if (operationPlan?.templateName === "school-laptop-48h" || operationPlan?.template === "school-laptop-48h") return 75
+  return requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+}
+
+function operationIDMatches(value: string | undefined, operationID: string) {
+  return typeof value === "string" && slug(value, "operation") === operationID
 }
 
 function workProofFromHeartbeat(heartbeat: {
@@ -259,11 +425,14 @@ export async function auditLiteralRunReadiness(
   const operationGoalPath = path.join(root, "goals", "operation-goal.json")
   const operationPlanPath = path.join(root, "plans", "operation-plan.json")
   const supervisorManifestPath = path.join(root, "scheduler", "supervisor", "supervisor-manifest.json")
+  const laptopPreflightPath = path.join(root, "scheduler", "laptop-preflight.json")
+  const laptopPreflightBypassPath = path.join(root, "scheduler", "laptop-preflight-bypass.json")
   const daemonHeartbeatPath = path.join(root, "scheduler", "daemon-heartbeat.json")
   const daemonLogPath = path.join(root, "scheduler", "daemon.jsonl")
   const burnInProofPath = path.join(root, "burnin", "burnin-proof.json")
   const toolPreflightPath = path.join(root, "tools", "tool-preflight.json")
   const modelRouteAuditPath = path.join(root, "deliverables", "model-route-audit.json")
+  const runtimeSummaryPath = path.join(root, "deliverables", "runtime-summary.json")
   const reportOutlinePath = path.join(root, "reports", "report-outline.md")
   const finalManifestPath = path.join(root, "deliverables", "final", "manifest.json")
   const finalAuditPath = path.join(root, "deliverables", "operation-audit.json")
@@ -274,18 +443,92 @@ export async function auditLiteralRunReadiness(
 
   const graph = await readJson<{ safetyMode?: string; lanes?: unknown[] }>(graphPath)
   const operationGoal = await readJson<{ targetDurationHours?: number }>(operationGoalPath)
-  const operationPlan = await readJson<{ timeBudget?: { targetHours?: number } }>(operationPlanPath)
+  const operationPlan = await readJson<{ templateName?: string; template?: string; timeBudget?: { targetHours?: number } }>(
+    operationPlanPath,
+  )
   const requiresLongRunProof = targetElapsedSeconds >= 20 * 60 * 60
   const targetHours = targetElapsedSeconds / (60 * 60)
-  const requiredAuditMinOutlineTargetPages =
-    requiresLongRunProof || (operationPlan?.timeBudget?.targetHours ?? 0) >= 20 ? 50 : undefined
+  const requiredAuditMinOutlineTargetPages = requiredReportTargetPages(operationPlan, requiresLongRunProof)
   const requiredAuditMinPdfPages = requiredAuditMinOutlineTargetPages
   const requiresCredentialHandoff = operationPlanRequiresCredentialHandoff(operationPlan)
-  const credentialReview = await readJson<{ submittedAt?: string; credentials?: unknown[] }>(credentialReviewPath)
+  const credentialReview = await readJson<{ operationID?: string; submittedAt?: string; credentials?: unknown[]; file?: string }>(
+    credentialReviewPath,
+  )
   const credentialReviewCount = countItems(credentialReview?.credentials)
+  const credentialOperationIDGap =
+    requiresCredentialHandoff && credentialReview?.operationID && !operationIDMatches(credentialReview.operationID, operationID)
+      ? "credential review operation id does not match operation"
+      : undefined
+  const credentialFileReferenceGap =
+    requiresCredentialHandoff && credentialReview?.file && path.resolve(credentialReview.file) !== path.resolve(credentialReviewPath)
+      ? "credential review file reference is not canonical"
+      : undefined
+  const expectedCredentialServiceList = expectedCredentialServices(operationPlan)
+  const missingCredentialServiceList = missingCredentialServices(
+    operationPlan,
+    Array.isArray(credentialReview?.credentials) ? credentialReview.credentials : [],
+  )
+  const credentialServiceGaps = missingCredentialServiceList.map(
+    (service) => `credential review is missing a submitted record for plan service: ${service}`,
+  )
   const credentialReviewTime = timestamp(credentialReview?.submittedAt)
+  const credentialSubmittedAtValid = validCredentialSubmittedAt(credentialReview?.submittedAt)
+  const submittedAtGaps = credentialSubmittedAtGaps(credentialReview?.submittedAt)
+  const syntheticCredentialGap =
+    requiresCredentialHandoff && Array.isArray(credentialReview?.credentials)
+      ? syntheticCredentialReason(credentialReview.credentials)
+      : undefined
+  const rawCredentialSecretGap =
+    requiresCredentialHandoff && containsRawCredentialSecret(credentialReview?.credentials)
+      ? "credential review contains raw secret fields instead of redacted records"
+      : undefined
+  const credentialIndexGapsList =
+    requiresCredentialHandoff && Array.isArray(credentialReview?.credentials) ? credentialIndexGaps(credentialReview.credentials) : []
   const reportOutline = await readText(reportOutlinePath)
   const outlineTargetPages = reportOutlineTargetPages(reportOutline)
+  const heartbeat = await readJson<{
+    operationID?: string
+    elapsedSeconds?: number
+    startedAt?: string
+    endedAt?: string
+    updatedAt?: string
+    reason?: string
+    cycles?: Array<{
+      launchedJobs?: unknown[]
+      launchedCommandJobs?: unknown[]
+      run?: {
+        completedLanes?: unknown[]
+        failedLanes?: unknown[]
+        syncedJobs?: unknown[]
+        completedWorkUnits?: unknown[]
+        failedWorkUnits?: unknown[]
+      }
+    }>
+    recoveredJobs?: unknown[]
+  }>(daemonHeartbeatPath)
+  const literalElapsedSeconds = heartbeat?.elapsedSeconds
+  const heartbeatOperationMatches = operationIDMatches(heartbeat?.operationID, operationID)
+  const heartbeatStartedAt = timestamp(heartbeat?.startedAt)
+  const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
+  const credentialAfterHeartbeatGap =
+    requiresCredentialHandoff &&
+    credentialReviewTime !== undefined &&
+    heartbeatTime !== undefined &&
+    credentialReviewTime > heartbeatTime
+      ? "credential review was submitted after daemon ended"
+      : undefined
+  const credentialAfterDaemonStartGap =
+    requiresCredentialHandoff &&
+    credentialReviewTime !== undefined &&
+    heartbeatStartedAt !== undefined &&
+    credentialReviewTime > heartbeatStartedAt
+      ? "credential review was submitted after daemon started"
+      : undefined
+  const credentialBeforeDaemonStart =
+    requiresCredentialHandoff &&
+    credentialReviewTime !== undefined &&
+    heartbeatStartedAt !== undefined &&
+    credentialReviewTime <= heartbeatStartedAt
   checks.push(
     check({
       id: "operation-graph",
@@ -347,6 +590,17 @@ export async function auditLiteralRunReadiness(
   )
 
   const toolPreflight = await readJson<{ total?: number; available?: number; blocked?: number }>(toolPreflightPath)
+  const modelRouteAudit = await readJson<{
+    ok?: boolean
+    gaps?: unknown[]
+    configDrift?: { checked?: boolean; ok?: boolean; gaps?: unknown[] }
+  }>(modelRouteAuditPath)
+  const modelRouteGaps = Array.isArray(modelRouteAudit?.gaps)
+    ? modelRouteAudit.gaps.filter((gap): gap is string => typeof gap === "string")
+    : []
+  const configDriftGaps = Array.isArray(modelRouteAudit?.configDrift?.gaps)
+    ? modelRouteAudit.configDrift.gaps.filter((gap): gap is string => typeof gap === "string")
+    : []
   checks.push(
     check({
       id: "tool-preflight",
@@ -362,19 +616,56 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "model-route-audit",
-      status: (await exists(modelRouteAuditPath)) ? "ok" : requiresLongRunProof ? "fail" : "warn",
+      status:
+        modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0)
+          ? "ok"
+          : requiresLongRunProof
+            ? "fail"
+            : "warn",
       required: requiresLongRunProof,
-      detail: (await exists(modelRouteAuditPath)) ? "model route audit exists" : "model-route-audit.json is missing",
+      detail:
+        modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0)
+          ? "model route audit passed"
+          : (await exists(modelRouteAuditPath))
+            ? `model route audit failed: ${modelRouteGaps.join("; ") || "ok flag missing"}`
+            : "model-route-audit.json is missing",
       path: modelRouteAuditPath,
     }),
   )
   checks.push(
     check({
       id: "credential-handoff-proof",
-      status: !requiresCredentialHandoff || (credentialReview?.submittedAt && credentialReviewCount > 0) ? "ok" : "fail",
+      status:
+        !requiresCredentialHandoff ||
+        (credentialSubmittedAtValid &&
+          credentialReviewCount > 0 &&
+          !credentialOperationIDGap &&
+          !credentialFileReferenceGap &&
+          !credentialAfterHeartbeatGap &&
+          !credentialAfterDaemonStartGap &&
+          !syntheticCredentialGap &&
+          !rawCredentialSecretGap &&
+          credentialIndexGapsList.length === 0 &&
+          credentialServiceGaps.length === 0)
+          ? "ok"
+          : "fail",
       required: requiresCredentialHandoff,
       detail: requiresCredentialHandoff
-        ? `submitted_at=${credentialReview?.submittedAt ?? "missing"}; credential_count=${credentialReviewCount}`
+        ? `submitted_at=${credentialReview?.submittedAt ?? "missing"}; expected_services=${expectedCredentialServiceList.length ? expectedCredentialServiceList.join(",") : "none"}; credential_count=${credentialReviewCount}${
+            credentialOperationIDGap ? `; ${credentialOperationIDGap}` : ""
+          }${credentialFileReferenceGap ? `; ${credentialFileReferenceGap}` : ""}${
+            credentialAfterHeartbeatGap ? `; ${credentialAfterHeartbeatGap}` : ""
+          }${
+            credentialAfterDaemonStartGap ? `; ${credentialAfterDaemonStartGap}` : ""
+          }; credential_before_daemon_start=${credentialBeforeDaemonStart ? "true" : "false"}${
+            heartbeatStartedAt !== undefined ? `; daemon_started_at=${heartbeat?.startedAt ?? "missing"}` : ""
+          }${
+            syntheticCredentialGap ? `; ${syntheticCredentialGap}` : ""
+          }${rawCredentialSecretGap ? `; ${rawCredentialSecretGap}` : ""}${
+            credentialIndexGapsList.length ? `; ${credentialIndexGapsList.join("; ")}` : ""
+          }${credentialServiceGaps.length ? `; ${credentialServiceGaps.join("; ")}` : ""}${
+            submittedAtGaps.length ? `; ${submittedAtGaps.join("; ")}` : ""
+          }`
         : "credentialed plan proof is not required",
       path: credentialReviewPath,
     }),
@@ -394,29 +685,41 @@ export async function auditLiteralRunReadiness(
       path: reportOutlinePath,
     }),
   )
+  const laptopPreflight = await readJson<{ operationID?: string; status?: string; targetHours?: number; gaps?: string[] }>(
+    laptopPreflightPath,
+  )
+  const laptopPreflightTargetSeconds = (laptopPreflight?.targetHours ?? 0) * 60 * 60
+  const laptopPreflightOk =
+    !requiresLongRunProof ||
+    (operationIDMatches(laptopPreflight?.operationID, operationID) &&
+      laptopPreflight?.status === "ready" &&
+      laptopPreflightTargetSeconds >= targetElapsedSeconds)
+  checks.push(
+    check({
+      id: "laptop-preflight-proof",
+      status: laptopPreflightOk ? "ok" : "fail",
+      required: requiresLongRunProof,
+      detail: laptopPreflight
+        ? `preflight_operation_id=${laptopPreflight.operationID ?? "missing"}; selected_operation_id=${operationID}; status=${laptopPreflight.status ?? "missing"}; target_hours=${laptopPreflight.targetHours ?? "missing"}; gaps=${laptopPreflight.gaps?.length ? laptopPreflight.gaps.join("; ") : "none"}`
+        : requiresLongRunProof
+          ? "laptop-preflight.json is missing"
+          : "laptop preflight proof is not required",
+      path: laptopPreflightPath,
+    }),
+  )
+  const laptopPreflightBypass = await readJson<{ reason?: string; durationSeconds?: number }>(laptopPreflightBypassPath)
+  checks.push(
+    check({
+      id: "laptop-preflight-bypass",
+      status: !requiresLongRunProof || !laptopPreflightBypass ? "ok" : "fail",
+      required: requiresLongRunProof,
+      detail: laptopPreflightBypass
+        ? `controlled test bypass present; duration_seconds=${laptopPreflightBypass.durationSeconds ?? "missing"}; reason=${laptopPreflightBypass.reason ?? "missing"}`
+        : "no long-run laptop preflight bypass artifact is present",
+      path: laptopPreflightBypassPath,
+    }),
+  )
 
-  const heartbeat = await readJson<{
-    elapsedSeconds?: number
-    startedAt?: string
-    endedAt?: string
-    updatedAt?: string
-    reason?: string
-    cycles?: Array<{
-      launchedJobs?: unknown[]
-      launchedCommandJobs?: unknown[]
-      run?: {
-        completedLanes?: unknown[]
-        failedLanes?: unknown[]
-        syncedJobs?: unknown[]
-        completedWorkUnits?: unknown[]
-        failedWorkUnits?: unknown[]
-      }
-    }>
-    recoveredJobs?: unknown[]
-  }>(daemonHeartbeatPath)
-  const literalElapsedSeconds = heartbeat?.elapsedSeconds
-  const heartbeatStartedAt = timestamp(heartbeat?.startedAt)
-  const heartbeatTime = timestamp(heartbeat?.endedAt) ?? timestamp(heartbeat?.updatedAt)
   const log = await readText(daemonLogPath)
   const continuity = daemonLogContinuity(log, targetElapsedSeconds)
   const workProof = heartbeat ? workProofFromHeartbeat(heartbeat) : undefined
@@ -432,10 +735,16 @@ export async function auditLiteralRunReadiness(
   checks.push(
     check({
       id: "literal-runtime-proof",
-      status: literalElapsedSeconds !== undefined && literalElapsedSeconds >= targetElapsedSeconds && !!log?.trim() ? "ok" : "fail",
+      status:
+        heartbeatOperationMatches &&
+        literalElapsedSeconds !== undefined &&
+        literalElapsedSeconds >= targetElapsedSeconds &&
+        !!log?.trim()
+          ? "ok"
+          : "fail",
       required: true,
       detail: heartbeat
-        ? `elapsed_seconds=${literalElapsedSeconds ?? "missing"}; reason=${heartbeat.reason ?? "missing"}; log=${log?.trim() ? "present" : "missing"}`
+        ? `heartbeat_operation_id=${heartbeat.operationID ?? "missing"}; selected_operation_id=${operationID}; elapsed_seconds=${literalElapsedSeconds ?? "missing"}; reason=${heartbeat.reason ?? "missing"}; log=${log?.trim() ? "present" : "missing"}`
         : "daemon heartbeat is missing; no wall-clock run proof exists",
       path: daemonHeartbeatPath,
     }),
@@ -461,30 +770,64 @@ export async function auditLiteralRunReadiness(
     }),
   )
 
+  const finalManifest = await readJson<{ operationID?: string; generatedAt?: string; artifacts?: Record<string, unknown> }>(finalManifestPath)
+  const runtimeSummary = await readJson<{ backgroundTasks?: Array<{ status?: string }> }>(runtimeSummaryPath)
+  const finalManifestExists = finalManifest !== undefined
+  const finalManifestOperationMatches = operationIDMatches(finalManifest?.operationID, operationID)
+  const missingFinalManifestArtifacts = requiredFinalManifestArtifacts.filter(
+    (key) => typeof finalManifest?.artifacts?.[key] !== "string" || !finalManifest.artifacts[key],
+  )
+  const finalDir = path.dirname(finalManifestPath)
+  const missingFinalManifestFiles = (
+    await Promise.all(
+      requiredFinalManifestArtifacts.map(async (key) => ({
+        key,
+        exists: await finalManifestArtifactExists(finalDir, finalManifest?.artifacts?.[key]),
+      })),
+    )
+  )
+    .filter((item) => !item.exists)
+    .map((item) => item.key)
+  const finalStakeholderGaps = await finalStakeholderPackageGaps(finalDir, finalManifest?.artifacts)
+  const finalPackageOk =
+    finalManifestExists &&
+    finalManifestOperationMatches &&
+    missingFinalManifestArtifacts.length === 0 &&
+    missingFinalManifestFiles.length === 0 &&
+    finalStakeholderGaps.length === 0
   checks.push(
     check({
       id: "final-package",
-      status: (await exists(finalManifestPath)) ? "ok" : "fail",
+      status: finalPackageOk ? "ok" : "fail",
       required: true,
-      detail: (await exists(finalManifestPath)) ? "final handoff manifest exists" : "final package manifest is missing",
+      detail: finalManifestExists
+        ? `manifest_operation_id=${finalManifest?.operationID ?? "missing"}; selected_operation_id=${operationID}; missing_manifest_artifacts=${missingFinalManifestArtifacts.length ? missingFinalManifestArtifacts.join(",") : "none"}; missing_manifest_files=${missingFinalManifestFiles.length ? missingFinalManifestFiles.join(",") : "none"}; stakeholder_gaps=${finalStakeholderGaps.length ? finalStakeholderGaps.join(",") : "none"}`
+        : "final package manifest is missing",
       path: finalManifestPath,
     }),
   )
   const finalAudit = await readJson<{
+    operationID?: string
     ok?: boolean
     blockers?: unknown[]
     generatedAt?: string
     checks?: {
-      finalHandoff?: { gates?: { minOutlineTargetPages?: number; minPdfPages?: number } }
+      finalHandoff?: { ok?: boolean; gates?: { minOutlineTargetPages?: number; minPdfPages?: number } }
       credentialHandoff?: { ok?: boolean; required?: boolean; credentialCount?: number }
+      credentialLeakAudit?: { ok?: boolean; findings?: Array<{ label?: unknown; reason?: unknown }> }
     }
   }>(finalAuditPath)
   const finalAuditTime = timestamp(finalAudit?.generatedAt)
+  const finalManifestTime = timestamp(finalManifest?.generatedAt)
   const finalAuditFresh =
+    finalAuditTime !== undefined &&
     (heartbeatTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= heartbeatTime)) &&
-    (!requiresCredentialHandoff || credentialReviewTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= credentialReviewTime))
+    (!requiresCredentialHandoff || credentialReviewTime === undefined || (finalAuditTime !== undefined && finalAuditTime >= credentialReviewTime)) &&
+    (finalManifestTime === undefined || finalAuditTime >= finalManifestTime)
   const finalAuditMinOutlineTargetPages = finalAudit?.checks?.finalHandoff?.gates?.minOutlineTargetPages
   const finalAuditMinPdfPages = finalAudit?.checks?.finalHandoff?.gates?.minPdfPages
+  const finalAuditOperationMatches = operationIDMatches(finalAudit?.operationID, operationID)
+  const finalAuditHandoffOk = finalAudit?.checks?.finalHandoff?.ok === true
   const finalAuditGatesOk =
     (requiredAuditMinOutlineTargetPages === undefined ||
       (finalAuditMinOutlineTargetPages ?? 0) >= requiredAuditMinOutlineTargetPages) &&
@@ -495,20 +838,21 @@ export async function auditLiteralRunReadiness(
     (finalAuditCredentialHandoff?.ok === true &&
       finalAuditCredentialHandoff.required === true &&
       (finalAuditCredentialHandoff.credentialCount ?? 0) > 0)
+  const finalOperationAuditOk =
+    finalAudit?.ok === true &&
+    finalAuditOperationMatches &&
+    countItems(finalAudit.blockers) === 0 &&
+    finalAuditFresh &&
+    finalAuditHandoffOk &&
+    finalAuditGatesOk &&
+    finalAuditCredentialHandoffOk
   checks.push(
     check({
       id: "final-operation-audit",
-      status:
-        finalAudit?.ok === true &&
-        countItems(finalAudit.blockers) === 0 &&
-        finalAuditFresh &&
-        finalAuditGatesOk &&
-        finalAuditCredentialHandoffOk
-          ? "ok"
-          : "fail",
+      status: finalOperationAuditOk ? "ok" : "fail",
       required: true,
       detail: finalAudit
-        ? `ok=${finalAudit.ok === true ? "true" : "false"}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; min_pdf_pages=${finalAuditMinPdfPages ?? "missing"}${requiredAuditMinPdfPages ? `; required_min_pdf_pages=${requiredAuditMinPdfPages}` : ""}; credential_handoff=${
+        ? `ok=${finalAudit.ok === true ? "true" : "false"}; audit_operation_id=${finalAudit.operationID ?? "missing"}; selected_operation_id=${operationID}; blockers=${countItems(finalAudit.blockers)}; generated_at=${finalAudit.generatedAt ?? "missing"}; final_manifest_generated_at=${finalManifest?.generatedAt ?? "missing"}; fresh=${finalAuditFresh ? "true" : "false"}; final_handoff=${finalAuditHandoffOk ? "proved" : "missing"}; min_outline_target_pages=${finalAuditMinOutlineTargetPages ?? "missing"}${requiredAuditMinOutlineTargetPages ? `; required_min_outline_target_pages=${requiredAuditMinOutlineTargetPages}` : ""}; min_pdf_pages=${finalAuditMinPdfPages ?? "missing"}${requiredAuditMinPdfPages ? `; required_min_pdf_pages=${requiredAuditMinPdfPages}` : ""}; credential_handoff=${
             requiresCredentialHandoff
               ? finalAuditCredentialHandoffOk
                 ? "proved"
@@ -524,12 +868,45 @@ export async function auditLiteralRunReadiness(
   const gaps = checks
     .filter((item) => item.status !== "ok")
     .map((item) => `${item.id}: ${item.detail}`)
+  const credentialLeakFindings =
+    finalAudit?.checks?.credentialLeakAudit?.findings
+      ?.map((finding) => ({
+        label: typeof finding.label === "string" ? finding.label : "unknown",
+        reason: typeof finding.reason === "string" ? finding.reason : "unknown",
+      }))
+      .filter((finding) => finding.label !== "unknown" || finding.reason !== "unknown") ?? []
+  const teamReport = await readText(path.join(finalDir, "ulm-team-report.md"))
+  const noRunningStatusInFinalDeliverables = !finalStakeholderGaps.some((gap) => gap.endsWith(":stale-running-status"))
+  const rerenderedAfterHeartbeat =
+    finalManifestTime !== undefined && (heartbeatTime === undefined || finalManifestTime >= heartbeatTime)
   const result: LiteralRunReadinessResult = {
     operationID,
     status,
     targetElapsedSeconds,
     checkedAt: (input.now ?? (() => new Date()))().toISOString(),
     literalElapsedSeconds,
+    modelRouteAudit: {
+      ok: modelRouteAudit?.ok === true,
+      gaps: modelRouteGaps,
+    },
+    credentialLeakAudit: {
+      ok: finalAudit?.checks?.credentialLeakAudit?.ok === true,
+      findings: credentialLeakFindings,
+    },
+    configDrift: {
+      checked: modelRouteAudit?.configDrift?.checked === true,
+      ok: modelRouteAudit?.configDrift?.ok === true,
+      gaps: configDriftGaps,
+    },
+    supervisorIncidentCount: supervisorIncidentCount(teamReport),
+    staleTaskSummary: countRuntimeStatuses(runtimeSummary),
+    deterministicCloseout: {
+      ok: finalPackageOk && finalOperationAuditOk && rerenderedAfterHeartbeat && noRunningStatusInFinalDeliverables,
+      finalPackage: finalPackageOk,
+      finalOperationAudit: finalOperationAuditOk,
+      rerenderedAfterHeartbeat,
+      noRunningStatusInFinalDeliverables,
+    },
     checks,
     gaps,
     auditPath,

@@ -1,3 +1,9 @@
 Render a print-ready ULMCode report deliverable.
 
 Use this after findings are validated and report_outline has been created. It writes final HTML, PDF, README, and manifest artifacts under the operation deliverables folder.
+
+The renderer is part of the report-quality loop, not a file exporter. The generated HTML should have a cover, table of contents, finding-state cards, readable finding sections, remediation roadmap cards, evidence cards, and print CSS. If the authored report source forces everything into giant tables or wall-of-text sections, fix the source report and rerender instead of accepting an ugly deliverable.
+
+Do not render reports that contain raw passwords, tokens, cookies, API keys, other secret values, private-life dossier details, destructive production exploit claims, sensitive data dumping, or persistence/backdoor claims. Use redacted credential IDs or vault-backed handles only.
+
+After a successful render, immediately call `runtime_summary`, then `operation_audit` with finalHandoff=true. Do not treat rendered files as the final handoff until those gates pass, and do not continue optional lane cleanup before those two closeout tools unless the render output reports a blocker.

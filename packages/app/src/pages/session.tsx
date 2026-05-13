@@ -42,7 +42,6 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
-import { useUlm } from "@/context/ulm"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
 import {
@@ -319,101 +318,6 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
     loadAndReveal,
     onScrollerScroll,
   }
-}
-
-function UlmChatContextBar(props: { onOpenOperations: () => void }) {
-  const ulm = useUlm()
-  const operation = createMemo(() => {
-    const operations = ulm.store.operations
-    return (
-      operations.find((item) => {
-        const status = item.operation?.status
-        return status === "blocked" || status === "running" || status === "planned" || status === "paused"
-      }) ?? operations[0]
-    )
-  })
-  const confidence = createMemo(() => {
-    const item = operation()
-    return item ? ulm.confidence(item) : undefined
-  })
-  const tone = createMemo(() => {
-    const level = confidence()?.level
-    if (level === "blocked") return "border-border-strong bg-surface-raised-base-active text-text-strong"
-    if (level === "attention") return "border-border-weak-base bg-surface-base-active text-text-strong"
-    return "border-border-weak-base bg-surface-panel text-text-base"
-  })
-  const riskTextTone = createMemo(() => {
-    const risk = operation()?.operation?.riskLevel
-    if (risk === "critical" || risk === "high") return "text-text-strong"
-    if (risk === "medium") return "text-text-warning"
-    if (risk === "low") return "text-text-success"
-    return "text-text-weak"
-  })
-  const operationReadout = createMemo(() => {
-    const item = operation()
-    if (!item) return []
-    return [
-      item.operation?.stage ?? "intake",
-      `risk ${item.operation?.riskLevel ?? "unknown"}`,
-      confidence()?.label ?? "status attached",
-      `${item.findings.total} findings`,
-      `${item.evidence.total} evidence`,
-    ]
-  })
-
-  return (
-    <div class="shrink-0 px-4 md:px-6 pt-3">
-      <div class="flex min-h-12 items-center gap-3 rounded-[8px] border border-border-weak-base bg-surface-panel px-3 py-2">
-        <Show
-          when={operation()}
-          fallback={
-            <div class="flex min-w-0 flex-1 items-center gap-2">
-              <div class="text-12-medium text-text-strong">No operation attached yet</div>
-              <div class="text-12-regular text-text-weak truncate">
-                Start from chat, then operation state will track here.
-              </div>
-            </div>
-          }
-        >
-          {(item) => (
-            <>
-              <div class="min-w-0 flex-1">
-                <div class="flex min-w-0 items-center gap-2">
-                  <div class="min-w-0 flex-1 truncate text-12-medium text-text-strong">
-                    {item().operation?.objective || item().goal?.objective || item().operationID}
-                  </div>
-                  <div class={`shrink-0 rounded-[6px] border px-1.5 py-0.5 text-11-medium uppercase ${tone()}`}>
-                    {item().operation?.status ?? item().goal?.status ?? "operation"}
-                  </div>
-                </div>
-                <div class="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-11-regular text-text-weak">
-                  <For each={operationReadout()}>
-                    {(value, index) => (
-                      <>
-                        <span
-                          class={`shrink-0 truncate ${
-                            index() === 1 ? riskTextTone() : index() === 2 ? "text-text-strong" : "text-text-weak"
-                          }`}
-                        >
-                          {value}
-                        </span>
-                        <Show when={index() < operationReadout().length - 1}>
-                          <span class="shrink-0 text-text-disabled">/</span>
-                        </Show>
-                      </>
-                    )}
-                  </For>
-                </div>
-              </div>
-              <Button icon="status" size="small" variant="ghost" onClick={props.onOpenOperations}>
-                Operations
-              </Button>
-            </>
-          )}
-        </Show>
-      </div>
-    </div>
-  )
 }
 
 export default function Page() {
@@ -1602,12 +1506,7 @@ export default function Page() {
       return out
     })
 
-  const busy = (sessionID: string) => {
-    if ((sync.data.session_status[sessionID] ?? { type: "idle" as const }).type !== "idle") return true
-    return (sync.data.message[sessionID] ?? []).some(
-      (item) => item.role === "assistant" && typeof item.time.completed !== "number",
-    )
-  }
+  const busy = (sessionID: string) => sync.data.session_working(sessionID)
 
   const queuedFollowups = createMemo(() => {
     const id = params.id
@@ -1939,15 +1838,6 @@ export default function Page() {
             width: sessionPanelWidth(),
           }}
         >
-          <Show when={ulmWorkspace() && params.id}>
-            <UlmChatContextBar
-              onOpenOperations={() => {
-                if (!params.dir) return
-                navigate(`/${params.dir}/operations`)
-              }}
-            />
-          </Show>
-
           <div class="flex-1 min-h-0 overflow-hidden">
             <Switch>
               <Match when={params.id}>

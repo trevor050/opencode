@@ -52,6 +52,14 @@ export function isULMForegroundScanCommand(command: string): boolean {
   return ULM_FOREGROUND_SCAN_PATTERNS.some((pattern) => pattern.test(command))
 }
 
+export function ulmForegroundScanPolicyMessage(command: string): string {
+  return [
+    "Intentional ULM safety policy: active network probes run as supervised/background jobs, not foreground shell commands.",
+    `No scan was started for: "${command}".`,
+    "Use command_supervise, task background=true, runtime_scheduler, or runtime_daemon so the run has heartbeat output, artifacts, and recovery metadata.",
+  ].join(" ")
+}
+
 const ULM_OPERATION_ARTIFACT_MUTATION_PATTERN =
   /\b(?:mkdir|cp|mv|rm|touch|install|rsync)\b[\s\S]*(?:\.ulmcode\/operations|\/\.ulmcode\/operations\/)/i
 
@@ -649,9 +657,7 @@ export const ShellTool = Tool.define(
                 )
               }
               if (process.env.OPENCODE_APP_NAME === "ulmcode" && isULMForegroundScanCommand(params.command)) {
-                throw new Error(
-                  `ULM foreground scan blocked: "${params.command}". Use command_supervise, task background=true, runtime_scheduler, or runtime_daemon so scans have heartbeat/output artifacts and operation recovery metadata.`,
-                )
+                throw new Error(ulmForegroundScanPolicyMessage(params.command))
               }
               if (process.env.OPENCODE_APP_NAME === "ulmcode" && isULMOperationArtifactMutation(params.command)) {
                 throw new Error(

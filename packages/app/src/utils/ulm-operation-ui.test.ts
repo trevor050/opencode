@@ -3,6 +3,12 @@ import type { UlmFinalArtifact, UlmOperationStatusSummary } from "@opencode-ai/s
 import {
   artifactGroups,
   currentOperationFilesPath,
+  operationChatPath,
+  operationFilesOpenPathForSession,
+  operationForSession,
+  operationFilesPathForSession,
+  operationFilesRootForDirectory,
+  operationStatusGroups,
   operationCounts,
   operationRootPath,
   reportPackageState,
@@ -27,6 +33,7 @@ const summary = (input: Partial<UlmOperationStatusSummary> & { operationID: stri
   reports: input.reports ?? { outline: false, markdown: false, html: false, pdf: false, readme: false, manifest: false },
   runtimeSummary: input.runtimeSummary ?? false,
   lastEvents: input.lastEvents ?? [],
+  ...("sessions" in input ? { sessions: (input as any).sessions } : {}),
 })
 
 const artifact = (file: string, exists = true): UlmFinalArtifact => ({
@@ -45,9 +52,10 @@ describe("ULM operation UI helpers", () => {
       operationCounts([
         summary({ operationID: "running", operation: { status: "running" } as any }),
         summary({ operationID: "planned", operation: { status: "planned" } as any }),
+        summary({ operationID: "paused", operation: { status: "paused" } as any }),
         summary({ operationID: "complete", operation: { status: "complete" } as any }),
       ]),
-    ).toEqual({ running: 1, open: 2, total: 3 })
+    ).toEqual({ running: 1, open: 2, total: 4 })
   })
 
   test("opens the operation root unless final package files are requested", () => {
@@ -55,6 +63,103 @@ describe("ULM operation UI helpers", () => {
 
     expect(operationRootPath(item)).toBe("/ops/demo")
     expect(currentOperationFilesPath(item)).toBe("/ops/demo")
+  })
+
+  test("selects only the operation bound to the current chat session", () => {
+    const running = summary({
+      operationID: "global-running",
+      operation: { status: "running" } as any,
+      sessions: [{ sessionID: "other-chat", boundAt: "2026-05-09T12:00:00.000Z" }],
+    } as any)
+    const current = summary({
+      operationID: "current-chat-op",
+      operation: { status: "paused" } as any,
+      sessions: [{ sessionID: "chat-1", boundAt: "2026-05-09T12:01:00.000Z" }],
+    } as any)
+
+    expect(operationForSession([running, current] as any, "chat-1")?.operationID).toBe("current-chat-op")
+    expect(operationForSession([running] as any, "chat-1")).toBeUndefined()
+  })
+
+  test("targets current operation files when the chat is bound and falls back to all operation files otherwise", () => {
+    const current = summary({
+      operationID: "current-chat-op",
+      root: "/ops/current-chat-op",
+      sessions: [{ sessionID: "chat-1", boundAt: "2026-05-09T12:01:00.000Z" }],
+    } as any)
+    const other = summary({
+      operationID: "other-chat-op",
+      root: "/ops/other-chat-op",
+      sessions: [{ sessionID: "other-chat", boundAt: "2026-05-09T12:00:00.000Z" }],
+    } as any)
+
+    expect(operationFilesPathForSession([other, current] as any, "chat-1", "/ops")).toBe("/ops/current-chat-op")
+    expect(operationFilesPathForSession([other, current] as any, undefined, "/ops")).toBe("/ops")
+    expect(operationFilesPathForSession([other, current] as any, "unbound-chat", "/ops")).toBe("/ops")
+  })
+
+  test("resolves the ULM operation file store from source and profile directories", () => {
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode")).toBe(
+      "/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/codeprojects/ULMcode/opencode")).toBe(
+      "/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/.config/ulmcode")).toBe(
+      "/Users/trevorrosato/.config/ulmcode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory(undefined)).toBeUndefined()
+  })
+
+  test("opens the current chat operation files before falling back to the operation store", () => {
+    const current = summary({
+      operationID: "current-chat-op",
+      root: "/ops/current-chat-op",
+      sessions: [{ sessionID: "chat-1", boundAt: "2026-05-09T12:01:00.000Z" }],
+    } as any)
+    const other = summary({
+      operationID: "other-chat-op",
+      root: "/ops/other-chat-op",
+      sessions: [{ sessionID: "other-chat", boundAt: "2026-05-09T12:00:00.000Z" }],
+    } as any)
+
+    expect(
+      operationFilesOpenPathForSession(
+        [other, current] as any,
+        "chat-1",
+        "/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode",
+      ),
+    ).toBe("/ops/current-chat-op")
+    expect(
+      operationFilesOpenPathForSession(
+        [other, current] as any,
+        "unbound-chat",
+        "/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode",
+      ),
+    ).toBe("/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations")
+  })
+
+  test("routes operation chat actions to the bound chat instead of the new-chat route", () => {
+    const item = summary({
+      operationID: "current-chat-op",
+      sessions: [{ sessionID: "chat-1", boundAt: "2026-05-09T12:01:00.000Z" }],
+    } as any)
+
+    expect(operationChatPath("/abc", item as any)).toBe("/abc/session/chat-1")
+    expect(operationChatPath("/abc", summary({ operationID: "unbound" }) as any)).toBe("/abc/session")
+  })
+
+  test("groups operations into active, paused, and completed lanes", () => {
+    const groups = operationStatusGroups([
+      summary({ operationID: "complete", operation: { status: "complete" } as any }),
+      summary({ operationID: "paused", operation: { status: "paused" } as any }),
+      summary({ operationID: "running", operation: { status: "running" } as any }),
+      summary({ operationID: "blocked", operation: { status: "blocked" } as any }),
+    ])
+
+    expect(groups.active.map((item) => item.operationID)).toEqual(["running", "blocked"])
+    expect(groups.paused.map((item) => item.operationID)).toEqual(["paused"])
+    expect(groups.completed.map((item) => item.operationID)).toEqual(["complete"])
   })
 
   test("classifies report packages without calling partial packages ready", () => {

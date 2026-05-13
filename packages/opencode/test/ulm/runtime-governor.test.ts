@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test"
+import fs from "fs/promises"
+import path from "path"
 import { evaluateRuntimeGovernor, writeRuntimeGovernorRouteAudit } from "@/ulm/runtime-governor"
-import { writeOperationCheckpoint, writeRuntimeSummary } from "@/ulm/artifact"
+import { operationPath, writeOperationCheckpoint, writeRuntimeSummary } from "@/ulm/artifact"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { tmpdir } from "../fixture/fixture"
+
+async function forceLaneRoute(worktree: string, operationID: string, laneID: string, route: string) {
+  const graphPath = path.join(operationPath(worktree, operationID), "plans", "operation-graph.json")
+  const graph = JSON.parse(await fs.readFile(graphPath, "utf8"))
+  for (const lane of graph.lanes ?? []) {
+    if (lane.id === laneID) lane.modelRoute = route
+  }
+  await fs.writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n")
+}
 
 describe("ULM runtime governor", () => {
   test("continues a ready lane when runtime budget and context are healthy", async () => {
@@ -45,6 +56,22 @@ describe("ULM runtime governor", () => {
     expect(decision.recommendedTools).toContain("operation_audit")
   })
 
+  test("treats nonpositive recorded budget as unknown instead of exhausted", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School" })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 0, budgetUSD: 0, remainingUSD: 0 },
+      compaction: { pressure: "low" },
+    })
+
+    const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School", laneID: "recon" })
+
+    expect(decision.action).toBe("continue")
+    expect(decision.remainingUSD).toBeUndefined()
+    expect(decision.blockers).not.toContain("operation budget exhausted")
+  })
+
   test("uses lane-specific spend before shared agent spend", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
@@ -78,7 +105,7 @@ describe("ULM runtime governor", () => {
 
     expect(decision.action).toBe("continue")
     expect(decision.contextRatio).toBeUndefined()
-    expect(decision.blockers).not.toContain("model context is above 90% for opencode-go/qwen3.6-plus")
+    expect(decision.blockers).not.toContain("model context is above 90% for openai/gpt-5.4-mini-fast")
   })
 
   test("compacts when the active session reports high compaction pressure", async () => {
@@ -99,11 +126,8 @@ describe("ULM runtime governor", () => {
 
   test("requires model metadata for unknown routes", async () => {
     await using dir = await tmpdir({ git: true })
-    await writeOperationGraph(dir.path, {
-      operationID: "School",
-      budgetUSD: 10,
-      modelRoutes: { throughput: "unknown-provider/mystery-model" },
-    })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await forceLaneRoute(dir.path, "School", "recon", "unknown-provider/mystery-model")
     await writeRuntimeSummary(dir.path, {
       operationID: "School",
       usage: { costUSD: 1, budgetUSD: 10 },
@@ -118,16 +142,12 @@ describe("ULM runtime governor", () => {
 
   test("stops hard-quota lanes before relaunching an exhausted model route", async () => {
     await using dir = await tmpdir({ git: true })
-    await writeOperationGraph(dir.path, {
-      operationID: "School",
-      budgetUSD: 10,
-      modelRoutes: { throughput: "opencode-go/qwen3.6-plus" },
-    })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
     await writeRuntimeSummary(dir.path, {
       operationID: "School",
       modelCalls: {
         total: 4,
-        byModel: { "opencode-go/qwen3.6-plus": 4 },
+        byModel: { "openai/gpt-5.4-mini-fast": 4 },
       },
       usage: { costUSD: 1, budgetUSD: 10 },
       compaction: { pressure: "low" },
@@ -137,8 +157,8 @@ describe("ULM runtime governor", () => {
       operationID: "School",
       laneID: "recon",
       modelCatalog: {
-        "opencode-go/qwen3.6-plus": {
-          providerKind: "subscription",
+        "openai/gpt-5.4-mini-fast": {
+          providerKind: "api",
           contextLimit: 200_000,
           outputLimit: 32_000,
           quota: { kind: "hard", window: "daily", maxCalls: 4 },
@@ -147,8 +167,8 @@ describe("ULM runtime governor", () => {
     })
 
     expect(decision.action).toBe("stop")
-    expect(decision.blockers).toContain("model route quota exhausted for opencode-go/qwen3.6-plus")
-    expect(decision.fallbackModelRoutes).toContain("openai/gpt-5.4-mini-fast")
+    expect(decision.blockers).toContain("model route quota exhausted for openai/gpt-5.4-mini-fast")
+    expect(decision.fallbackModelRoutes).toContain("openai/gpt-5.5")
     expect(decision.recommendedTools).toContain("runtime_summary")
     expect(decision.recommendedTools).toContain("operation_audit")
   })
@@ -173,28 +193,17 @@ describe("ULM runtime governor", () => {
         openai: {
           source: "env",
           models: {
-            "gpt-5.5-fast": { limit: { context: 1_000_000, output: 128_000 } },
+            "gpt-5.5": { limit: { context: 1_000_000, output: 128_000 } },
             "gpt-5.4-mini-fast": { limit: { context: 270_000, output: 64_000 } },
           },
         },
-        "opencode-go": {
-          source: "custom",
-          models: {
-            default: { limit: { context: 200_000, output: 32_000 } },
-          },
-        },
-      },
-      quotaOverrides: {
-        "opencode-go/qwen3.6-plus": { kind: "soft", window: "daily", maxCalls: 20 },
       },
     })
 
     expect(audit.json).toContain("model-route-audit.json")
     expect(audit.markdown).toContain("model-route-audit.md")
     expect(audit.record.routes.some((route) => route.role === "fallback")).toBe(true)
-    expect(audit.record.routes.some((route) => route.route === "opencode-go/qwen3.6-plus" && route.quotaPolicyKnown)).toBe(
-      true,
-    )
+    expect(audit.record.routes.every((route) => route.providerID === "openai")).toBe(true)
     expect(await Bun.file(audit.markdown).text()).toContain("quota policy is not recorded")
   })
 })

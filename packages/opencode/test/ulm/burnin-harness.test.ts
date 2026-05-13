@@ -142,6 +142,18 @@ describe("ULM accelerated burn-in harness", () => {
     expect(result.proof.supervisorScenario.proofPath).toBe(
       path.join(operationPath(dir.path, operationID), "burnin", "burnin-supervisor-scenario.json"),
     )
-    await fs.access(path.join(operationPath(dir.path, operationID), "burnin", "scenario-worktree"))
+    const scenarioOperationRoot = path.join(
+      operationPath(dir.path, operationID),
+      "burnin",
+      "scenario-worktree",
+      ".ulmcode",
+      "operations",
+      "existing-operation",
+    )
+    await fs.access(scenarioOperationRoot)
+    const scenarioPlan = JSON.parse(
+      await fs.readFile(path.join(scenarioOperationRoot, "plans", "operation-plan.json"), "utf8"),
+    )
+    expect(scenarioPlan.timeBudget.targetHours).toBe(0.02)
   })
 })

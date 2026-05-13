@@ -30,16 +30,16 @@ import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
-import path from "path"
-import { Global } from "@opencode-ai/core/global"
 import { JsonMigration } from "@/storage/json-migration"
 import { Database } from "@/storage/db"
+import { shouldRunJsonMigration } from "@/storage/migration-marker"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { UlmCommand } from "./cli/cmd/ulm"
 import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
+import { isRecord } from "@/util/record"
 
 const processMetadata = ensureProcessMetadata("main")
 
@@ -117,8 +117,7 @@ const cli = yargs(args)
       run_id: processMetadata.runID,
     })
 
-    const marker = path.join(Global.Path.data, "opencode.db")
-    if (!(await Filesystem.exists(marker))) {
+    if (await shouldRunJsonMigration({ databasePath: Database.Path, exists: Filesystem.exists })) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36
@@ -206,13 +205,6 @@ try {
   }
 } catch (e) {
   let data: Record<string, any> = {}
-  if (e instanceof NamedError) {
-    const obj = e.toObject()
-    Object.assign(data, {
-      ...obj.data,
-    })
-  }
-
   if (e instanceof Error) {
     Object.assign(data, {
       name: e.name,
@@ -220,6 +212,16 @@ try {
       cause: e.cause?.toString(),
       stack: e.stack,
     })
+  }
+
+  if (e instanceof NamedError) {
+    const obj = e.toObject()
+    if (isRecord(obj.data)) {
+      for (const [key, value] of Object.entries(obj.data)) {
+        if (key === "name" || key === "stack" || key === "cause") continue
+        data[key] = value
+      }
+    }
   }
 
   if (e instanceof ResolveMessage) {

@@ -35,6 +35,11 @@ type Metadata = {
   root: string
 }
 
+function normalizeConfidence(value: number) {
+  if (value > 1 && value <= 100) return value / 100
+  return value
+}
+
 export const FindingRecordTool = Tool.define<typeof Parameters, Metadata, never>(
   "finding_record",
   Effect.succeed({
@@ -42,7 +47,8 @@ export const FindingRecordTool = Tool.define<typeof Parameters, Metadata, never>
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const { root, record } = yield* Effect.tryPromise(() => writeFinding(Instance.worktree, params)).pipe(
+        const normalized = { ...params, confidence: normalizeConfidence(params.confidence) }
+        const { root, record } = yield* Effect.tryPromise(() => writeFinding(Instance.worktree, normalized)).pipe(
           Effect.orDie,
         )
         return {

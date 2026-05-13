@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { createOperationGoal } from "@/ulm/operation-goal"
 import { operationPath, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
+import { writeFirstRunLaunchPacket } from "@/ulm/first-run-launch-packet"
 import { writeOperationGraph } from "@/ulm/operation-graph"
 import { runRuntimeDaemon } from "@/ulm/runtime-daemon"
 import { tmpdir } from "../fixture/fixture"
@@ -48,7 +49,7 @@ async function writeDaemonSupervisorFixture(worktree: string) {
     agent: "pentest",
     status: "complete",
     dependsOn: [],
-    modelRoute: "openai/gpt-5.5-fast",
+    modelRoute: "openai/gpt-5.5",
     fallbackModelRoutes: ["openai/gpt-5.4-mini-fast"],
     allowedTools: ["operation_supervise", "operation_resume", "operation_status"],
     expectedArtifacts: ["supervisor/latest.md"],
@@ -65,6 +66,112 @@ async function writeDaemonSupervisorFixture(worktree: string) {
 }
 
 describe("ULM runtime daemon", () => {
+  test("rejects raw credential secrets before writing daemon heartbeat artifacts", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    await expect(
+      runRuntimeDaemon(dir.path, {
+        operationID: "School\npassword: Summer2026!",
+        maxRuntimeSeconds: 10,
+        cycleIntervalSeconds: 0,
+        maxCycles: 1,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("runtime daemon inputs must not contain raw credential secrets")
+  })
+
+  test("blocks long unattended launches until laptop preflight is ready", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10, forceReschedule: true })
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.stopped).toBe(true)
+    expect(result.reason).toContain("laptop preflight blocked")
+    expect(result.reason).toContain("laptop-preflight.json is missing")
+    expect(result.cycles).toEqual([])
+    const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
+    expect(heartbeat.reason).toContain("laptop preflight blocked")
+  })
+
+  test("allows long unattended launches after laptop preflight is ready", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = graph.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete" }))
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    await fs.mkdir(path.join(root, "scheduler"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "scheduler", "laptop-preflight.json"),
+      JSON.stringify({ operationID: "school", status: "ready", targetHours: 20, gaps: [] }, null, 2) + "\n",
+    )
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 20 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      supervisorEnabled: false,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toContain("expanded operation backlog before target runtime elapsed")
+    expect(result.reason).not.toContain("laptop preflight blocked")
+    const expanded = JSON.parse(await fs.readFile(written.json, "utf8"))
+    expect(expanded.lanes.some((lane: { id: string }) => lane.id === "planned_work_expansion_1")).toBe(true)
+  })
+
+  test("blocks school-laptop daemon launches until first-run launch readiness is true", async () => {
+    await using dir = await tmpdir({ git: true })
+    const packet = await writeFirstRunLaunchPacket(dir.path, {
+      operationID: "School",
+      targetHours: 48,
+    })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10, forceReschedule: true })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await fs.mkdir(path.join(packet.files.operationRoot, "scheduler"), { recursive: true })
+    await fs.writeFile(
+      path.join(packet.files.operationRoot, "scheduler", "laptop-preflight.json"),
+      JSON.stringify({ operationID: "school", status: "ready", targetHours: 48, gaps: [] }, null, 2) + "\n",
+    )
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 48 * 60 * 60,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      supervisorEnabled: false,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+    })
+
+    expect(result.stopped).toBe(true)
+    expect(result.reason).toContain("first-run launch readiness blocked")
+    expect(result.reason).toContain("submit-credential-vault")
+    expect(result.cycles).toEqual([])
+    const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
+    expect(heartbeat.reason).toContain("first-run launch readiness blocked")
+  })
+
   test("owns a wall-clock scheduler loop with heartbeats and a released lock", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
@@ -149,6 +256,7 @@ describe("ULM runtime daemon", () => {
     await runRuntimeDaemon(dir.path, {
       operationID: "School",
       maxRuntimeSeconds: 20 * 60 * 60,
+      requireLaptopPreflight: false,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
       toolManifestPath: manifestPath,
@@ -162,7 +270,7 @@ describe("ULM runtime daemon", () => {
     const runtime = JSON.parse(await fs.readFile(path.join(root, "deliverables", "runtime-summary.json"), "utf8"))
     expect(preflight.blocked).toBe(0)
     expect(preflight.tools[0]?.toolID).toBe("fixture-tool")
-    expect(routeAudit.routes.some((route: { route?: string }) => route.route === "opencode-go/qwen3.6-plus")).toBe(true)
+    expect(routeAudit.routes.every((route: { providerID?: string }) => route.providerID === "openai")).toBe(true)
     expect(runtime.usage.costUSD).toBe(0)
     expect(runtime.compaction.pressure).toBe("low")
   })
@@ -206,6 +314,7 @@ describe("ULM runtime daemon", () => {
     const result = await runRuntimeDaemon(dir.path, {
       operationID: "School",
       maxRuntimeSeconds: 20 * 60 * 60,
+      requireLaptopPreflight: false,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
       supervisorEnabled: false,
@@ -213,8 +322,10 @@ describe("ULM runtime daemon", () => {
       sleep: async () => {},
     })
 
-    expect(result.stopped).toBe(true)
-    expect(result.reason).toBe("no scheduled operation work remains before target runtime elapsed")
+    expect(result.stopped).toBe(false)
+    expect(result.reason).toContain("expanded operation backlog before target runtime elapsed")
+    const expanded = JSON.parse(await fs.readFile(written.json, "utf8"))
+    expect(expanded.lanes.some((lane: { id: string }) => lane.id === "planned_work_expansion_1")).toBe(true)
   })
 
   test("enables supervisor review from the daemon target window even when the stored goal is short", async () => {
@@ -257,6 +368,7 @@ describe("ULM runtime daemon", () => {
     const result = await runRuntimeDaemon(dir.path, {
       operationID: "School",
       maxRuntimeSeconds: 20 * 60 * 60,
+      requireLaptopPreflight: false,
       cycleIntervalSeconds: 0,
       maxCycles: 1,
       supervisorIntervalMinutes: 0,
@@ -420,6 +532,7 @@ describe("ULM runtime daemon", () => {
       runRuntimeDaemon(dir.path, {
         operationID: "School",
         maxCycles: 1,
+        requireLaptopPreflight: false,
         now: () => new Date("2026-05-05T00:00:10.000Z"),
         sleep: async () => {},
       }),
@@ -428,6 +541,7 @@ describe("ULM runtime daemon", () => {
     const recovered = await runRuntimeDaemon(dir.path, {
       operationID: "School",
       maxCycles: 1,
+      requireLaptopPreflight: false,
       staleLockSeconds: 1,
       now: fakeClock("2026-05-05T00:10:00.000Z", 1),
       sleep: async () => {},
@@ -478,7 +592,9 @@ describe("ULM runtime daemon", () => {
     const parsed = JSON.parse(stdout)
     expect(parsed.operationID).toBe("school")
     expect(parsed.heartbeatPath).toContain("daemon-heartbeat.json")
-    expect(parsed.cycles[0].launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    expect(parsed.cycleCount).toBeGreaterThanOrEqual(1)
+    expect(parsed.launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    expect(parsed.cycles).toBeUndefined()
     const launches = await fs.readdir(
       path.join(dir.path, ".ulmcode", "operations", "school", "scheduler", "cli-launches"),
     )
@@ -535,6 +651,85 @@ describe("ULM runtime daemon", () => {
     throw new Error("detached daemon did not write heartbeat")
   })
 
+  test("CLI refuses long laptop preflight bypass unless the explicit bypass env is set", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    const blocked = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-hours",
+        "20",
+        "--skip-laptop-preflight",
+        "--json",
+      ],
+      { cwd: dir.path, stdout: "pipe", stderr: "pipe" },
+    )
+    const [blockedStdout, blockedStderr, blockedExit] = await Promise.all([
+      new Response(blocked.stdout).text(),
+      new Response(blocked.stderr).text(),
+      blocked.exited,
+    ])
+
+    expect(blockedExit).toBe(1)
+    expect(blockedStdout).toBe("")
+    expect(blockedStderr).toContain("ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS=1")
+  })
+
+  test("CLI records an audit artifact when a controlled long preflight bypass is allowed", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        "run",
+        path.join(packageRoot, "script", "ulm-runtime-daemon.ts"),
+        "School",
+        "--duration-hours",
+        "20",
+        "--interval-seconds",
+        "0",
+        "--max-cycles",
+        "1",
+        "--disable-operation-supervisor",
+        "--skip-laptop-preflight",
+        "--json",
+      ],
+      {
+        cwd: dir.path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS: "1",
+          ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1",
+        },
+      },
+    )
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+
+    expect(exit).toBe(0)
+    expect(stderr).toBe("")
+    expect(JSON.parse(stdout).operationID).toBe("school")
+    const bypass = JSON.parse(
+      await fs.readFile(path.join(dir.path, ".ulmcode", "operations", "school", "scheduler", "laptop-preflight-bypass.json"), "utf8"),
+    )
+    expect(bypass.reason).toContain("ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS=1")
+    expect(bypass.durationSeconds).toBe(20 * 60 * 60)
+  })
+
   test("writes launchd and systemd supervisor artifacts without daemonizing under the supervisor", async () => {
     await using dir = await tmpdir({ git: true })
 
@@ -587,6 +782,13 @@ describe("ULM runtime daemon", () => {
     const runbook = await fs.readFile(parsed.files.runbook, "utf8")
     expect(runbook).toContain("launchctl bootstrap")
     expect(runbook).toContain("systemctl --user enable --now")
+    expect(runbook).toContain("48-Hour Laptop Checklist")
+    expect(runbook).toContain("Disable sleep/hibernate/modern standby")
+    expect(runbook).toContain("school Wi-Fi")
+    expect(runbook).toContain("credential vault and redacted indexes")
+    expect(runbook).toContain("ulm:laptop-preflight school --prepare --strict")
+    expect(runbook).toContain("--confirm power --confirm sleep --confirm wifi --confirm scope --confirm clock")
+    expect(runbook).toContain("ulm:literal-run-readiness --strict --json")
   })
 
   test("CLI launcher reuses an active model child instead of duplicating it", async () => {
@@ -647,7 +849,8 @@ describe("ULM runtime daemon", () => {
     expect(exit).toBe(0)
     expect(stderr).toBe("")
     const result = JSON.parse(stdout)
-    expect(result.cycles[0].launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    expect(result.launchedJobs).toEqual(["cli-model-lane-district_profile"])
+    expect(result.cycles).toBeUndefined()
     const records = await fs.readdir(launchDir)
     expect(records.filter((file) => file.includes("model-pid-district_profile"))).toHaveLength(1)
     expect(records.some((file) => file.includes("model-reuse-district_profile"))).toBe(true)
@@ -680,7 +883,7 @@ describe("ULM runtime daemon", () => {
           id: "district_profile",
           laneID: "district_profile",
           agent: "recon",
-          modelRoute: "opencode-go/qwen3.6-plus",
+          modelRoute: "openai/gpt-5.4-mini-fast",
           prompt: "resume district profile",
           allowedTools: "district_profile, webfetch, websearch, evidence_record, task, operation_run",
           createdAt: "2026-05-05T00:00:00.000Z",
@@ -757,5 +960,30 @@ describe("ULM runtime daemon", () => {
     const log = await fs.readFile(result.logPath, "utf8")
     expect(log).toContain('"consecutiveErrors":1')
     expect(log).toContain('"consecutiveErrors":2')
+  })
+
+  test("does not hide setup errors behind runtime elapsed on short daemon windows", async () => {
+    await using dir = await tmpdir({ git: true })
+    const sleeps: number[] = []
+
+    const result = await runRuntimeDaemon(dir.path, {
+      operationID: "MissingGraph",
+      maxRuntimeSeconds: 20,
+      cycleIntervalSeconds: 1,
+      errorBackoffSeconds: 30,
+      maxConsecutiveErrors: 3,
+      maxCycles: 2,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds)
+      },
+    })
+
+    expect(result.stopped).toBe(true)
+    expect(result.reason).toContain("scheduler error before runtime window elapsed")
+    expect(result.reason).toContain("operation graph is missing")
+    expect(sleeps).toEqual([10000])
+    const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
+    expect(heartbeat.reason).toContain("scheduler error before runtime window elapsed")
   })
 })

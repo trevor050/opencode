@@ -3,9 +3,7 @@ import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID, MessageID } from "@/session/schema"
-import { zod } from "@/util/effect-zod"
 import * as Log from "@opencode-ai/core/util/log"
-import { withStatics } from "@/util/schema"
 import { QuestionID } from "./schema"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
 import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
@@ -13,6 +11,7 @@ import { readULMConfig } from "@/ulm/config"
 
 const log = Log.create({ service: "question" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
+export const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
 // Schemas
 
@@ -23,9 +22,7 @@ export class Option extends Schema.Class<Option>("QuestionOption")({
   description: Schema.String.annotate({
     description: "Explanation of choice",
   }),
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
 const base = {
   question: Schema.String.annotate({
@@ -47,20 +44,14 @@ export class Info extends Schema.Class<Info>("QuestionInfo")({
   custom: Schema.optional(Schema.Boolean).annotate({
     description: "Allow typing a custom answer (default: true)",
   }),
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
-export class Prompt extends Schema.Class<Prompt>("QuestionPrompt")(base) {
-  static readonly zod = zod(this)
-}
+export class Prompt extends Schema.Class<Prompt>("QuestionPrompt")(base) {}
 
 export class Tool extends Schema.Class<Tool>("QuestionTool")({
   messageID: MessageID,
   callID: Schema.String,
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
 export class Request extends Schema.Class<Request>("QuestionRequest")({
   id: QuestionID,
@@ -72,22 +63,16 @@ export class Request extends Schema.Class<Request>("QuestionRequest")({
     description: "Questions to ask",
   }),
   tool: Schema.optional(Tool),
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
-export const Answer = Schema.Array(Schema.String)
-  .annotate({ identifier: "QuestionAnswer" })
-  .pipe(withStatics((s) => ({ zod: zod(s) })))
+export const Answer = Schema.Array(Schema.String).annotate({ identifier: "QuestionAnswer" })
 export type Answer = Schema.Schema.Type<typeof Answer>
 
 export class Reply extends Schema.Class<Reply>("QuestionReply")({
   answers: Schema.Array(Answer).annotate({
     description: "User answers in order of questions (each answer is an array of selected labels)",
   }),
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
 class Replied extends Schema.Class<Replied>("QuestionReplied")({
   sessionID: SessionID,
@@ -117,6 +102,7 @@ interface PendingEntry {
   deferred: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
   timeoutAt?: number
   timeoutWindowMillis?: number
+  partialAnswers?: ReadonlyArray<Answer>
 }
 
 interface State {
@@ -130,6 +116,11 @@ function fallbackAnswer(question: Info): Answer {
   return [preferred?.label ?? question.options[0]?.label ?? "Unavailable"]
 }
 
+export function timeoutAnswer(question: Info, partial?: Answer): Answer {
+  if (partial !== undefined) return partial.length > 0 ? [...partial] : []
+  return fallbackAnswer(question)
+}
+
 // Service
 
 export interface Interface {
@@ -140,7 +131,11 @@ export interface Interface {
   }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
   readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
-  readonly touch: (input: { requestID: QuestionID; holdMillis?: number }) => Effect.Effect<boolean>
+  readonly touch: (input: {
+    requestID: QuestionID
+    holdMillis?: number
+    answers?: ReadonlyArray<Answer>
+  }) => Effect.Effect<boolean>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 }
 
@@ -218,7 +213,7 @@ export const layer = Layer.effect(
               if (!latest) return []
               if ((latest.timeoutAt ?? 0) > Date.now()) return yield* loop()
               pending.delete(id)
-              const answers = input.questions.map(fallbackAnswer)
+              const answers = input.questions.map((question, index) => timeoutAnswer(question, latest.partialAnswers?.[index]))
               const sensitive = input.questions.some((question) =>
                 isSensitiveOperatorPrompt(`${question.header} ${question.question}`),
               )
@@ -286,14 +281,24 @@ export const layer = Layer.effect(
       yield* Deferred.fail(existing.deferred, new RejectedError())
     })
 
-    const touch = Effect.fn("Question.touch")(function* (input: { requestID: QuestionID; holdMillis?: number }) {
+    const touch = Effect.fn("Question.touch")(function* (input: {
+      requestID: QuestionID
+      holdMillis?: number
+      answers?: ReadonlyArray<Answer>
+    }) {
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
       if (!existing || existing.timeoutAt === undefined) return false
       const holdUntil =
-        Date.now() + Math.max(existing.timeoutWindowMillis ?? 0, input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS)
+        Date.now() +
+        Math.max(
+          existing.timeoutWindowMillis ?? 0,
+          input.holdMillis ?? OPERATOR_ACTIVITY_HOLD_MILLIS,
+          OPERATOR_ACTIVITY_RESET_MILLIS,
+        )
       const timeoutAt = Math.max(existing.timeoutAt, holdUntil)
       existing.timeoutAt = timeoutAt
+      if (input.answers) existing.partialAnswers = input.answers.map((answer) => [...answer])
       existing.info = Schema.decodeUnknownSync(Request)({
         ...existing.info,
         timeoutAt: new Date(timeoutAt).toISOString(),

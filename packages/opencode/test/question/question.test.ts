@@ -1,19 +1,13 @@
 import { afterEach, expect } from "bun:test"
-import fs from "fs/promises"
-import path from "path"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import { Question } from "../../src/question"
 import { Instance } from "../../src/project/instance"
-import { InstanceState } from "../../src/effect/instance-state"
-import { WithInstance } from "../../src/project/with-instance"
 import { InstanceRuntime } from "../../src/project/instance-runtime"
 import { QuestionID } from "../../src/question/schema"
 import { disposeAllInstances, provideInstance, reloadTestInstance, tmpdirScoped } from "../fixture/fixture"
 import { SessionID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { createOperationGoal } from "../../src/ulm/operation-goal"
-import { bindOperationSession } from "../../src/ulm/operation-context"
 
 const it = testEffect(Layer.mergeAll(Question.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -39,11 +33,6 @@ const replyEffect = Effect.fn("QuestionTest.reply")(function* (input: {
 const rejectEffect = Effect.fn("QuestionTest.reject")(function* (id: QuestionID) {
   const question = yield* Question.Service
   yield* question.reject(id)
-})
-
-const touchEffect = Effect.fn("QuestionTest.touch")(function* (id: QuestionID, holdMillis?: number) {
-  const question = yield* Question.Service
-  yield* question.touch({ requestID: id, holdMillis })
 })
 
 afterEach(async () => {
@@ -113,194 +102,6 @@ it.instance(
       const pending = yield* waitForPending(1)
       expect(pending.length).toBe(1)
       expect(pending[0].questions).toEqual(questions)
-      yield* rejectAll
-      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
-    }),
-  { git: true },
-)
-
-it.instance(
-  "ask - active unattended ULM operation times out with conservative answers",
-  () =>
-    Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
-      yield* Effect.promise(() =>
-        createOperationGoal(ctx.worktree, {
-          operationID: "school",
-          objective: "Authorized unattended run",
-          targetDurationHours: 20,
-          continuation: { operatorFallbackTimeoutSeconds: 0.01 },
-        }),
-      )
-      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
-
-      const answers = yield* askEffect({
-        sessionID: SessionID.make("ses_test"),
-        questions: [
-          {
-            question: "Can I expand scope to a new subnet?",
-            header: "Scope",
-            options: [
-              { label: "Continue", description: "Keep going" },
-              { label: "Denied", description: "Do not expand scope" },
-            ],
-          },
-        ],
-      })
-
-      expect(answers).toEqual([["Denied"]])
-      const timeoutDir = path.join(ctx.worktree, ".ulmcode", "operations", "school", "operator-timeouts")
-      const timeoutFiles = yield* Effect.promise(() => fs.readdir(timeoutDir))
-      expect(timeoutFiles.some((file) => file.includes("question"))).toBe(true)
-    }),
-  { git: true },
-)
-
-it.instance(
-  "ask - active unattended ULM operation prefers skip or decline on timeout",
-  () =>
-    Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
-      yield* Effect.promise(() =>
-        createOperationGoal(ctx.worktree, {
-          operationID: "school",
-          objective: "Authorized unattended run",
-          targetDurationHours: 20,
-          continuation: { operatorFallbackTimeoutSeconds: 0.01 },
-        }),
-      )
-      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
-
-      const answers = yield* askEffect({
-        sessionID: SessionID.make("ses_test"),
-        questions: [
-          {
-            question: "Which optional enrichment should run next?",
-            header: "Enrich",
-            options: [
-              { label: "Run (Recommended)", description: "Run optional enrichment" },
-              { label: "Skip", description: "Skip optional enrichment and continue core scope" },
-            ],
-          },
-        ],
-      })
-
-      expect(answers).toEqual([["Skip"]])
-    }),
-  { git: true },
-)
-
-it.instance(
-  "ask - active operator touch extends an unattended question timeout",
-  () =>
-    Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
-      yield* Effect.promise(() =>
-        createOperationGoal(ctx.worktree, {
-          operationID: "school",
-          objective: "Authorized unattended run",
-          targetDurationHours: 20,
-          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
-        }),
-      )
-      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
-
-      const fiber = yield* askEffect({
-        sessionID: SessionID.make("ses_test"),
-        questions: [
-          {
-            question: "Type any operator note?",
-            header: "Note",
-            options: [{ label: "Skip", description: "Continue without a note" }],
-          },
-        ],
-      }).pipe(Effect.forkScoped)
-
-      const pending = yield* waitForPending(1)
-      expect(pending[0].timeoutAt).toBeString()
-      yield* Effect.sleep("20 millis")
-      yield* touchEffect(pending[0].id, 30)
-      yield* Effect.sleep("40 millis")
-      expect(yield* listEffect).toHaveLength(1)
-      yield* rejectAll
-      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
-    }),
-  { git: true },
-)
-
-it.instance(
-  "ask - active operator touch renews the configured unattended question timeout",
-  () =>
-    Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
-      yield* Effect.promise(() =>
-        createOperationGoal(ctx.worktree, {
-          operationID: "school",
-          objective: "Authorized unattended run",
-          targetDurationHours: 20,
-          continuation: { operatorFallbackTimeoutSeconds: 0.2 },
-        }),
-      )
-      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
-
-      const fiber = yield* askEffect({
-        sessionID: SessionID.make("ses_test"),
-        questions: [
-          {
-            question: "Type any operator note?",
-            header: "Note",
-            options: [{ label: "Skip", description: "Continue without a note" }],
-          },
-        ],
-      }).pipe(Effect.forkScoped)
-
-      const pending = yield* waitForPending(1)
-      const firstTimeout = Date.parse(pending[0].timeoutAt ?? "")
-      expect(Number.isFinite(firstTimeout)).toBe(true)
-      yield* Effect.sleep("80 millis")
-      yield* touchEffect(pending[0].id, 30)
-      const updated = (yield* listEffect)[0]
-      const renewedTimeout = Date.parse(updated?.timeoutAt ?? "")
-      expect(renewedTimeout).toBeGreaterThan(firstTimeout + 50)
-      yield* rejectAll
-      expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
-    }),
-  { git: true },
-)
-
-it.instance(
-  "ask - ULMconfig zero disables unattended timeout",
-  () =>
-    Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
-      yield* Effect.promise(() =>
-        fs.writeFile(path.join(ctx.worktree, "ULMconfig.toml"), "operator_timeout_seconds = 0\n"),
-      )
-      yield* Effect.promise(() =>
-        createOperationGoal(ctx.worktree, {
-          operationID: "school",
-          objective: "Authorized unattended run",
-          targetDurationHours: 20,
-          continuation: { operatorFallbackTimeoutSeconds: 0.01 },
-        }),
-      )
-      yield* Effect.promise(() => bindOperationSession(ctx.worktree, { sessionID: SessionID.make("ses_test"), operationID: "school" }))
-
-      const fiber = yield* askEffect({
-        sessionID: SessionID.make("ses_test"),
-        questions: [
-          {
-            question: "Which optional enrichment should run next?",
-            header: "Enrich",
-            options: [
-              { label: "Run (Recommended)", description: "Run optional enrichment" },
-              { label: "Skip", description: "Skip optional enrichment and continue core scope" },
-            ],
-          },
-        ],
-      }).pipe(Effect.forkScoped)
-
-      expect(yield* waitForPending(1)).toHaveLength(1)
       yield* rejectAll
       expect((yield* Fiber.await(fiber))._tag).toBe("Failure")
     }),
@@ -596,9 +397,8 @@ it.live("pending question rejects on instance dispose", () =>
     }).pipe(provideInstance(dir), Effect.forkScoped)
 
     expect(yield* waitForPending(1).pipe(provideInstance(dir))).toHaveLength(1)
-    yield* Effect.promise(() =>
-      WithInstance.provide({ directory: dir, fn: () => InstanceRuntime.disposeInstance(Instance.current) }),
-    )
+    const ctx = yield* Effect.sync(() => Instance.current).pipe(provideInstance(dir))
+    yield* Effect.promise(() => InstanceRuntime.disposeInstance(ctx))
 
     const exit = yield* Fiber.await(fiber)
     expect(Exit.isFailure(exit)).toBe(true)

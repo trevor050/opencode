@@ -14,7 +14,7 @@ This directory is the decision hub for the long-running ULMCode autonomy work. T
 
 ## Research Inputs
 
-- OpenCode Go: current docs describe a beta provider using `opencode-go/<model-id>`, subscription pricing, usage limits, and top-up behavior. The implementation treats Go routes as useful throughput lanes, not an unlimited context/cost blank check. Source: <https://opencode.ai/docs/go/>
+- ULM model routing is OpenAI-only. Non-OpenAI routes should not appear in ULM profile defaults, daemon fallbacks, or model-route audits.
 - ChatGPT Pro and Codex: current OpenAI help material frames Pro tiers as higher-allowance ChatGPT/Codex access, not API-equivalent unmetered automation. Codex usage varies with task size, long-running context, execution location, and optional credits beyond plan limits. ULMCode should use Pro routes for hard reasoning, synthesis, and review while still recording budgets, quotas, runtime state, and fallback routes. Sources: <https://help.openai.com/en/articles/9793128-what-is-c>, <https://help.openai.com/en/articles/11369540-codex-in-chatgpt>, and <https://help.openai.com/en/articles/12642688-using-credits-for-flexible-usage-in-chatgpt-freegopluspro>
 - OpenHands: its evaluation harness and control-plane docs reinforce a split between harness, runtime, controller, policy, budgets, routing, and observable artifacts. Sources: <https://docs.openhands.dev/openhands/usage/developers/evaluation-harness>, <https://docs.openhands.dev/usage/architecture/runtime>, and <https://openhands.dev/blog/agent-control-plane>
 - PentestGPT/PentAGI-style systems: their useful pattern is the reasoning/generation/parsing split plus lab replay, not unsupervised destructive testing. Source: <https://pentestgpt.com/>

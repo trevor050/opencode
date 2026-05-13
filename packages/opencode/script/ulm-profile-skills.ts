@@ -131,6 +131,7 @@ type ProfileConfig = {
   instructions?: string[]
   plugin?: string[]
   agent?: Record<string, AgentConfig>
+  provider?: Record<string, unknown>
 }
 
 type OmoRoute = {
@@ -156,15 +157,16 @@ function assertRoute(file: string, id: string, route: OmoRoute | undefined, expe
 }
 
 function validateRouting() {
-  if (opencodeConfig.model !== "openai/gpt-5.5-fast") throw new Error("profile model must default to GPT-5.5 Fast")
+  if (opencodeConfig.model !== "openai/gpt-5.5") throw new Error("profile model must default to GPT-5.5")
   if (opencodeConfig.small_model !== "openai/gpt-5.4-mini-fast") throw new Error("profile small_model must use GPT-5.4 Mini Fast")
   if (opencodeConfig.default_agent !== "pentest") throw new Error("profile default agent must be pentest")
+  if (opencodeConfig.provider) throw new Error("profile must not configure non-OpenAI providers")
 
   assertRoute("opencode.json", "pentest", opencodeConfig.agent?.pentest, {
-    model: "openai/gpt-5.5-fast",
+    model: "openai/gpt-5.5",
   })
   assertRoute("opencode.json", "action", opencodeConfig.agent?.action, {
-    model: "openai/gpt-5.5-fast",
+    model: "openai/gpt-5.5",
   })
   if (opencodeConfig.agent?.action?.options?.reasoningEffort !== "medium") {
     throw new Error("opencode.json: action must use medium reasoning for focused one-off work")
@@ -176,7 +178,7 @@ function validateRouting() {
     model: "openai/gpt-5.4-mini-fast",
   })
   assertRoute("opencode.json", "validator", opencodeConfig.agent?.validator, {
-    model: "openai/gpt-5.5-fast",
+    model: "openai/gpt-5.5",
   })
   if (opencodeConfig.agent?.validator?.options?.reasoningEffort !== "xhigh") {
     throw new Error("opencode.json: validator must use xhigh reasoning")

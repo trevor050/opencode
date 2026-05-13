@@ -1,8 +1,11 @@
 import { Effect, Schema } from "effect"
+import fs from "fs/promises"
+import path from "path"
 import * as Tool from "./tool"
 import DESCRIPTION from "./operation_plan.txt"
 import { Instance } from "@/project/instance"
-import { writeOperationDiscoveryCharter, writeOperationPlan } from "@/ulm/artifact"
+import { operationPath, writeOperationDiscoveryCharter, writeOperationPlan } from "@/ulm/artifact"
+import { KNOWN_OPERATION_LANES } from "@/ulm/operation-graph"
 import { errorMessage } from "@/util/error"
 
 const Phase = Schema.Struct({
@@ -48,6 +51,26 @@ const TimeBudget = Schema.Struct({
         hours: Schema.Number,
         work: Schema.String,
       }),
+    ),
+  ),
+  executionBlocks: Schema.optional(
+    Schema.mutable(
+      Schema.Array(
+        Schema.Struct({
+          id: Schema.optional(Schema.String),
+          stage: Schema.Literals(["intake", "recon", "mapping", "validation", "reporting", "handoff"]),
+          laneID: Schema.String,
+          title: Schema.String,
+          startMinute: Schema.Number,
+          durationMinutes: Schema.Number,
+          objective: Schema.String,
+          actions: Schema.mutable(Schema.Array(Schema.String)),
+          successCriteria: Schema.mutable(Schema.Array(Schema.String)),
+          fallbackWork: Schema.mutable(Schema.Array(Schema.String)),
+          subagents: Schema.mutable(Schema.Array(Schema.String)),
+          expectedArtifacts: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+        }),
+      ),
     ),
   ),
 })
@@ -100,6 +123,45 @@ function toolPromise<T>(try_: () => Promise<T>) {
   })
 }
 
+function assertKnownCoverageLanes(requiredLanes: string[] | undefined) {
+  if (!requiredLanes?.length) return
+  const known = new Set<string>(KNOWN_OPERATION_LANES)
+  const unknown = requiredLanes.filter((lane) => !known.has(lane))
+  if (!unknown.length) return
+  throw new Error(
+    [
+      `coverageContract.requiredLanes must use operation_schedule lane ids; unknown lanes: ${unknown.join(", ")}`,
+      `known lane ids: ${[...known].sort().join(", ")}`,
+    ].join("\n"),
+  )
+}
+
+function shouldValidateCoverageLanes(params: Schema.Schema.Type<typeof Parameters>) {
+  const targetHours = params.timeBudget?.targetHours ?? 0
+  if (targetHours >= 2 && params.planningApproval?.status !== "approved") return false
+  return true
+}
+
+async function hasActiveExecution(worktree: string, operationID: string) {
+  const root = operationPath(worktree, operationID)
+  const runLog = path.join(root, "plans", "operation-run.jsonl")
+  try {
+    const content = await fs.readFile(runLog, "utf8")
+    if (content.trim().length > 0) return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+
+  try {
+    const entries = await fs.readdir(path.join(root, "lane-complete"), { withFileTypes: true })
+    if (entries.some((entry) => entry.isFile() && entry.name.endsWith(".json"))) return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+
+  return false
+}
+
 export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>(
   "operation_plan",
   Effect.succeed({
@@ -107,7 +169,16 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const discoveryMode = params.planningMode === "discovery-charter" || (params.phases === undefined && params.discoveryCharter)
+        const discoveryMode =
+          params.planningMode === "discovery-charter" ||
+          (params.planningMode === undefined && params.phases === undefined && params.discoveryCharter)
+        if (yield* Effect.tryPromise(() => hasActiveExecution(Instance.worktree, params.operationID)).pipe(Effect.orDie)) {
+          return yield* Effect.die(
+            new Error(
+              "operation_plan cannot rewrite the durable plan after operation execution has started; use operation_status, operation_run, operation_resume, operation_recover, report_lint, report_render, runtime_summary, or operation_audit to continue.",
+            ),
+          )
+        }
         const result =
           discoveryMode
             ? yield* toolPromise(() =>
@@ -132,10 +203,13 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
                 }),
               ).pipe(Effect.orDie)
             : yield* toolPromise(() =>
-                writeOperationPlan(Instance.worktree, {
-                  ...params,
-                  phases: params.phases ?? [],
-                  reportingCloseout: params.reportingCloseout ?? [],
+                Promise.resolve().then(() => {
+                  if (shouldValidateCoverageLanes(params)) assertKnownCoverageLanes(params.coverageContract?.requiredLanes)
+                  return writeOperationPlan(Instance.worktree, {
+                    ...params,
+                    phases: params.phases ?? [],
+                    reportingCloseout: params.reportingCloseout ?? [],
+                  })
                 }),
               ).pipe(Effect.orDie)
         const approvalStatus = discoveryMode ? (params.planningApproval?.status ?? "pending") : params.planningApproval?.status

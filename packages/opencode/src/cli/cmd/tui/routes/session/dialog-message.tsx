@@ -32,7 +32,6 @@ export function DialogMessage(props: {
                   void sdk.client.session.deleteMessage({
                     sessionID: props.sessionID,
                     messageID: props.messageID,
-                    force: "true",
                   })
                   dialog.clear()
                 },

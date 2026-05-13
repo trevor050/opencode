@@ -10,11 +10,11 @@ import {
   onMount,
   Show,
   Switch,
+  untrack,
   useContext,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import path from "path"
-import open from "open"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
@@ -49,7 +49,6 @@ import type { WebFetchTool } from "@/tool/webfetch"
 import { webSearchProviderLabel, type WebSearchTool } from "@/tool/websearch"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
-import type { OperationCredentialsTool } from "@/tool/operation_credentials"
 import type { SkillTool } from "@/tool/skill"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
@@ -60,14 +59,11 @@ import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
-import { Link } from "../../ui/link"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
-import { buildULMToolView } from "./ulm-tool-view"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
@@ -79,12 +75,11 @@ import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
 import { Filesystem } from "@/util/filesystem"
-import { Global } from "@opencode-ai/core/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import * as Model from "../../util/model"
-import { formatTranscript, type TranscriptOptions } from "../../util/transcript"
+import { formatTranscript } from "../../util/transcript"
 import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
@@ -94,6 +89,7 @@ import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 import { useCommandPalette } from "../../context/command-palette"
 import { useBindings, useCommandShortcut } from "../../keymap"
+import { PathFormatterProvider, usePathFormatter } from "../../context/path-format"
 
 addDefaultParsers(parsers.parsers)
 
@@ -121,7 +117,6 @@ function goUpsellKeys(action: SessionRetry.Retryable["action"]) {
   }
 }
 
-const taskMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
 const sessionBindingCommands = [
   "session.share",
   "session.rename",
@@ -204,18 +199,6 @@ export function Session() {
     if (session()?.parentID) return []
     return children().flatMap((x) => sync.data.question[x.id] ?? [])
   })
-  const fullTranscript = async (sessionData: NonNullable<ReturnType<typeof session>>, options: TranscriptOptions) => {
-    const root = formatTranscript(sessionData, await sync.session.messages(sessionData.id), options)
-    const descendants = await Promise.all(
-      children()
-        .filter((child) => child.parentID === sessionData.id)
-        .map(async (child) => formatTranscript(child, await sync.session.messages(child.id), options)),
-    )
-    if (!descendants.length) return root
-    return (
-      [root.trimEnd(), "# Descendant Sessions", ...descendants.map((item) => item.trimEnd())].join("\n\n---\n\n") + "\n"
-    )
-  }
   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
@@ -259,7 +242,7 @@ export function Session() {
   createEffect(() => {
     const sessionID = route.sessionID
     void (async () => {
-      const previousWorkspace = project.workspace.current()
+      const previousWorkspace = untrack(() => project.workspace.current())
       const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
       if (!result.data) {
         toast.show({
@@ -356,10 +339,13 @@ export function Session() {
     const logo = UI.logo("  ").split(/\r?\n/)
     return exit.message.set(
       [
-        ...logo,
+        `${logo[0] ?? ""}`,
+        `${logo[1] ?? ""}`,
+        `${logo[2] ?? ""}`,
+        `${logo[3] ?? ""}`,
         ``,
         `  ${weak("Session")}${UI.Style.TEXT_NORMAL_BOLD}${title}${UI.Style.TEXT_NORMAL}`,
-        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}ulmcode -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
+        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}opencode -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
         ``,
       ].join("\n"),
     )
@@ -760,7 +746,7 @@ export function Session() {
       title: "Line up",
       value: "session.line.up",
       category: "Session",
-      enabled: false,
+      hidden: true,
       run: () => {
         scroll.scrollBy(-1)
         dialog.clear()
@@ -770,7 +756,7 @@ export function Session() {
       title: "Line down",
       value: "session.line.down",
       category: "Session",
-      enabled: false,
+      hidden: true,
       run: () => {
         scroll.scrollBy(1)
         dialog.clear()
@@ -914,12 +900,17 @@ export function Session() {
         try {
           const sessionData = session()
           if (!sessionData) return
-          const transcript = await fullTranscript(sessionData, {
-            thinking: showThinking(),
-            toolDetails: showDetails(),
-            assistantMetadata: showAssistantMetadata(),
-            providers: sync.data.provider,
-          })
+          const sessionMessages = messages()
+          const transcript = formatTranscript(
+            sessionData,
+            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+            {
+              thinking: showThinking(),
+              toolDetails: showDetails(),
+              assistantMetadata: showAssistantMetadata(),
+              providers: sync.data.provider,
+            },
+          )
           await Clipboard.copy(transcript)
           toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
         } catch {
@@ -939,6 +930,7 @@ export function Session() {
         try {
           const sessionData = session()
           if (!sessionData) return
+          const sessionMessages = messages()
 
           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
 
@@ -953,12 +945,16 @@ export function Session() {
 
           if (options === null) return
 
-          const transcript = await fullTranscript(sessionData, {
-            thinking: options.thinking,
-            toolDetails: options.toolDetails,
-            assistantMetadata: options.assistantMetadata,
-            providers: sync.data.provider,
-          })
+          const transcript = formatTranscript(
+            sessionData,
+            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+            {
+              thinking: options.thinking,
+              toolDetails: options.toolDetails,
+              assistantMetadata: options.assistantMetadata,
+              providers: sync.data.provider,
+            },
+          )
 
           if (options.openWithoutSaving) {
             // Just open in editor without saving
@@ -1082,202 +1078,201 @@ export function Session() {
   createEffect(on(() => route.sessionID, toBottom))
 
   return (
-    <context.Provider
-      value={{
-        get width() {
-          return contentWidth()
-        },
-        sessionID: route.sessionID,
-        conceal,
-        showThinking,
-        showTimestamps,
-        showDetails,
-        showGenericToolOutput,
-        diffWrapMode,
-        providers,
-        sync,
-        tui: tuiConfig,
-      }}
-    >
-      <box flexDirection="row" flexGrow={1} minHeight={0}>
-        <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
-          <Show when={session()}>
-            <scrollbox
-              ref={(r) => (scroll = r)}
-              viewportOptions={{
-                paddingRight: showScrollbar() ? 1 : 0,
-              }}
-              verticalScrollbarOptions={{
-                paddingLeft: 1,
-                visible: showScrollbar(),
-                trackOptions: {
-                  backgroundColor: theme.backgroundElement,
-                  foregroundColor: theme.border,
-                },
-              }}
-              stickyScroll={true}
-              stickyStart="bottom"
-              flexGrow={1}
-              scrollAcceleration={scrollAcceleration()}
-            >
-              <box height={1} />
-              <For each={messages()}>
-                {(message, index) => (
-                  <Switch>
-                    <Match when={message.id === revert()?.messageID}>
-                      {(function () {
-                        const command = useCommandPalette()
-                        const redoShortcut = useCommandShortcut("session.redo")
-                        const [hover, setHover] = createSignal(false)
-                        const dialog = useDialog()
-
-                        const handleUnrevert = async () => {
-                          const confirmed = await DialogConfirm.show(
-                            dialog,
-                            "Confirm Redo",
-                            "Are you sure you want to restore the reverted messages?",
-                          )
-                          if (confirmed) {
-                            command.run("session.redo")
-                          }
-                        }
-
-                        return (
-                          <box
-                            onMouseOver={() => setHover(true)}
-                            onMouseOut={() => setHover(false)}
-                            onMouseUp={handleUnrevert}
-                            marginTop={1}
-                            flexShrink={0}
-                            border={["left"]}
-                            customBorderChars={SplitBorder.customBorderChars}
-                            borderColor={theme.backgroundPanel}
-                          >
-                            <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
-                              backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
-                            >
-                              <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
-                              </text>
-                              <Show when={revert()!.diffFiles?.length}>
-                                <box marginTop={1}>
-                                  <For each={revert()!.diffFiles}>
-                                    {(file) => (
-                                      <text fg={theme.text}>
-                                        {file.filename}
-                                        <Show when={file.additions > 0}>
-                                          <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
-                                        </Show>
-                                        <Show when={file.deletions > 0}>
-                                          <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
-                                        </Show>
-                                      </text>
-                                    )}
-                                  </For>
-                                </box>
-                              </Show>
-                            </box>
-                          </box>
-                        )
-                      })()}
-                    </Match>
-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
-                      <></>
-                    </Match>
-                    <Match when={message.role === "user"}>
-                      <UserMessage
-                        index={index()}
-                        onMouseUp={() => {
-                          if (renderer.getSelection()?.getSelectedText()) return
-                          const pendingMessageID = pending()
-                          const queued = !!pendingMessageID && message.id > pendingMessageID
-                          dialog.replace(() => (
-                            <DialogMessage
-                              messageID={message.id}
-                              sessionID={route.sessionID}
-                              setPrompt={(promptInfo) => prompt?.set(promptInfo)}
-                              queued={queued}
-                            />
-                          ))
-                        }}
-                        message={message as UserMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                        pending={pending()}
-                      />
-                    </Match>
-                    <Match when={message.role === "assistant"}>
-                      <AssistantMessage
-                        last={lastAssistant()?.id === message.id}
-                        message={message as AssistantMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                      />
-                    </Match>
-                  </Switch>
-                )}
-              </For>
-            </scrollbox>
-            <box flexShrink={0}>
-              <Show when={permissions().length > 0}>
-                <PermissionPrompt request={permissions()[0]} />
-              </Show>
-              <Show when={permissions().length === 0 && questions().length > 0}>
-                <QuestionPrompt request={questions()[0]} />
-              </Show>
-              <Show when={session()?.parentID}>
-                <SubagentFooter />
-              </Show>
-              <Show when={visible()}>
-                <TuiPluginRuntime.Slot
-                  name="session_prompt"
-                  mode="replace"
-                  session_id={route.sessionID}
-                  visible={visible()}
-                  disabled={disabled()}
-                  on_submit={toBottom}
-                  ref={bind}
-                >
-                  <Prompt
-                    visible={visible()}
-                    ref={bind}
-                    disabled={disabled()}
-                    onSubmit={() => {
-                      toBottom()
-                    }}
-                    sessionID={route.sessionID}
-                    right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
-                  />
-                </TuiPluginRuntime.Slot>
-              </Show>
-            </box>
-          </Show>
-          <Toast />
-        </box>
-        <Show when={sidebarVisible()}>
-          <Switch>
-            <Match when={wide()}>
-              <Sidebar sessionID={route.sessionID} />
-            </Match>
-            <Match when={!wide()}>
-              <box
-                position="absolute"
-                top={0}
-                left={0}
-                right={0}
-                bottom={0}
-                alignItems="flex-end"
-                backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
+    <PathFormatterProvider path={session()?.directory}>
+      <context.Provider
+        value={{
+          get width() {
+            return contentWidth()
+          },
+          sessionID: route.sessionID,
+          conceal,
+          showThinking,
+          showTimestamps,
+          showDetails,
+          showGenericToolOutput,
+          diffWrapMode,
+          providers,
+          sync,
+          tui: tuiConfig,
+        }}
+      >
+        <box flexDirection="row" flexGrow={1} minHeight={0}>
+          <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
+            <Show when={session()}>
+              <scrollbox
+                ref={(r) => (scroll = r)}
+                viewportOptions={{
+                  paddingRight: showScrollbar() ? 1 : 0,
+                }}
+                verticalScrollbarOptions={{
+                  paddingLeft: 1,
+                  visible: showScrollbar(),
+                  trackOptions: {
+                    backgroundColor: theme.backgroundElement,
+                    foregroundColor: theme.border,
+                  },
+                }}
+                stickyScroll={true}
+                stickyStart="bottom"
+                flexGrow={1}
+                scrollAcceleration={scrollAcceleration()}
               >
-                <Sidebar sessionID={route.sessionID} />
+                <box height={1} />
+                <For each={messages()}>
+                  {(message, index) => (
+                    <Switch>
+                      <Match when={message.id === revert()?.messageID}>
+                        {(function () {
+                          const command = useCommandPalette()
+                          const redoShortcut = useCommandShortcut("session.redo")
+                          const [hover, setHover] = createSignal(false)
+                          const dialog = useDialog()
+
+                          const handleUnrevert = async () => {
+                            const confirmed = await DialogConfirm.show(
+                              dialog,
+                              "Confirm Redo",
+                              "Are you sure you want to restore the reverted messages?",
+                            )
+                            if (confirmed) {
+                              command.run("session.redo")
+                            }
+                          }
+
+                          return (
+                            <box
+                              onMouseOver={() => setHover(true)}
+                              onMouseOut={() => setHover(false)}
+                              onMouseUp={handleUnrevert}
+                              marginTop={1}
+                              flexShrink={0}
+                              border={["left"]}
+                              customBorderChars={SplitBorder.customBorderChars}
+                              borderColor={theme.backgroundPanel}
+                            >
+                              <box
+                                paddingTop={1}
+                                paddingBottom={1}
+                                paddingLeft={2}
+                                backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                              >
+                                <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
+                                <text fg={theme.textMuted}>
+                                  <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
+                                </text>
+                                <Show when={revert()!.diffFiles?.length}>
+                                  <box marginTop={1}>
+                                    <For each={revert()!.diffFiles}>
+                                      {(file) => (
+                                        <text fg={theme.text}>
+                                          {file.filename}
+                                          <Show when={file.additions > 0}>
+                                            <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
+                                          </Show>
+                                          <Show when={file.deletions > 0}>
+                                            <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
+                                          </Show>
+                                        </text>
+                                      )}
+                                    </For>
+                                  </box>
+                                </Show>
+                              </box>
+                            </box>
+                          )
+                        })()}
+                      </Match>
+                      <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
+                        <></>
+                      </Match>
+                      <Match when={message.role === "user"}>
+                        <UserMessage
+                          index={index()}
+                          onMouseUp={() => {
+                            if (renderer.getSelection()?.getSelectedText()) return
+                            dialog.replace(() => (
+                              <DialogMessage
+                                messageID={message.id}
+                                sessionID={route.sessionID}
+                                setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                              />
+                            ))
+                          }}
+                          message={message as UserMessage}
+                          parts={sync.data.part[message.id] ?? []}
+                          pending={pending()}
+                        />
+                      </Match>
+                      <Match when={message.role === "assistant"}>
+                        <AssistantMessage
+                          last={lastAssistant()?.id === message.id}
+                          message={message as AssistantMessage}
+                          parts={sync.data.part[message.id] ?? []}
+                        />
+                      </Match>
+                    </Switch>
+                  )}
+                </For>
+              </scrollbox>
+              <box flexShrink={0}>
+                <Show when={permissions().length > 0}>
+                  <PermissionPrompt request={permissions()[0]} />
+                </Show>
+                <Show when={permissions().length === 0 && questions().length > 0}>
+                  <QuestionPrompt request={questions()[0]} />
+                </Show>
+                <Show when={session()?.parentID}>
+                  <SubagentFooter />
+                </Show>
+                <Show when={visible()}>
+                  <TuiPluginRuntime.Slot
+                    name="session_prompt"
+                    mode="replace"
+                    session_id={route.sessionID}
+                    visible={visible()}
+                    disabled={disabled()}
+                    on_submit={toBottom}
+                    ref={bind}
+                  >
+                    <Prompt
+                      visible={visible()}
+                      ref={bind}
+                      disabled={disabled()}
+                      onSubmit={() => {
+                        toBottom()
+                      }}
+                      sessionID={route.sessionID}
+                      right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
+                    />
+                  </TuiPluginRuntime.Slot>
+                </Show>
               </box>
-            </Match>
-          </Switch>
-        </Show>
-      </box>
-    </context.Provider>
+            </Show>
+            <Toast />
+          </box>
+          <Show when={sidebarVisible()}>
+            <Switch>
+              <Match when={wide()}>
+                <Sidebar sessionID={route.sessionID} />
+              </Match>
+              <Match when={!wide()}>
+                <box
+                  position="absolute"
+                  top={0}
+                  left={0}
+                  right={0}
+                  bottom={0}
+                  alignItems="flex-end"
+                  backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
+                >
+                  <Sidebar sessionID={route.sessionID} />
+                </box>
+              </Match>
+            </Switch>
+          </Show>
+        </box>
+      </context.Provider>
+    </PathFormatterProvider>
   )
 }
 
@@ -1406,7 +1401,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
 
   const final = createMemo(() => {
-    return props.message.finish && !["tool-calls", "other"].includes(props.message.finish)
+    return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
   })
 
   const duration = createMemo(() => {
@@ -1533,29 +1528,15 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <Switch>
-          <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-            <markdown
-              syntaxStyle={syntax()}
-              streaming={true}
-              content={props.part.text.trim()}
-              conceal={ctx.conceal()}
-              fg={theme.markdownText}
-              bg={theme.background}
-            />
-          </Match>
-          <Match when={!Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-            <code
-              filetype="markdown"
-              drawUnstyledText={false}
-              streaming={true}
-              syntaxStyle={syntax()}
-              content={props.part.text.trim()}
-              conceal={ctx.conceal()}
-              fg={theme.text}
-            />
-          </Match>
-        </Switch>
+        <code
+          filetype="markdown"
+          drawUnstyledText={false}
+          streaming={true}
+          syntaxStyle={syntax()}
+          content={props.part.text.trim()}
+          conceal={ctx.conceal()}
+          fg={theme.text}
+        />
       </box>
     </Show>
   )
@@ -1635,19 +1616,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
-        </Match>
-        <Match when={props.part.tool === "operation_credentials"}>
-          <OperationCredentials {...toolprops} />
-        </Match>
-        <Match
-          when={
-            props.part.tool.startsWith("operation_") ||
-            props.part.tool === "command_supervise" ||
-            props.part.tool === "runtime_scheduler" ||
-            props.part.tool === "runtime_daemon"
-          }
-        >
-          <ULMOperationTool {...toolprops} />
         </Match>
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
@@ -1847,7 +1815,7 @@ function BlockTool(props: {
 
 function Shell(props: ToolProps<typeof ShellTool>) {
   const { theme } = useTheme()
-  const sync = useSync()
+  const pathFormatter = usePathFormatter()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const [expanded, setExpanded] = createSignal(false)
@@ -1861,18 +1829,7 @@ function Shell(props: ToolProps<typeof ShellTool>) {
   const workdirDisplay = createMemo(() => {
     const workdir = props.input.workdir
     if (!workdir || workdir === ".") return undefined
-
-    const base = sync.path.directory
-    if (!base) return undefined
-
-    const absolute = path.resolve(base, workdir)
-    if (absolute === base) return undefined
-
-    const home = Global.Path.home
-    if (!home) return absolute
-
-    const match = absolute === home || absolute.startsWith(home + path.sep)
-    return match ? absolute.replace(home, "~") : absolute
+    return pathFormatter.format(workdir)
   })
 
   const title = createMemo(() => {
@@ -1914,6 +1871,7 @@ function Shell(props: ToolProps<typeof ShellTool>) {
 
 function Write(props: ToolProps<typeof WriteTool>) {
   const { theme, syntax } = useTheme()
+  const pathFormatter = usePathFormatter()
   const code = createMemo(() => {
     if (!props.input.content) return ""
     return props.input.content
@@ -1922,7 +1880,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
-        <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"# Wrote " + pathFormatter.format(props.input.filePath)} part={props.part}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
             <code
               conceal={false}
@@ -1937,7 +1895,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
       </Match>
       <Match when={true}>
         <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
-          Write {normalizePath(props.input.filePath!)}
+          Write {pathFormatter.format(props.input.filePath)}
         </InlineTool>
       </Match>
     </Switch>
@@ -1945,9 +1903,10 @@ function Write(props: ToolProps<typeof WriteTool>) {
 }
 
 function Glob(props: ToolProps<typeof GlobTool>) {
+  const pathFormatter = usePathFormatter()
   return (
     <InlineTool icon="✱" pending="Finding files..." complete={props.input.pattern} part={props.part}>
-      Glob "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
+      Glob "{props.input.pattern}" <Show when={props.input.path}>in {pathFormatter.format(props.input.path)} </Show>
       <Show when={props.metadata.count}>
         ({props.metadata.count} {props.metadata.count === 1 ? "match" : "matches"})
       </Show>
@@ -1957,6 +1916,7 @@ function Glob(props: ToolProps<typeof GlobTool>) {
 
 function Read(props: ToolProps<typeof ReadTool>) {
   const { theme } = useTheme()
+  const pathFormatter = usePathFormatter()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const loaded = createMemo(() => {
     if (props.part.state.status !== "completed") return []
@@ -1974,13 +1934,13 @@ function Read(props: ToolProps<typeof ReadTool>) {
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
+        Read {pathFormatter.format(props.input.filePath)} {input(props.input, ["filePath"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
           <box paddingLeft={3}>
             <text paddingLeft={3} fg={theme.textMuted}>
-              ↳ Loaded {normalizePath(filepath)}
+              ↳ Loaded {pathFormatter.format(filepath)}
             </text>
           </box>
         )}
@@ -1990,9 +1950,10 @@ function Read(props: ToolProps<typeof ReadTool>) {
 }
 
 function Grep(props: ToolProps<typeof GrepTool>) {
+  const pathFormatter = usePathFormatter()
   return (
     <InlineTool icon="✱" pending="Searching content..." complete={props.input.pattern} part={props.part}>
-      Grep "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
+      Grep "{props.input.pattern}" <Show when={props.input.path}>in {pathFormatter.format(props.input.path)} </Show>
       <Show when={props.metadata.matches}>
         ({props.metadata.matches} {props.metadata.matches === 1 ? "match" : "matches"})
       </Show>
@@ -2009,11 +1970,11 @@ function WebFetch(props: ToolProps<typeof WebFetchTool>) {
 }
 
 function WebSearch(props: ToolProps<typeof WebSearchTool>) {
-  const metadata = props.metadata as { numResults?: number; provider?: unknown }
+  const metadata = () => props.metadata as { numResults?: number; provider?: unknown }
   return (
     <InlineTool icon="◈" pending="Searching web..." complete={props.input.query} part={props.part}>
-      {webSearchProviderLabel(metadata.provider)} "{props.input.query}"{" "}
-      <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
+      {webSearchProviderLabel(metadata().provider)} "{props.input.query}"{" "}
+      <Show when={metadata().numResults}>({metadata().numResults} results)</Show>
     </InlineTool>
   )
 }
@@ -2050,14 +2011,6 @@ function Task(props: ToolProps<typeof TaskTool>) {
     return assistant - first
   })
 
-  const totalCost = createMemo(() => {
-    const id = props.metadata.sessionId
-    if (!id) return 0
-    const rollup = sync.data.session_cost[id]
-    if (rollup) return rollup.self + rollup.subagents
-    return messages().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
-  })
-
   const content = createMemo(() => {
     if (!props.input.description) return ""
     let content = [`${Locale.titlecase(props.input.subagent_type ?? "General")} Task — ${props.input.description}`]
@@ -2072,9 +2025,7 @@ function Task(props: ToolProps<typeof TaskTool>) {
     }
 
     if (props.part.state.status === "completed") {
-      const cost = totalCost()
-      const costSuffix = cost > 0 ? ` · ${taskMoney.format(cost)}` : ""
-      content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}${costSuffix}`)
+      content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}`)
     }
 
     return content.join("\n")
@@ -2101,6 +2052,7 @@ function Task(props: ToolProps<typeof TaskTool>) {
 function Edit(props: ToolProps<typeof EditTool>) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const pathFormatter = usePathFormatter()
 
   const view = createMemo(() => {
     const diffStyle = ctx.tui.diff_style
@@ -2116,7 +2068,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"← Edit " + pathFormatter.format(props.input.filePath)} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2143,7 +2095,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
       </Match>
       <Match when={true}>
         <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
-          Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
+          Edit {pathFormatter.format(props.input.filePath)} {input({ replaceAll: props.input.replaceAll })}
         </InlineTool>
       </Match>
     </Switch>
@@ -2153,6 +2105,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
 function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const pathFormatter = usePathFormatter()
 
   const files = createMemo(() => props.metadata.files ?? [])
 
@@ -2191,7 +2144,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
   function title(file: { type: string; relativePath: string; filePath: string; deletions: number }) {
     if (file.type === "delete") return "# Deleted " + file.relativePath
     if (file.type === "add") return "# Created " + file.relativePath
-    if (file.type === "move") return "# Moved " + normalizePath(file.filePath) + " → " + file.relativePath
+    if (file.type === "move") return "# Moved " + pathFormatter.format(file.filePath) + " → " + file.relativePath
     return "← Patched " + file.relativePath
   }
 
@@ -2280,91 +2233,6 @@ function Question(props: ToolProps<typeof QuestionTool>) {
   )
 }
 
-function OperationCredentials(props: ToolProps<typeof OperationCredentialsTool>) {
-  const { theme } = useTheme()
-  const action = createMemo(() => props.input.action)
-  const operationID = createMemo(() => props.metadata.operationID ?? props.input.operationID ?? "")
-  const vaultUrl = createMemo(() => props.metadata.fullVaultUrl ?? props.metadata.vaultUrl ?? "")
-  const opened = createMemo(() => props.metadata.opened)
-  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
-
-  return (
-    <Switch>
-      <Match when={isVault()}>
-        <BlockTool title="# Credential Vault" part={props.part}>
-          <box gap={1}>
-            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
-            <text fg={opened() ? theme.success : theme.warning}>
-              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
-            </text>
-            <Show when={vaultUrl()}>
-              <box flexDirection="row" gap={1}>
-                <text fg={theme.textMuted}>Fallback:</text>
-                <Link href={String(vaultUrl())} fg={theme.primary} />
-              </box>
-            </Show>
-            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
-          </box>
-        </BlockTool>
-      </Match>
-      <Match when={true}>
-        <ULMOperationTool {...props} />
-      </Match>
-    </Switch>
-  )
-}
-
-function ULMOperationTool(props: ToolProps<any>) {
-  const { theme } = useTheme()
-  const running = createMemo(() => props.part.state.status === "running")
-  const view = createMemo(() =>
-    buildULMToolView({
-      tool: props.part.tool,
-      input: props.input,
-      metadata: props.metadata,
-      output: props.output,
-    }),
-  )
-
-  return (
-    <BlockTool title={view().title} spinner={running()} part={props.part}>
-      <box gap={1}>
-        <For each={view().rows}>
-          {(row) => (
-            <box flexDirection="row" gap={1}>
-              <text fg={theme.textMuted}>{row.label}:</text>
-              <text fg={theme.text}>{row.value}</text>
-            </box>
-          )}
-        </For>
-        <Show when={view().preview.length}>
-          <box gap={1} paddingTop={1}>
-            <text fg={theme.textMuted}>Preview</text>
-            <For each={view().preview}>
-              {(line) => <text fg={theme.text}>{line}</text>}
-            </For>
-          </box>
-        </Show>
-        <For each={view().sections}>
-          {(section) => (
-            <box gap={1} paddingTop={1}>
-              <text fg={theme.textMuted}>{section.title}</text>
-              <For each={section.rows}>
-                {(row) => (
-                  <box flexDirection="row" gap={1}>
-                    <text fg={theme.textMuted}>{row.label}.</text>
-                    <text fg={theme.text}>{row.value}</text>
-                  </box>
-                )}
-              </For>
-            </box>
-          )}
-        </For>
-      </box>
-    </BlockTool>
-  )
-}
-
 function Skill(props: ToolProps<typeof SkillTool>) {
   return (
     <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
@@ -2394,20 +2262,6 @@ function Diagnostics(props: { diagnostics?: Record<string, Record<string, any>[]
       </box>
     </Show>
   )
-}
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-
-  // outside cwd - use absolute
-  return absolute
 }
 
 function input(input: Record<string, any>, omit?: string[]): string {

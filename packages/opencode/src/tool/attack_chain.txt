@@ -1,3 +1,5 @@
 Record an attack chain narrative from stored findings, assets, and evidence.
 
 Use this when multiple observations combine into a meaningful risk path. Do not invent exploitability. Mark blockers when the chain is plausible but not fully demonstrated.
+
+Keep chains non-destructive. Record evidence-backed attack paths, blast radius, validation limits, and stop conditions; do not claim destructive production execution, sensitive data dumping, persistence, backdoors, changed records, or planted access.

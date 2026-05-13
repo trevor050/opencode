@@ -28,6 +28,10 @@ missing files, absolute paths, and paths escaping the operation root are rejecte
 `coverageImpact` and `releaseRequired` honestly; coverage-critical skips remain
 handoff blockers unless the coverage contract explicitly allows them.
 
+If a completion attempt returns blockers, repair the named artifact or evidence gap and retry `operation_run`. Do not hand-edit `plans/operation-graph.*`, `plans/coverage-contract.*`, or `lane-complete/*.json`; lane and coverage state are only valid when recorded by operation tools.
+
 Lane workers should call only terminal modes (`complete_lane`, `skip_lane`,
 `block_lane`, or `fail_lane`) before exiting. They should not call `advance` or
 launch downstream lanes; the scheduler owns that handoff.
+
+Use redacted credential IDs or vault-backed handles only. Never include raw passwords, tokens, cookies, API keys, or other secret values in summaries, artifacts, evidence refs, lane metadata, or blocker notes.
