@@ -720,6 +720,7 @@ export const RunCommand = effectCmd({
               }
             }
           }
+          return error
         }
         const cwd = args.attach ? (directory ?? sess.directory ?? (await current(sdk))) : (directory ?? root)
         const client = args.attach ? attachSDK(cwd) : sdk
@@ -731,10 +732,7 @@ export const RunCommand = effectCmd({
 
         if (!args.interactive) {
           const events = await client.event.subscribe()
-          loop(client, events).catch((e) => {
-            console.error(e)
-            process.exit(1)
-          })
+          const completed = loop(client, events)
 
           if (args.command) {
             await client.session.command({
@@ -745,6 +743,8 @@ export const RunCommand = effectCmd({
               arguments: message,
               variant: args.variant,
             })
+            const error = await completed
+            if (error) process.exitCode = 1
             return
           }
 
@@ -756,6 +756,8 @@ export const RunCommand = effectCmd({
             variant: args.variant,
             parts: [...files, { type: "text", text: message }],
           })
+          const error = await completed
+          if (error) process.exitCode = 1
           return
         }
 

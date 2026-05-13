@@ -16,7 +16,6 @@ import {
 } from "@/context/prompt"
 import { useLayout } from "@/context/layout"
 import { useSDK } from "@/context/sdk"
-import { useGlobalSDK } from "@/context/global-sdk"
 import { useSync } from "@/context/sync"
 import { useComments } from "@/context/comments"
 import { Button } from "@opencode-ai/ui/button"
@@ -56,12 +55,11 @@ import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 import { useQueries } from "@tanstack/solid-query"
-import { loadAgentsQuery, loadProvidersQuery } from "@/context/global-sync/bootstrap"
-import { isUlmDirectory } from "@/utils/ulm-workspace"
+import { useQueryOptions } from "@/context/global-sync"
+import { pathKey } from "@/utils/path-key"
 
 interface PromptInputProps {
   class?: string
-  compact?: boolean
   ref?: (el: HTMLDivElement) => void
   newSessionWorktree?: string
   onNewSessionWorktreeReset?: () => void
@@ -101,18 +99,11 @@ const EXAMPLES = [
   "prompt.example.25",
 ] as const
 
-const ULM_EXAMPLES = [
-  "Start a scoped external recon operation",
-  "Resume the current operation and summarize blockers",
-  "Review pending approvals before continuing",
-  "Prepare the final deliverables for handoff",
-] as const
-
 const NON_EMPTY_TEXT = /[^\s\u200B]/
 
 export const PromptInput: Component<PromptInputProps> = (props) => {
   const sdk = useSDK()
-  const globalSDK = useGlobalSDK()
+  const queryOptions = useQueryOptions()
 
   const sync = useSync()
   const local = useLocal()
@@ -133,8 +124,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   let slashPopoverRef!: HTMLDivElement
 
   const mirror = { input: false }
-  const inset = () => (props.compact ? 46 : 56)
-  const space = () => `${inset()}px`
+  const inset = 56
+  const space = `${inset}px`
 
   const scrollCursorIntoView = () => {
     const container = scrollRef
@@ -164,8 +155,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    if (bottom > container.scrollTop + container.clientHeight - inset()) {
-      container.scrollTop = bottom - container.clientHeight + inset()
+    if (bottom > container.scrollTop + container.clientHeight - inset) {
+      container.scrollTop = bottom - container.clientHeight + inset
     }
   }
 
@@ -249,13 +240,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     return paths
   })
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
-  const status = createMemo(
-    () =>
-      sync.data.session_status[params.id ?? ""] ?? {
-        type: "idle",
-      },
-  )
-  const working = createMemo(() => status()?.type !== "idle")
+  const working = createMemo(() => sync.data.session_working(params.id ?? ""))
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
   )
@@ -351,23 +336,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   )
 
   const suggest = createMemo(() => !hasUserPrompt())
-  const ulmWorkspace = createMemo(() => isUlmDirectory(sdk.directory))
-  let operatorDefaultAgentApplied = false
-  const attachLabel = createMemo(() =>
-    ulmWorkspace() ? "Attach engagement evidence" : language.t("prompt.action.attachFile"),
-  )
 
   const placeholder = createMemo(() =>
     promptPlaceholder({
       mode: store.mode,
       commentCount: commentCount(),
-      example: suggest()
-        ? store.mode === "shell"
-          ? "git status"
-          : ulmWorkspace()
-            ? ULM_EXAMPLES[store.placeholder % ULM_EXAMPLES.length]
-            : language.t(EXAMPLES[store.placeholder])
-        : "",
+      example: suggest() ? (store.mode === "shell" ? "git status" : language.t(EXAMPLES[store.placeholder])) : "",
       suggest: suggest(),
       t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
     }),
@@ -475,8 +449,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   command.register("prompt-input", () => [
     {
       id: "file.attach",
-      title: attachLabel(),
-      category: ulmWorkspace() ? "Engagement" : language.t("command.category.file"),
+      title: language.t("prompt.action.attachFile"),
+      category: language.t("command.category.file"),
       keybind: "mod+u",
       disabled: store.mode !== "normal",
       onSelect: pick,
@@ -585,15 +559,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       .map((agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name })),
   )
   const agentNames = createMemo(() => local.agent.list().map((agent) => agent.name))
-
-  createEffect(() => {
-    if (operatorDefaultAgentApplied) return
-    if (!props.compact || !ulmWorkspace() || params.id) return
-    if (!agentNames().includes("action")) return
-
-    operatorDefaultAgentApplied = true
-    if (local.agent.current()?.name === "pentest") local.agent.set("action")
-  })
 
   const handleAtSelect = (option: AtOption | undefined) => {
     if (!option) return
@@ -1285,9 +1250,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const [agentsQuery, globalProvidersQuery, providersQuery] = useQueries(() => ({
     queries: [
-      loadAgentsQuery(sdk.directory, sdk.client),
-      loadProvidersQuery(null, globalSDK.client),
-      loadProvidersQuery(sdk.directory, sdk.client),
+      queryOptions.agents(pathKey(sdk.directory)),
+      queryOptions.providers(null),
+      queryOptions.providers(pathKey(sdk.directory)),
     ],
   }))
 
@@ -1365,13 +1330,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           }}
         >
           <div
-            class={
-              props.compact
-                ? "relative max-h-[112px] overflow-y-auto no-scrollbar"
-                : "relative max-h-[240px] overflow-y-auto no-scrollbar"
-            }
+            class="relative max-h-[240px] overflow-y-auto no-scrollbar"
             ref={(el) => (scrollRef = el)}
-            style={{ "scroll-padding-bottom": space() }}
+            style={{ "scroll-padding-bottom": space }}
           >
             <div
               data-component="prompt-input"
@@ -1397,23 +1358,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               onKeyDown={handleKeyDown}
               classList={{
                 "select-text": true,
-                "w-full pl-3 pr-2 text-text-strong focus:outline-none whitespace-pre-wrap": true,
-                "pt-2 text-14-regular": !props.compact,
-                "pt-2 text-13-regular leading-5": props.compact,
+                "w-full pl-3 pr-2 pt-2 text-14-regular text-text-strong focus:outline-none whitespace-pre-wrap": true,
                 "[&_[data-type=file]]:text-syntax-property": true,
                 "[&_[data-type=agent]]:text-syntax-type": true,
                 "font-mono!": store.mode === "shell",
               }}
-              style={{ "padding-bottom": space() }}
+              style={{ "padding-bottom": space }}
             />
             <div
-              classList={{
-                "absolute top-0 inset-x-0 pl-3 pr-2 pt-2 text-text-weak pointer-events-none whitespace-nowrap truncate": true,
-                "text-14-regular": !props.compact,
-                "text-13-regular": props.compact,
-                "font-mono!": store.mode === "shell",
-              }}
-              style={{ "padding-bottom": space(), display: prompt.dirty() ? "none" : undefined }}
+              class="absolute top-0 inset-x-0 pl-3 pr-2 pt-2 text-14-regular text-text-weak pointer-events-none whitespace-nowrap truncate"
+              classList={{ "font-mono!": store.mode === "shell" }}
+              style={{ "padding-bottom": space, display: prompt.dirty() ? "none" : undefined }}
             >
               {placeholder()}
             </div>
@@ -1423,7 +1378,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             aria-hidden="true"
             class="pointer-events-none absolute inset-x-0 bottom-0"
             style={{
-              height: space(),
+              height: space,
               background:
                 "linear-gradient(to top, var(--surface-raised-stronger-non-alpha) calc(100% - 20px), transparent)",
             }}
@@ -1467,7 +1422,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 "pointer-events": buttonsSpring() > 0.5 ? "auto" : "none",
               }}
             >
-              <TooltipKeybind placement="top" title={attachLabel()} keybind={command.keybind("file.attach")}>
+              <TooltipKeybind
+                placement="top"
+                title={language.t("prompt.action.attachFile")}
+                keybind={command.keybind("file.attach")}
+              >
                 <Button
                   data-action="prompt-attach"
                   type="button"
@@ -1477,7 +1436,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   onClick={pick}
                   disabled={store.mode !== "normal"}
                   tabIndex={store.mode === "normal" ? undefined : -1}
-                  aria-label={attachLabel()}
+                  aria-label={language.t("prompt.action.attachFile")}
                 >
                   <Icon name="plus" class="size-4.5" />
                 </Button>
@@ -1488,13 +1447,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       </DockShellForm>
       <Show when={store.mode === "normal" || store.mode === "shell"}>
         <DockTray attach="top">
-          <div
-            class={
-              props.compact
-                ? "px-1.5 pt-3.5 pb-1.5 flex items-center gap-2 min-w-0"
-                : "px-1.75 pt-5.5 pb-2 flex items-center gap-2 min-w-0"
-            }
-          >
+          <div class="px-1.75 pt-5.5 pb-2 flex items-center gap-2 min-w-0">
             <div class="flex items-center gap-1.5 min-w-0 flex-1 relative">
               <div
                 class="h-7 flex items-center gap-1.5 min-w-0 absolute inset-0"

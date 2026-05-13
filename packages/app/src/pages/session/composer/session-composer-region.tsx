@@ -2,10 +2,10 @@ import { Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
+import { useLayout } from "@/context/layout"
 import { PromptInput } from "@/components/prompt-input"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
-import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionKey } from "@/pages/session/session-layout"
@@ -17,7 +17,6 @@ import type { SessionComposerState } from "@/pages/session/composer/session-comp
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
 import type { FollowupDraft } from "@/components/prompt-input/submit"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
-import { isUlmDirectory } from "@/utils/ulm-workspace"
 
 export function SessionComposerRegion(props: {
   state: SessionComposerState
@@ -48,18 +47,18 @@ export function SessionComposerRegion(props: {
   setPromptDockRef: (el: HTMLDivElement) => void
 }) {
   const navigate = useNavigate()
+  const layout = useLayout()
   const prompt = usePrompt()
   const language = useLanguage()
   const route = useSessionKey()
   const sync = useSync()
-  const sdk = useSDK()
+  const view = layout.view(route.sessionKey)
 
   const handoffPrompt = createMemo(() => getSessionHandoff(route.sessionKey())?.prompt)
   const info = createMemo(() => (route.params.id ? sync.session.get(route.params.id) : undefined))
   const parentID = createMemo(() => info()?.parentID)
   const child = createMemo(() => !!parentID())
   const showComposer = createMemo(() => !props.state.blocked() || child())
-  const operatorHome = createMemo(() => !route.params.id && isUlmDirectory(sdk.directory))
 
   const previewPrompt = () =>
     prompt
@@ -211,6 +210,8 @@ export function SessionComposerRegion(props: {
                   <SessionTodoDock
                     sessionID={route.params.id}
                     todos={props.state.todos()}
+                    collapsed={view.todoCollapsed.get()}
+                    onToggle={() => view.todoCollapsed.set(!view.todoCollapsed.get())}
                     collapseLabel={language.t("session.todo.collapse")}
                     expandLabel={language.t("session.todo.expand")}
                     dockProgress={value()}
@@ -256,7 +257,6 @@ export function SessionComposerRegion(props: {
                   <Show when={!props.state.blocked()}>
                     <PromptInput
                       ref={props.inputRef}
-                      compact={operatorHome()}
                       newSessionWorktree={props.newSessionWorktree}
                       onNewSessionWorktreeReset={props.onNewSessionWorktreeReset}
                       edit={props.followup?.edit}

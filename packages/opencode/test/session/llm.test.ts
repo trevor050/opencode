@@ -353,6 +353,25 @@ async function loadFixture(providerID: string, modelID: string) {
   return { provider, model }
 }
 
+function configModel(model: ModelsDev.Model) {
+  return {
+    id: model.id,
+    name: model.name,
+    family: model.family,
+    release_date: model.release_date,
+    attachment: model.attachment,
+    reasoning: model.reasoning,
+    temperature: model.temperature,
+    tool_call: model.tool_call,
+    interleaved: model.interleaved,
+    cost: model.cost ? { ...model.cost, tiers: undefined } : undefined,
+    limit: model.limit,
+    modalities: model.modalities,
+    status: model.status,
+    provider: model.provider,
+  }
+}
+
 function createEventStream(chunks: unknown[], includeDone = false) {
   const lines = chunks.map((chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}`)
   if (includeDone) {
@@ -430,7 +449,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-1"),
+          id: MessageID.make("msg_user-1"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -514,7 +533,7 @@ describe("session.llm.stream", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         } satisfies Agent.Info
         const user = {
-          id: MessageID.make("user-service-abort"),
+          id: MessageID.make("msg_user-service-abort"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -605,7 +624,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-tools"),
+          id: MessageID.make("msg_user-tools"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -800,7 +819,7 @@ describe("session.llm.stream", () => {
                 npm: "@ai-sdk/openai",
                 api: "https://api.openai.com/v1",
                 models: {
-                  [model.id]: model,
+                  [model.id]: configModel(model),
                 },
                 options: {
                   apiKey: "test-openai-key",
@@ -827,7 +846,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-2"),
+          id: MessageID.make("msg_user-2"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -916,7 +935,7 @@ describe("session.llm.stream", () => {
                 npm: "@ai-sdk/openai",
                 api: "https://api.openai.com/v1",
                 models: {
-                  [model.id]: model,
+                  [model.id]: configModel(model),
                 },
                 options: {
                   apiKey: "test-openai-key",
@@ -942,7 +961,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-data-url"),
+          id: MessageID.make("msg_user-data-url"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -1063,7 +1082,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-3"),
+          id: MessageID.make("msg_user-3"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -1153,7 +1172,7 @@ describe("session.llm.stream", () => {
                 npm: "@ai-sdk/anthropic",
                 api: "https://api.anthropic.com/v1",
                 models: {
-                  [model.id]: model,
+                  [model.id]: configModel(model),
                 },
                 options: {
                   apiKey: "test-anthropic-key",
@@ -1178,7 +1197,7 @@ describe("session.llm.stream", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         } satisfies Agent.Info
         const user = {
-          id: MessageID.make("user-anthropic-tools"),
+          id: MessageID.make("msg_user-anthropic-tools"),
           sessionID,
           role: "user",
           time: { created: Date.now() },
@@ -1422,7 +1441,7 @@ describe("session.llm.stream", () => {
         } satisfies Agent.Info
 
         const user = {
-          id: MessageID.make("user-4"),
+          id: MessageID.make("msg_user-4"),
           sessionID,
           role: "user",
           time: { created: Date.now() },

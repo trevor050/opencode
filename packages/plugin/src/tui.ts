@@ -11,6 +11,7 @@ import type {
   Provider,
   PermissionRequest,
   QuestionRequest,
+  Session,
   SessionStatus,
   TextPart,
   Config as SdkConfig,
@@ -77,10 +78,40 @@ export type TuiKeys = {
 
 export type TuiKeymap = Keymap<Renderable, KeyEvent>
 
-export type TuiInputInterceptHandler = (event: ParsedKey, input: TextareaRenderable) => boolean | void
+/**
+ * Legacy `api.command` shape kept so v1 plugins can initialize. Remove in v2.
+ *
+ * @deprecated Use `api.keymap.registerLayer({ commands, bindings })` instead.
+ */
+export type TuiCommand = {
+  title: string
+  value: string
+  description?: string
+  category?: string
+  keybind?: string
+  suggested?: boolean
+  hidden?: boolean
+  enabled?: boolean
+  slash?: {
+    name: string
+    aliases?: string[]
+  }
+  onSelect?: (dialog?: TuiDialogStack) => void | Promise<void>
+}
 
-export type TuiInput = {
-  intercept: (handler: TuiInputInterceptHandler) => () => void
+/**
+ * Legacy `api.command` API kept so v1 plugins can initialize. Remove in v2.
+ *
+ * @deprecated Use `api.keymap.registerLayer`, `api.keymap.dispatchCommand`, and
+ * `api.keymap.dispatchCommand("command.palette.show")` instead.
+ */
+export type TuiCommandApi = {
+  /** @deprecated Use `api.keymap.registerLayer({ commands, bindings })` instead. */
+  register: (cb: () => TuiCommand[]) => () => void
+  /** @deprecated Use `api.keymap.dispatchCommand(name)` instead. */
+  trigger: (value: string) => void
+  /** @deprecated Use `api.keymap.dispatchCommand("command.palette.show")` instead. */
+  show: () => void
 }
 
 export type TuiDialogProps = {
@@ -172,6 +203,12 @@ export type TuiPromptRef = {
   submit(): void
 }
 
+export type TuiInputInterceptHandler = (event: ParsedKey, input: TextareaRenderable) => boolean | void
+
+export type TuiInput = {
+  intercept: (handler: TuiInputInterceptHandler) => () => void
+}
+
 export type TuiPromptProps = {
   sessionID?: string
   workspaceID?: string
@@ -193,6 +230,76 @@ export type TuiToast = {
   title?: string
   message: string
   duration?: number
+}
+
+export type TuiAttentionWhen = "always" | "focused" | "blurred"
+
+export const TuiAttentionSoundNames = ["default", "question", "permission", "error", "done", "subagent_done"] as const
+export type TuiAttentionSoundName = (typeof TuiAttentionSoundNames)[number]
+
+export type TuiAttentionSound =
+  | boolean
+  | {
+      name?: TuiAttentionSoundName
+      volume?: number
+      when?: TuiAttentionWhen
+    }
+
+export type TuiAttentionNotification =
+  | boolean
+  | {
+      when?: TuiAttentionWhen
+    }
+
+export type TuiAttentionSoundPack = {
+  id: string
+  name?: string
+  sounds: Partial<Record<TuiAttentionSoundName, string>>
+}
+
+export type TuiAttentionSoundPackInfo = {
+  id: string
+  name?: string
+  active: boolean
+  builtin: boolean
+}
+
+export type TuiAttentionSoundboardActivateOptions = {
+  persist?: boolean
+}
+
+export type TuiAttentionSoundboard = {
+  registerPack(pack: TuiAttentionSoundPack): () => void
+  activate(id: string, options?: TuiAttentionSoundboardActivateOptions): boolean
+  current(): string
+  list(): ReadonlyArray<TuiAttentionSoundPackInfo>
+}
+
+export type TuiAttentionNotifyInput = {
+  title?: string
+  message: string
+  notification?: TuiAttentionNotification
+  sound?: TuiAttentionSound
+}
+
+export type TuiAttentionNotifySkipReason =
+  | "attention_disabled"
+  | "empty_message"
+  | "blurred"
+  | "focused"
+  | "focus_unknown"
+  | "renderer_destroyed"
+
+export type TuiAttentionNotifyResult = {
+  ok: boolean
+  notification: boolean
+  sound: boolean
+  skipped?: TuiAttentionNotifySkipReason
+}
+
+export type TuiAttention = {
+  notify(input: TuiAttentionNotifyInput): Promise<TuiAttentionNotifyResult>
+  soundboard: TuiAttentionSoundboard
 }
 
 export type TuiThemeCurrent = {
@@ -280,13 +387,14 @@ export type TuiState = {
   readonly vcs: { branch?: string } | undefined
   session: {
     count: () => number
+    get: (sessionID: string) => Session | undefined
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
     messages: (sessionID: string) => ReadonlyArray<Message>
     status: (sessionID: string) => SessionStatus | undefined
     permission: (sessionID: string) => ReadonlyArray<PermissionRequest>
     question: (sessionID: string) => ReadonlyArray<QuestionRequest>
-    cost: (sessionID: string) => TuiSessionCost | undefined
+    cost: (sessionID: string) => number | undefined
     refreshCost: (sessionID: string) => void
   }
   part: (messageID: string) => ReadonlyArray<Part>
@@ -303,9 +411,19 @@ type TuiBindingLookupView = {
   omit: (name: string, commands: readonly string[]) => Binding<Renderable, KeyEvent>[]
 }
 
+type TuiAttentionConfigView = {
+  enabled: boolean
+  notifications: boolean
+  sound: boolean
+  volume: number
+  sound_pack: string
+  sounds: Partial<Record<TuiAttentionSoundName, string>>
+}
+
 type TuiConfigView = Pick<PluginConfig, "$schema" | "theme" | "plugin"> &
   NonNullable<PluginConfig["tui"]> & {
     leader_timeout: number
+    attention: TuiAttentionConfigView
     plugin_enabled?: Record<string, boolean>
     keybinds: TuiBindingLookupView
   }
@@ -326,12 +444,6 @@ export type TuiSidebarMcpItem = {
   name: string
   status: McpStatus["status"]
   error?: string
-}
-
-export type TuiSessionCost = {
-  readonly self: number
-  readonly subagents: number
-  readonly subagent_count: number
 }
 
 export type TuiSidebarLspItem = Pick<LspStatus, "id" | "root" | "status">
@@ -475,6 +587,14 @@ export type TuiWorkspace = {
 
 export type TuiPluginApi = {
   app: TuiApp
+  attention: TuiAttention
+  /**
+   * Legacy `api.command` API kept so v1 plugins can initialize. Remove in v2.
+   *
+   * @deprecated Use `api.keymap.registerLayer`, `api.keymap.dispatchCommand`, and
+   * `api.keymap.dispatchCommand("command.palette.show")` instead.
+   */
+  command?: TuiCommandApi
   keys: TuiKeys
   keymap: TuiKeymap
   route: {
@@ -493,9 +613,9 @@ export type TuiPluginApi = {
     toast: (input: TuiToast) => void
     dialog: TuiDialogStack
   }
-  input: TuiInput
   readonly tuiConfig: Frozen<TuiConfigView>
   kv: TuiKV
+  input: TuiInput
   state: TuiState
   theme: TuiTheme
   client: OpencodeClient

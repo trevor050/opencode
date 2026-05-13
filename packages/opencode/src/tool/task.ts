@@ -272,7 +272,7 @@ export const TaskTool = Tool.define(
           ],
         }))
 
-      const msg = yield* Effect.sync(() => MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }))
+      const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
       const background = params.background === true
@@ -400,7 +400,9 @@ export const TaskTool = Tool.define(
           )
           return yield* resumeParent({ ...input, attempts: (input.attempts ?? 0) + 1 })
         }
-        const latest = yield* sessions.findMessage(ctx.sessionID, (item) => item.info.role === "user")
+        const latest = yield* sessions
+          .findMessage(ctx.sessionID, (item) => item.info.role === "user")
+          .pipe(Effect.catch(() => Effect.succeed(Option.none())))
         if (Option.isNone(latest)) return
         if (latest.value.info.id !== input.userID) return
         yield* bus.publish(TuiEvent.ToastShow, {

@@ -83,11 +83,13 @@ type Metadata = {
 
 function collectChildMessages(session: Session.Interface, sessionID: SessionIDT): Effect.Effect<MessageV2.WithParts[]> {
   return Effect.gen(function* () {
-    const children = yield* session.children(sessionID)
+    const children = yield* session.children(sessionID).pipe(Effect.catch(() => Effect.succeed([])))
     const batches = yield* Effect.all(
       children.map((child) =>
         Effect.gen(function* () {
-          const messages = yield* session.messages({ sessionID: child.id })
+          const messages = yield* session.messages({ sessionID: child.id }).pipe(
+            Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])),
+          )
           const descendants = yield* collectChildMessages(session, child.id)
           return [...messages, ...descendants]
         }),
