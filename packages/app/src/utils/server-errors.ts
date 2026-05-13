@@ -36,7 +36,7 @@ export function formatServerError(error: unknown, translate?: Translator, fallba
 }
 
 function unwrapNamedError(error: unknown): unknown {
-  if (error instanceof Error && error.cause && typeof error.cause === "object" && "body" in error.cause) {
+  if (error instanceof Error && error.cause !== null && typeof error.cause === "object" && "body" in error.cause) {
     return (error.cause as Record<string, unknown>).body
   }
   return error

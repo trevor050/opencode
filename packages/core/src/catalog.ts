@@ -230,8 +230,10 @@ export const layer = Layer.effect(
           )
 
           const pick = (items: typeof candidates) => {
-            const maxCost = Math.max(...items.map((item) => item.cost), 0.01)
-            const maxAge = Math.max(...items.map((item) => item.age), 0.01)
+            const costs = items.map((item) => item.cost)
+            const ages = items.map((item) => item.age)
+            const maxCost = costs.length > 0 ? Math.max(...costs, 0.01) : 0.01
+            const maxAge = ages.length > 0 ? Math.max(...ages, 0.01) : 0.01
             return pipe(
               items,
               Array.sortWith((item) => (item.cost / maxCost) * 0.8 + (item.age / maxAge) * 0.2, Order.Number),

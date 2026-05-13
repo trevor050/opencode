@@ -71,7 +71,8 @@ export function createModelTpsLimiter(providers: { id: string; model: string; tp
       const tokens = usageInfo.outputTokens
       if (tokens <= 10) return
 
-      const tps = (tokens / (tsLastByte - tsFirstByte)) * 1000
+      const duration = tsLastByte - tsFirstByte
+      const tps = duration > 0 ? (tokens / duration) * 1000 : Infinity
       const qualify = tps >= tpsGoal ? 1 : 0
       const unqualify = tps < tpsGoal ? 1 : 0
       await Database.use((tx) =>
