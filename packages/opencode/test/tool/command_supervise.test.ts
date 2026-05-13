@@ -96,4 +96,35 @@ describe("tool.command_supervise", () => {
         ),
     })
   })
+
+  test("blocks default credential guessing in supervised commands", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* CommandSuperviseTool
+            const def = yield* tool.init()
+            const exit = yield* def
+              .execute(
+                {
+                  operationID: "school",
+                  profileID: "icmp-sweep",
+                  variables: { target: "admin/password" },
+                  outputPrefix: "evidence/raw/sweep",
+                  manifestPath: path.resolve(process.cwd(), "../../tools/ulmcode-profile/tool-manifest.json"),
+                  dryRun: true,
+                },
+                ctx,
+              )
+              .pipe(Effect.exit)
+
+            expect(exit._tag).toBe("Failure")
+            if (exit._tag !== "Failure") return
+            expect(String(Cause.squash(exit.cause))).toContain("credential guessing is blocked")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
 })

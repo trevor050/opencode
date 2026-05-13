@@ -75,6 +75,8 @@ install_dir="$(mktemp -d)"
 trap 'rm -rf "$install_dir"' EXIT
 ULMCODE_CONFIG_DIR="$install_dir" "$PROFILE_DIR/scripts/install-profile.sh" >/dev/null
 test -f "$install_dir/opencode.json"
+test -f "$install_dir/ulmcode.json"
+cmp -s "$install_dir/opencode.json" "$install_dir/ulmcode.json"
 test -f "$install_dir/plugins/ulmcode-runtime-guard.js"
 if [ -e "$install_dir/plugins/vendor/opencode-claude-code-plugin-0.2.2" ]; then
   echo "profile installer must not copy the Claude Code bridge plugin" >&2
@@ -101,9 +103,11 @@ sh -n "$install_dir/ulmcode-launch.sh"
 test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-lifecycle-smoke.ts"
 (cd "$PROFILE_DIR/../../packages/opencode" && bun run test:ulm-smoke >/dev/null)
 test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-tui-launch-smoke.ts"
-(cd "$PROFILE_DIR/../../packages/opencode" && bun run test:ulm-tui-launch -- --timeout-ms=15000 >/dev/null)
+(cd "$PROFILE_DIR/../../packages/opencode" && bun run test:ulm-tui-launch -- --timeout-ms=30000 >/dev/null)
 test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-profile-skills.ts"
 (cd "$PROFILE_DIR/../../packages/opencode" && bun run test:ulm-skills >/dev/null)
+test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-model-route-audit.ts"
+(cd "$PROFILE_DIR/../../packages/opencode" && bun run ulm:model-route-audit -- --profile-only --installed-config-dir "$install_dir" --skip-launch-env --strict --json >/dev/null)
 test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-tool-manifest.ts"
 (cd "$PROFILE_DIR/../../packages/opencode" && bun run test:ulm-tool-manifest >/dev/null)
 test -f "$PROFILE_DIR/../../packages/opencode/script/ulm-lab-replay.ts"

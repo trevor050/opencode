@@ -4,8 +4,10 @@ import {
   artifactGroups,
   currentOperationFilesPath,
   operationChatPath,
+  operationFilesOpenPathForSession,
   operationForSession,
   operationFilesPathForSession,
+  operationFilesRootForDirectory,
   operationStatusGroups,
   operationCounts,
   operationRootPath,
@@ -94,6 +96,47 @@ describe("ULM operation UI helpers", () => {
     expect(operationFilesPathForSession([other, current] as any, "chat-1", "/ops")).toBe("/ops/current-chat-op")
     expect(operationFilesPathForSession([other, current] as any, undefined, "/ops")).toBe("/ops")
     expect(operationFilesPathForSession([other, current] as any, "unbound-chat", "/ops")).toBe("/ops")
+  })
+
+  test("resolves the ULM operation file store from source and profile directories", () => {
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode")).toBe(
+      "/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/codeprojects/ULMcode/opencode")).toBe(
+      "/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory("/Users/trevorrosato/.config/ulmcode")).toBe(
+      "/Users/trevorrosato/.config/ulmcode/.ulmcode/operations",
+    )
+    expect(operationFilesRootForDirectory(undefined)).toBeUndefined()
+  })
+
+  test("opens the current chat operation files before falling back to the operation store", () => {
+    const current = summary({
+      operationID: "current-chat-op",
+      root: "/ops/current-chat-op",
+      sessions: [{ sessionID: "chat-1", boundAt: "2026-05-09T12:01:00.000Z" }],
+    } as any)
+    const other = summary({
+      operationID: "other-chat-op",
+      root: "/ops/other-chat-op",
+      sessions: [{ sessionID: "other-chat", boundAt: "2026-05-09T12:00:00.000Z" }],
+    } as any)
+
+    expect(
+      operationFilesOpenPathForSession(
+        [other, current] as any,
+        "chat-1",
+        "/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode",
+      ),
+    ).toBe("/ops/current-chat-op")
+    expect(
+      operationFilesOpenPathForSession(
+        [other, current] as any,
+        "unbound-chat",
+        "/Users/trevorrosato/codeprojects/ULMcode/opencode/packages/opencode",
+      ),
+    ).toBe("/Users/trevorrosato/codeprojects/ULMcode/opencode/.ulmcode/operations")
   })
 
   test("routes operation chat actions to the bound chat instead of the new-chat route", () => {

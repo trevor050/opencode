@@ -124,7 +124,9 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
     const inspect: (taskID: SessionID) => Effect.Effect<InspectResult> = Effect.fn("TaskStatusTool.inspect")(function* (
       taskID,
     ) {
-      const current = yield* status.get(taskID)
+      const current = yield* status
+        .get(taskID)
+        .pipe(Effect.catch(() => Effect.succeed({ type: "idle" as const })))
       if (current.type === "busy" || current.type === "retry") {
         return {
           state: "running" as const,
@@ -132,13 +134,17 @@ export const TaskStatusTool = Tool.define<typeof Parameters, Metadata, Session.S
         }
       }
 
-      const latestAssistant = yield* sessions.findMessage(taskID, (item) => item.info.role === "assistant")
+      const latestAssistant = yield* sessions
+        .findMessage(taskID, (item) => item.info.role === "assistant")
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())))
       if (Option.isNone(latestAssistant)) return { state: "running" as const, text: "Task has not produced output yet." }
       if (latestAssistant.value.info.role !== "assistant") {
         return { state: "running" as const, text: "Task has not produced output yet." }
       }
 
-      const latestUser = yield* sessions.findMessage(taskID, (item) => item.info.role === "user")
+      const latestUser = yield* sessions
+        .findMessage(taskID, (item) => item.info.role === "user")
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())))
       if (
         Option.isSome(latestUser) &&
         latestUser.value.info.role === "user" &&

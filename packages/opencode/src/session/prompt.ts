@@ -1,6 +1,5 @@
 import path from "path"
 import os from "os"
-import * as EffectZod from "@/util/effect-zod"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import * as Log from "@opencode-ai/core/util/log"
@@ -21,9 +20,9 @@ import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import { ToolRegistry } from "@/tool/registry"
+import { ToolJsonSchema } from "@/tool/json-schema"
 import { MCP } from "../mcp"
 import { LSP } from "@/lsp/lsp"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { ulid } from "ulid"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -46,28 +45,28 @@ import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
-import { zod } from "@/util/effect-zod"
-import { withStatics } from "@/util/schema"
 import * as EffectLogger from "@opencode-ai/core/effect/logger"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { EffectBridge } from "@/effect/bridge"
-import { EventV2 } from "@/v2/event"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import { SyncEvent } from "@/sync"
 import { SessionEvent } from "@/v2/session-event"
-import { Modelv2 } from "@/v2/model"
-import { AgentAttachment, FileAttachment, Source } from "@/v2/session-prompt"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { AgentAttachment, FileAttachment, ReferenceAttachment, Source } from "@opencode-ai/core/session-prompt"
+import { Reference } from "@/reference/reference"
 import * as DateTime from "effect/DateTime"
 import { eq } from "@/storage/db"
 import * as Database from "@/storage/db"
 import { SessionTable } from "./session.sql"
-import { activeOperationForContext } from "@/ulm/operation-context"
-import { effectiveULMContinuation, readULMConfig } from "@/ulm/config"
-import { superviseOperation, type OperationSupervisorAction } from "@/ulm/operation-supervisor"
-import { readOperationStatus } from "@/ulm/artifact"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
+
+const decodeMessageInfo = Schema.decodeUnknownExit(MessageV2.Info)
+const decodeMessagePart = Schema.decodeUnknownExit(MessageV2.Part)
 
 const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
 
@@ -82,12 +81,86 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
 
-export function allowsULMTurnEndSupervisor(agent: string | undefined) {
-  return agent === "pentest"
+type ReferencePromptMetadata = {
+  name: string
+  kind: "local" | "git" | "invalid"
+  path?: string
+  repository?: string
+  branch?: string
+  target?: string
+  targetPath?: string
+  problem?: string
+  source: { value: string; start: number; end: number }
 }
 
-export function shouldSkipULMTurnEndSupervisorForOperationStatus(status: string | undefined) {
-  return status === "complete" || status === "cancelled"
+function stringField(record: Record<string, unknown>, key: string) {
+  return typeof record[key] === "string" ? record[key] : undefined
+}
+
+function referencePromptMetadata(input: unknown): ReferencePromptMetadata | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return
+  const record = input as Record<string, unknown>
+  const name = stringField(record, "name")
+  const kind = stringField(record, "kind")
+  if (!name || (kind !== "local" && kind !== "git" && kind !== "invalid")) return
+  if (!record.source || typeof record.source !== "object" || Array.isArray(record.source)) return
+  const source = record.source as Record<string, unknown>
+  const value = stringField(source, "value")
+  if (!value || typeof source.start !== "number" || typeof source.end !== "number") return
+  return {
+    name,
+    kind,
+    path: stringField(record, "path"),
+    repository: stringField(record, "repository"),
+    branch: stringField(record, "branch"),
+    target: stringField(record, "target"),
+    targetPath: stringField(record, "targetPath"),
+    problem: stringField(record, "problem"),
+    source: { value, start: source.start, end: source.end },
+  }
+}
+
+function referenceTextPart(input: {
+  reference: Reference.Resolved
+  source: ReferencePromptMetadata["source"]
+  target?: string
+  targetPath?: string
+  problem?: string
+}): MessageV2.TextPartInput {
+  const metadata: ReferencePromptMetadata = {
+    name: input.reference.name,
+    kind: input.reference.kind,
+    ...(input.reference.kind === "invalid"
+      ? { repository: input.reference.repository }
+      : { path: input.reference.path }),
+    ...(input.reference.kind === "git"
+      ? { repository: input.reference.repository, branch: input.reference.branch }
+      : {}),
+    ...(input.target === undefined ? {} : { target: input.target }),
+    ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+    problem: input.problem ?? (input.reference.kind === "invalid" ? input.reference.message : undefined),
+    source: input.source,
+  }
+  const label = metadata.target === undefined ? `@${metadata.name}` : `@${metadata.name}/${metadata.target}`
+  return {
+    type: "text",
+    synthetic: true,
+    text: [
+      `Referenced configured reference ${label}.`,
+      ...(metadata.kind === "local" ? ["Kind: local directory"] : []),
+      ...(metadata.kind === "git" ? ["Kind: git repository"] : []),
+      ...(metadata.repository ? [`Repository: ${metadata.repository}`] : []),
+      ...(metadata.branch ? [`Branch/ref: ${metadata.branch}`] : []),
+      ...(metadata.path ? [`Reference root: ${metadata.path}`] : []),
+      ...(metadata.targetPath ? [`Resolved path: ${metadata.targetPath}`] : []),
+      ...(metadata.problem
+        ? [`Problem: ${metadata.problem}`]
+        : [
+            "For targeted context, inspect the reference path directly with Read, Glob, and Grep. For broader research, call the task tool with subagent scout and include this reference path.",
+          ]),
+    ].join("\n"),
+    metadata: { reference: metadata },
+  }
 }
 
 export interface Interface {
@@ -128,6 +201,9 @@ export const layer = Layer.effect(
     const summary = yield* SessionSummary.Service
     const sys = yield* SystemPrompt.Service
     const llm = yield* LLM.Service
+    const references = yield* Reference.Service
+    const sync = yield* SyncEvent.Service
+    const flags = yield* RuntimeFlags.Service
     const runner = Effect.fn("SessionPrompt.runner")(function* () {
       return yield* EffectBridge.make()
     })
@@ -150,12 +226,74 @@ export const layer = Layer.effect(
       const parts: Types.DeepMutable<PromptInput["parts"]> = [{ type: "text", text: template }]
       const files = ConfigMarkdown.files(template)
       const seen = new Set<string>()
+      const mentionSource = (match: RegExpMatchArray) => {
+        const start = match.index ?? 0
+        return { value: match[0], start, end: start + match[0].length }
+      }
       yield* Effect.forEach(
         files,
         Effect.fnUntraced(function* (match) {
           const name = match[1]
+          if (!name) return
           if (seen.has(name)) return
           seen.add(name)
+
+          const slash = name.indexOf("/")
+          const alias = slash === -1 ? name : name.slice(0, slash)
+          const reference = yield* references.get(alias)
+          if (reference) {
+            const source = mentionSource(match)
+            if (reference.kind === "invalid") {
+              parts.push(
+                referenceTextPart({ reference, source, target: slash === -1 ? undefined : name.slice(slash + 1) }),
+              )
+              return
+            }
+
+            yield* references.ensure(reference.path)
+            if (slash === -1) {
+              parts.push(referenceTextPart({ reference, source }))
+              return
+            }
+
+            const target = name.slice(slash + 1)
+            const targetPath = path.resolve(reference.path, target)
+            if (!AppFileSystem.contains(reference.path, targetPath)) {
+              parts.push(
+                referenceTextPart({
+                  reference,
+                  source,
+                  target,
+                  targetPath,
+                  problem: `Path escapes configured reference @${alias}: ${target}`,
+                }),
+              )
+              return
+            }
+
+            const info = yield* fsys.stat(targetPath).pipe(Effect.option)
+            if (Option.isNone(info)) {
+              parts.push(
+                referenceTextPart({
+                  reference,
+                  source,
+                  target,
+                  targetPath,
+                  problem: `Path does not exist inside configured reference @${alias}: ${target}`,
+                }),
+              )
+              return
+            }
+
+            parts.push({
+              type: "file",
+              url: pathToFileURL(targetPath).href,
+              filename: name,
+              mime: info.value.type === "Directory" ? "application/x-directory" : "text/plain",
+            })
+            return
+          }
+
           const filepath = name.startsWith("~/")
             ? path.join(os.homedir(), name.slice(2))
             : path.resolve(ctx.worktree, name)
@@ -249,7 +387,7 @@ export const layer = Layer.effect(
       const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
       if (!userMessage) return input.messages
 
-      if (!Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE) {
+      if (!flags.experimentalPlanMode) {
         if (input.agent.name === "plan") {
           userMessage.parts.push({
             id: PartID.ascending(),
@@ -401,34 +539,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: input.agent.name,
         messages: input.messages,
         metadata: (val) =>
-          Effect.gen(function* () {
-            yield* input.processor.updateToolCall(options.toolCallId, (match) => {
-              if (!["running", "pending"].includes(match.state.status)) return match
-              return {
-                ...match,
-                state: {
-                  title: val.title,
-                  metadata: val.metadata,
-                  status: "running",
-                  input: args,
-                  time: { start: Date.now() },
-                },
-              }
-            })
-            EventV2.run(SessionEvent.Tool.Progress.Sync, {
-              sessionID: input.session.id,
-              callID: options.toolCallId,
-              structured: val.metadata ?? {},
-              content: val.title
-                ? [
-                    {
-                      type: "text",
-                      text: val.title,
-                    },
-                  ]
-                : [],
-              timestamp: DateTime.makeUnsafe(Date.now()),
-            })
+          input.processor.updateToolCall(options.toolCallId, (match) => {
+            if (!["running", "pending"].includes(match.state.status)) return match
+            return {
+              ...match,
+              state: {
+                title: val.title,
+                metadata: val.metadata,
+                status: "running",
+                input: args,
+                time: { start: Date.now() },
+              },
+            }
           }),
         ask: (req) =>
           permission
@@ -446,7 +568,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         providerID: input.model.providerID,
         agent: input.agent,
       })) {
-        const schema = ProviderTransform.schema(input.model, EffectZod.toJsonSchema(item.parameters))
+        const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
         tools[item.id] = tool({
           description: item.description,
           inputSchema: jsonSchema(schema),
@@ -785,7 +907,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
               throw error
             }
-            const model = input.model ?? agent.model ?? (yield* lastModel(input.sessionID))
+            const model = input.model ?? agent.model ?? (yield* currentModel(input.sessionID))
             const userMsg: MessageV2.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
@@ -836,12 +958,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               },
             }
             yield* sessions.updatePart(part)
-            EventV2.run(SessionEvent.Shell.Started.Sync, {
-              sessionID: input.sessionID,
-              timestamp: DateTime.makeUnsafe(started),
-              callID,
-              command: input.command,
-            })
+            if (flags.experimentalEventSystem) {
+              yield* sync.run(SessionEvent.Shell.Started.Sync, {
+                sessionID: input.sessionID,
+                timestamp: DateTime.makeUnsafe(started),
+                callID,
+                command: input.command,
+              })
+            }
             return { msg, part, cwd: ctx.directory }
           }).pipe(Effect.ensuring(markReady))
 
@@ -857,12 +981,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
               }
               const completed = Date.now()
-              EventV2.run(SessionEvent.Shell.Ended.Sync, {
-                sessionID: input.sessionID,
-                timestamp: DateTime.makeUnsafe(completed),
-                callID: part.callID,
-                output,
-              })
+              if (flags.experimentalEventSystem) {
+                yield* sync.run(SessionEvent.Shell.Ended.Sync, {
+                  sessionID: input.sessionID,
+                  timestamp: DateTime.makeUnsafe(completed),
+                  callID: part.callID,
+                  output,
+                })
+              }
               if (!msg.time.completed) {
                 msg.time.completed = completed
                 yield* sessions.updateMessage(msg)
@@ -943,15 +1069,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return yield* Effect.failCause(exit.cause)
     })
 
-    const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-      const match = yield* sessions.findMessage(sessionID, (m) => m.info.role === "user" && !!m.info.model)
+    const currentModel = Effect.fnUntraced(function* (sessionID: SessionID) {
+      const current = Database.use((db) =>
+        db.select({ model: SessionTable.model }).from(SessionTable).where(eq(SessionTable.id, sessionID)).get(),
+      )
+      if (current?.model) {
+        return {
+          providerID: ProviderID.make(current.model.providerID),
+          modelID: ModelID.make(current.model.id),
+          ...(current.model.variant && current.model.variant !== "default" ? { variant: current.model.variant } : {}),
+        }
+      }
+      const match = yield* sessions
+        .findMessage(sessionID, (m) => m.info.role === "user" && !!m.info.model)
+        .pipe(Effect.orDie)
       if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
       return yield* provider.defaultModel()
     })
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
-      const agentName = input.agent || (yield* agents.defaultAgent())
-      const ag = yield* agents.get(agentName)
+      const agentName = input.agent
+      const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
       if (!ag) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
@@ -960,7 +1098,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         throw error
       }
 
-      const model = input.model ?? ag.model ?? (yield* lastModel(input.sessionID))
+      const current = Database.use((db) =>
+        db
+          .select({ agent: SessionTable.agent, model: SessionTable.model })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, input.sessionID))
+          .get(),
+      )
+      const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
@@ -984,15 +1129,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         format: input.format,
       }
 
-      const current = Database.use((db) =>
-        db
-          .select({ agent: SessionTable.agent, model: SessionTable.model })
-          .from(SessionTable)
-          .where(eq(SessionTable.id, input.sessionID))
-          .get(),
-      )
       if (current?.agent !== info.agent) {
-        EventV2.run(SessionEvent.AgentSwitched.Sync, {
+        yield* sync.run(SessionEvent.AgentSwitched.Sync, {
           sessionID: input.sessionID,
           timestamp: DateTime.makeUnsafe(info.time.created),
           agent: info.agent,
@@ -1001,15 +1139,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (
         current?.model?.providerID !== info.model.providerID ||
         current.model.id !== info.model.modelID ||
-        current.model.variant !== info.model.variant
+        (current.model.variant === "default" ? undefined : current.model.variant) !== info.model.variant
       ) {
-        EventV2.run(SessionEvent.ModelSwitched.Sync, {
+        yield* sync.run(SessionEvent.ModelSwitched.Sync, {
           sessionID: input.sessionID,
           timestamp: DateTime.makeUnsafe(info.time.created),
           model: {
-            id: Modelv2.ID.make(info.model.modelID),
-            providerID: Modelv2.ProviderID.make(info.model.providerID),
-            variant: Modelv2.VariantID.make(info.model.variant ?? "default"),
+            id: ModelV2.ID.make(info.model.modelID),
+            providerID: ProviderV2.ID.make(info.model.providerID),
+            variant: ModelV2.VariantID.make(info.model.variant ?? "default"),
           },
         })
       }
@@ -1020,6 +1158,30 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const assign = (part: Draft<MessageV2.Part>): MessageV2.Part => ({
         ...part,
         id: part.id ? PartID.make(part.id) : PartID.ascending(),
+      })
+
+      const referenceContextFromFilePart = Effect.fnUntraced(function* (
+        part: Extract<PromptInput["parts"][number], { type: "file" }>,
+        filepath: string,
+      ) {
+        const name = part.filename?.replace(/#\d+(?:-\d*)?$/, "")
+        if (!name) return
+        const slash = name.indexOf("/")
+        if (slash === -1) return
+
+        const reference = yield* references.get(name.slice(0, slash))
+        if (!reference || reference.kind === "invalid") return
+        if (!AppFileSystem.contains(reference.path, filepath)) return
+
+        const target = path.relative(reference.path, filepath).split(path.sep).join("/")
+        if (!target || target.startsWith("../") || target === "..") return
+
+        return referenceTextPart({
+          reference,
+          source: part.source?.text ?? { value: `@${name}`, start: 0, end: name.length + 1 },
+          target,
+          targetPath: filepath,
+        })
       })
 
       const resolvePart: (part: PromptInput["parts"][number]) => Effect.Effect<Draft<MessageV2.Part>[]> = Effect.fn(
@@ -1104,6 +1266,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             case "file:": {
               log.info("file", { mime: part.mime })
               const filepath = fileURLToPath(part.url)
+              const referenceContext = yield* referenceContextFromFilePart(part, filepath)
               const mime = (yield* fsys.isDir(filepath)) ? "application/x-directory" : part.mime
 
               const { read } = yield* registry.named()
@@ -1149,6 +1312,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
                 const args = { filePath: filepath, offset, limit }
                 const pieces: Draft<MessageV2.Part>[] = [
+                  ...(referenceContext
+                    ? [{ ...referenceContext, messageID: info.id, sessionID: input.sessionID }]
+                    : []),
                   {
                     messageID: info.id,
                     sessionID: input.sessionID,
@@ -1214,6 +1380,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     error: new NamedError.Unknown({ message }).toObject(),
                   })
                   return [
+                    ...(referenceContext
+                      ? [{ ...referenceContext, messageID: info.id, sessionID: input.sessionID }]
+                      : []),
                     {
                       messageID: info.id,
                       sessionID: input.sessionID,
@@ -1224,6 +1393,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ]
                 }
                 return [
+                  ...(referenceContext
+                    ? [{ ...referenceContext, messageID: info.id, sessionID: input.sessionID }]
+                    : []),
                   {
                     messageID: info.id,
                     sessionID: input.sessionID,
@@ -1243,6 +1415,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
 
               return [
+                ...(referenceContext ? [{ ...referenceContext, messageID: info.id, sessionID: input.sessionID }] : []),
                 {
                   messageID: info.id,
                   sessionID: input.sessionID,
@@ -1288,7 +1461,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return [{ ...part, messageID: info.id, sessionID: input.sessionID }]
       })
 
-      const parts = yield* Effect.forEach(input.parts, resolvePart, { concurrency: "unbounded" }).pipe(
+      const resolvedParts = yield* Effect.forEach(input.parts, resolvePart, { concurrency: "unbounded" }).pipe(
         Effect.map((x) => x.flat().map(assign)),
       )
 
@@ -1301,29 +1474,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           messageID: input.messageID,
           variant: input.variant,
         },
-        { message: info, parts },
+        { message: info, parts: resolvedParts },
       )
 
-      const parsed = MessageV2.Info.zod.safeParse(info)
-      if (!parsed.success) {
+      const parts = resolvedParts
+
+      const parsed = decodeMessageInfo(info, { errors: "all", propertyOrder: "original" })
+      if (Exit.isFailure(parsed)) {
         log.error("invalid user message before save", {
           sessionID: input.sessionID,
           messageID: info.id,
           agent: info.agent,
           model: info.model,
-          issues: parsed.error.issues,
+          cause: Cause.pretty(parsed.cause),
         })
       }
       parts.forEach((part, index) => {
-        const p = MessageV2.Part.zod.safeParse(part)
-        if (p.success) return
+        const p = decodeMessagePart(part, { errors: "all", propertyOrder: "original" })
+        if (Exit.isSuccess(p)) return
         log.error("invalid user part before save", {
           sessionID: input.sessionID,
           messageID: info.id,
           partID: part.id,
           partType: part.type,
           index,
-          issues: p.error.issues,
+          cause: Cause.pretty(p.cause),
           part,
         })
       })
@@ -1335,6 +1510,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (part.type === "text") {
             if (part.synthetic) result.synthetic.push(part.text)
             else result.text.push(part.text)
+            const reference = referencePromptMetadata(part.metadata?.reference)
+            if (reference) {
+              result.references.push(
+                new ReferenceAttachment({
+                  name: reference.name,
+                  kind: reference.kind,
+                  uri: reference.path ? pathToFileURL(reference.path).href : undefined,
+                  repository: reference.repository,
+                  branch: reference.branch,
+                  target: reference.target,
+                  targetUri: reference.targetPath ? pathToFileURL(reference.targetPath).href : undefined,
+                  problem: reference.problem,
+                  source: new Source({
+                    start: reference.source.start,
+                    end: reference.source.end,
+                    text: reference.source.value,
+                  }),
+                }),
+              )
+            }
           }
           if (part.type === "file") {
             result.files.push(
@@ -1372,26 +1567,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           text: [] as string[],
           files: [] as FileAttachment[],
           agents: [] as AgentAttachment[],
+          references: [] as ReferenceAttachment[],
           synthetic: [] as string[],
         },
       )
       // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
-      EventV2.run(SessionEvent.Prompted.Sync, {
-        sessionID: input.sessionID,
-        timestamp: DateTime.makeUnsafe(info.time.created),
-        prompt: {
-          text: nextPrompt.text.join("\n"),
-          files: nextPrompt.files,
-          agents: nextPrompt.agents,
-        },
-      })
-      for (const text of nextPrompt.synthetic) {
-        // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
-        EventV2.run(SessionEvent.Synthetic.Sync, {
+      if (flags.experimentalEventSystem) {
+        yield* sync.run(SessionEvent.Prompted.Sync, {
           sessionID: input.sessionID,
           timestamp: DateTime.makeUnsafe(info.time.created),
-          text,
+          prompt: {
+            text: nextPrompt.text.join("\n"),
+            files: nextPrompt.files,
+            agents: nextPrompt.agents,
+            references: nextPrompt.references,
+          },
         })
+      }
+      for (const text of nextPrompt.synthetic) {
+        // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
+        if (flags.experimentalEventSystem) {
+          yield* sync.run(SessionEvent.Synthetic.Sync, {
+            sessionID: input.sessionID,
+            timestamp: DateTime.makeUnsafe(info.time.created),
+            text,
+          })
+        }
       }
 
       return { info, parts }
@@ -1418,138 +1619,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       },
     )
 
-    function assistantText(msg: MessageV2.WithParts | undefined) {
-      return (
-        msg?.parts
-          .filter((part): part is MessageV2.TextPart => part.type === "text")
-          .map((part) => part.text)
-          .join("\n")
-          .trim() ?? ""
-      )
-    }
-
-    function canStopAfterSupervisor(action: OperationSupervisorAction | undefined) {
-      return action === "handoff_ready" || action === "blocked_for_operator" || action === "pause"
-    }
-
-    function continuationPrompt(input: {
-      action: OperationSupervisorAction
-      reason: string
-      nextTool?: string
-      operationID: string
-      planPath?: string
-    }) {
-      return [
-        "<system-reminder>",
-        `ULM turn-end supervisor action: ${input.action}`,
-        `reason: ${input.reason}`,
-        input.nextTool ? `required_next_tool: ${input.nextTool}` : "required_next_tool: choose the next safe bounded ULM tool",
-        input.planPath ? `plan_excerpt_source: ${input.planPath}` : "plan_excerpt_source: missing or unavailable",
-        "",
-        "Do not hand off, summarize as done, or wait for the operator unless the supervisor explicitly allows it.",
-        "Continue the active operation using the required next tool. Long commands must use command_supervise, task background=true, runtime_scheduler, or runtime_daemon.",
-        "</system-reminder>",
-      ].join("\n")
-    }
-
-    function assistantHasToolCall(message: MessageV2.WithParts | undefined) {
-      return message?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
-    }
-
-    function countNoToolContinuationTurns(input: { messages: MessageV2.WithParts[]; lastHumanUser?: MessageV2.WithParts }) {
-      let count = 0
-      const start = input.lastHumanUser ? input.messages.findIndex((msg) => msg.info.id === input.lastHumanUser?.info.id) + 1 : 0
-      for (let index = Math.max(0, start); index < input.messages.length; index++) {
-        const msg = input.messages[index]
-        const isContinuation =
-          msg.info.role === "user" &&
-          msg.parts.some((part) => part.type === "text" && part.metadata?.ulmTurnEndContinuation === true)
-        if (!isContinuation) continue
-        const nextUser = input.messages.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.info.role === "user")
-        const end = nextUser === -1 ? input.messages.length : nextUser
-        const assistantWorked = input.messages.slice(index + 1, end).some((candidate) => assistantHasToolCall(candidate))
-        if (!assistantWorked) count++
-      }
-      return count
-    }
-
-    function stripULMOperationContext(input: string) {
-      return input
-        .replace(/\n?<ulm_operation_context>[\s\S]*?<\/ulm_operation_context>\n?/g, "\n")
-        .replace(/\n?<ulm_operation_plan[\s\S]*?<\/ulm_operation_plan>\n?/g, "\n")
-        .replace(/\n?<ulm_operation_memory[\s\S]*?<\/ulm_operation_memory>\n?/g, "\n")
-    }
-
-    const maybeInjectTurnEndContinuation = Effect.fn("SessionPrompt.turnEndSupervisor")(function* (input: {
-      sessionID: SessionID
-      session: Session.Info
-      lastUser: MessageV2.User
-      lastAssistantMsg?: MessageV2.WithParts
-      messages: MessageV2.WithParts[]
-    }) {
-      const freshSession = yield* sessions.get(input.sessionID).pipe(Effect.orElseSucceed(() => input.session))
-      if (!allowsULMTurnEndSupervisor(input.lastUser.agent)) return false
-      const ctx = yield* InstanceState.context
-      const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: input.sessionID }))
-      if (!operation) return false
-      const operationStatus = yield* Effect.tryPromise(() =>
-        readOperationStatus(operation.worktree, operation.operationID),
-      ).pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (shouldSkipULMTurnEndSupervisorForOperationStatus(operationStatus?.operation?.status)) return false
-      const continuation = effectiveULMContinuation(operation.goal, yield* Effect.promise(() => readULMConfig(ctx)))
-      if (!continuation.turnEndReview) return false
-      if (!continuation.enabled) return false
-      if (
-        input.lastUser.tools?.["*"] === false ||
-        freshSession.permission?.some((rule) => rule.permission === "*" && rule.action === "deny")
-      ) {
-        return false
-      }
-
-      const review = yield* Effect.tryPromise(() =>
-        superviseOperation(operation.worktree, {
-          operationID: operation.operationID,
-          reviewKind: "turn_end",
-          maxActions: 1,
-          latestAssistantMessage: assistantText(input.lastAssistantMsg).slice(0, 2_000),
-        }),
-      ).pipe(Effect.orDie)
-      const top = review.decisions[0]
-      if (canStopAfterSupervisor(top?.action)) return false
-
-      const lastHumanUser = input.messages.findLast(
-        (msg) => msg.info.role === "user" && !msg.parts.every((part) => "synthetic" in part && part.synthetic),
-      )
-      const noToolContinuations = countNoToolContinuationTurns({ messages: input.messages, lastHumanUser })
-      if (noToolContinuations >= continuation.maxNoToolContinuationTurns) return false
-
-      yield* createUserMessage({
-        sessionID: input.sessionID,
-        agent: input.lastUser.agent,
-        model: input.lastUser.model,
-        variant: input.lastUser.model.variant,
-        parts: [
-          {
-            type: "text",
-            synthetic: true,
-            metadata: { ulmTurnEndContinuation: true, supervisorReview: review.files?.json },
-            text: continuationPrompt({
-              action: top?.action ?? "continue_execution",
-              reason: top?.reason ?? "active ULM operation is not complete",
-              nextTool: top?.requiredNextTool,
-              operationID: operation.operationID,
-              planPath: review.planExcerpt?.path,
-            }),
-          },
-        ],
-      })
-      return true
-    })
-
     const lastAssistant = Effect.fnUntraced(function* (sessionID: SessionID) {
-      const match = yield* sessions.findMessage(sessionID, (m) => m.info.role !== "user")
+      const match = yield* sessions.findMessage(sessionID, (m) => m.info.role !== "user").pipe(Effect.orDie)
       if (Option.isSome(match)) return match.value
-      const msgs = yield* sessions.messages({ sessionID, limit: 1 })
+      const msgs = yield* sessions.messages({ sessionID, limit: 1 }).pipe(Effect.orDie)
       if (msgs.length > 0) return msgs[0]
       throw new Error("Impossible")
     })
@@ -1560,9 +1633,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const slog = elog.with({ sessionID })
         let structured: unknown
         let step = 0
+        const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
-          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
           yield* status.set(sessionID, { type: "busy" })
           yield* slog.info("loop", { step })
 
@@ -1591,7 +1664,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Keep the loop running so tool results can be sent back to the model.
           // Skip provider-executed tool parts — those were fully handled within the
           // provider's stream (e.g. DWS Agent Platform) and don't need a re-loop.
-          const hasToolCalls = assistantHasToolCall(lastAssistantMsg)
+          const hasToolCalls =
+            lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
 
           if (
             lastAssistant?.finish &&
@@ -1599,18 +1673,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             !hasToolCalls &&
             lastUser.id < lastAssistant.id
           ) {
-            if (
-              yield* maybeInjectTurnEndContinuation({
-                sessionID,
-                session,
-                lastUser,
-                lastAssistantMsg,
-                messages: msgs,
-              })
-            ) {
-              yield* slog.info("turn-end supervisor injected continuation")
-              continue
-            }
             yield* slog.info("exiting loop")
             break
           }
@@ -1664,15 +1726,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
           msgs = yield* insertReminders({ messages: msgs, agent, session })
-          const sessionDeniesAllTools = session.permission?.some(
-            (rule) => rule.permission === "*" && rule.action === "deny",
-          )
-          const activeULMActionPlainChat =
-            agent.name === "action" && !!(yield* Effect.promise(() => activeOperationForContext(ctx)))
-          const toolDeniedUser: MessageV2.User =
-            lastUser.tools?.["*"] === false || sessionDeniesAllTools || activeULMActionPlainChat
-              ? { ...lastUser, tools: { ...(lastUser.tools ?? {}), "*": false } }
-              : lastUser
 
           const msg: MessageV2.Assistant = {
             id: MessageID.ascending(),
@@ -1704,7 +1757,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agent,
               session,
               model,
-              tools: toolDeniedUser.tools,
+              tools: lastUser.tools,
               processor: handle,
               bypassAgentCheck,
               messages: msgs,
@@ -1740,37 +1793,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
             }
 
-            const transformInput = {
-              sessionID,
-              agent: agent.name,
-              model,
-              messages: msgs,
-            }
-            if (!LLM.usesPlainNoToolSystem({ userTools: toolDeniedUser.tools, userSystem: toolDeniedUser.system })) {
-              const preChat = yield* plugin.trigger("pre_chat.messages.transform", transformInput, {
-                messages: structuredClone(msgs),
-              })
-              msgs = preChat.messages
-              const legacyChat = yield* plugin.trigger("experimental.chat.messages.transform", transformInput, {
-                messages: msgs,
-              })
-              msgs = legacyChat.messages
-            }
+            yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, rawEnv, instructions, modelMsgs] = yield* Effect.all([
+            const [skills, env, instructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent),
-              sys.environment(model, { sessionID }),
+              sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
-            const env = toolDeniedUser.tools?.["*"] === false ? rawEnv.map(stripULMOperationContext) : rawEnv
-            // Keep stable instructions before volatile environment/ULM context so provider prompt caches
-            // can reuse the longest exact prefix across turns.
-            const system = [...instructions, ...(skills ? [skills] : []), ...env]
+            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
-              user: toolDeniedUser,
+              user: lastUser,
               agent,
               permission: session.permission,
               sessionID,
@@ -1782,12 +1817,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
 
-            if (toolDeniedUser.tools?.["*"] === false) {
-              handle.message.finish = handle.message.finish ?? "stop"
-              yield* sessions.updateMessage(handle.message)
-              return "break" as const
-            }
-
             if (structured !== undefined) {
               handle.message.structured = structured
               handle.message.finish = handle.message.finish ?? "stop"
@@ -1795,7 +1824,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "break" as const
             }
 
-            const finished = handle.message.finish && !["tool-calls", "other"].includes(handle.message.finish)
+            const finished = handle.message.finish && !["tool-calls", "unknown"].includes(handle.message.finish)
             if (finished && !handle.message.error) {
               if (format.type === "json_schema") {
                 handle.message.error = new MessageV2.StructuredOutputError({
@@ -1851,7 +1880,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
-      const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
+      const agentName = cmd.agent ?? input.agent
 
       const raw = input.arguments.match(argsRegex) ?? []
       const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
@@ -1899,12 +1928,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (cmdAgent?.model) return cmdAgent.model
         }
         if (input.model) return Provider.parseModel(input.model)
-        return yield* lastModel(input.sessionID)
+        return yield* currentModel(input.sessionID)
       })
 
       yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
 
-      const agent = yield* agents.get(agentName)
+      const agent = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
       if (!agent) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
@@ -1928,11 +1957,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ]
         : [...templateParts, ...(input.parts ?? [])]
 
-      const userAgent = isSubtask ? (input.agent ?? (yield* agents.defaultAgent())) : agentName
+      const userAgent = isSubtask ? (input.agent ?? (yield* agents.defaultInfo()).name) : agent.name
       const userModel = isSubtask
         ? input.model
           ? Provider.parseModel(input.model)
-          : yield* lastModel(input.sessionID)
+          : yield* currentModel(input.sessionID)
         : taskModel
 
       yield* plugin.trigger(
@@ -1994,8 +2023,11 @@ export const defaultLayer = Layer.suspend(() =>
         Agent.defaultLayer,
         SystemPrompt.defaultLayer,
         LLM.defaultLayer,
+        Reference.defaultLayer,
         Bus.layer,
         CrossSpawnSpawner.defaultLayer,
+        SyncEvent.defaultLayer,
+        RuntimeFlags.defaultLayer,
       ),
     ),
   ),
@@ -2026,14 +2058,12 @@ export const PromptInput = Schema.Struct({
       MessageV2.SubtaskPartInput,
     ]).annotate({ discriminator: "type" }),
   ),
-}).pipe(withStatics((s) => ({ zod: zod(s) })))
+})
 export type PromptInput = Schema.Schema.Type<typeof PromptInput>
 
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,
-}) {
-  static readonly zod = zod(this)
-}
+}) {}
 
 export const ShellInput = Schema.Struct({
   sessionID: SessionID,
@@ -2041,7 +2071,7 @@ export const ShellInput = Schema.Struct({
   agent: Schema.String,
   model: Schema.optional(ModelRef),
   command: Schema.String,
-}).pipe(withStatics((s) => ({ zod: zod(s) })))
+})
 export type ShellInput = Schema.Schema.Type<typeof ShellInput>
 
 export const CommandInput = Schema.Struct({
@@ -2069,7 +2099,7 @@ export const CommandInput = Schema.Struct({
       ]).annotate({ discriminator: "type" }),
     ),
   ),
-}).pipe(withStatics((s) => ({ zod: zod(s) })))
+})
 export type CommandInput = Schema.Schema.Type<typeof CommandInput>
 
 /** @internal Exported for testing */

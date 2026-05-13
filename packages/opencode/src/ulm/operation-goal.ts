@@ -288,9 +288,26 @@ export async function readOperationGoal(worktree: string, operationID: string): 
   return { operationID: id, goal: await readJson<OperationGoalRecord>(files.json), files }
 }
 
-async function completionBlockers(worktree: string, goal: OperationGoalRecord) {
+async function completionBlockers(worktree: string, goal: OperationGoalRecord, now: string) {
   const root = operationPath(worktree, goal.operationID)
   const blockers: string[] = []
+  if (goal.targetDurationHours !== undefined) {
+    const createdAt = Date.parse(goal.createdAt)
+    const checkedAt = Date.parse(now)
+    if (!Number.isFinite(createdAt)) {
+      blockers.push("operation goal createdAt is invalid, cannot verify target duration")
+    } else if (!Number.isFinite(checkedAt)) {
+      blockers.push("operation goal completion time is invalid, cannot verify target duration")
+    } else {
+      const elapsedHours = (checkedAt - createdAt) / (60 * 60 * 1000)
+      if (elapsedHours < goal.targetDurationHours) {
+        const remainingHours = Math.max(0, goal.targetDurationHours - elapsedHours)
+        blockers.push(
+          `target duration not reached: ${elapsedHours.toFixed(2)}h elapsed of ${goal.targetDurationHours}h target (${remainingHours.toFixed(2)}h remaining)`,
+        )
+      }
+    }
+  }
   if (goal.completionPolicy.requiresRuntimeSummary && !(await readableJson(path.join(root, "deliverables", "runtime-summary.json")))) {
     blockers.push("deliverables/runtime-summary.json is missing or invalid")
   }
@@ -328,12 +345,12 @@ export async function completeOperationGoal(
   const goal = await readJson<OperationGoalRecord>(files.json)
   if (!goal) return { operationID, completed: false, blockers: ["operation goal is missing"], files }
   if (goal.status === "complete") return { operationID, completed: true, blockers: [], goal, files }
-  const blockers = await completionBlockers(worktree, goal)
+  const now = options.now ?? new Date().toISOString()
+  const blockers = await completionBlockers(worktree, goal, now)
   if (blockers.length) {
-    await writeJson(files.blockers, { operationID, checkedAt: options.now ?? new Date().toISOString(), blockers })
+    await writeJson(files.blockers, { operationID, checkedAt: now, blockers })
     return { operationID, completed: false, blockers, goal, files }
   }
-  const now = options.now ?? new Date().toISOString()
   const completed = {
     ...goal,
     status: "complete" as const,

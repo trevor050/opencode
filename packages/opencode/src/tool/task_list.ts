@@ -50,7 +50,12 @@ export const TaskListTool = Tool.define<typeof Parameters, Metadata, BackgroundJ
                       `type: ${job.type}`,
                       `status: ${job.status}`,
                       ...(typeof job.metadata?.operationID === "string" ? [`operation_id: ${job.metadata.operationID}`] : []),
-                      ...(restartArgs ? ["restartable: true", `restart_args: ${JSON.stringify(restartArgs)}`] : []),
+                      ...(restartArgs
+                        ? [
+                            "restartable: true",
+                            "restart_args: available via task_status or task_restart; omitted from task_list to keep operation resumes compact and avoid re-echoing old task prompts",
+                          ]
+                        : []),
                       ...(job.title ? [`title: ${job.title}`] : []),
                       ...(job.completedAt ? [`completed_at: ${new Date(job.completedAt).toISOString()}`] : []),
                     ].join("\n")

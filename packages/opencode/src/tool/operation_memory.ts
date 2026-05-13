@@ -27,7 +27,15 @@ export const OperationMemoryTool = Tool.define<typeof Parameters, Metadata, neve
         const result = yield* Effect.tryPromise(() => updateOperationMemory(Instance.worktree, params)).pipe(Effect.orDie)
         return {
           title: result.updated ? `Updated operation memory for ${result.operationID}` : `Read operation memory for ${result.operationID}`,
-          output: [`operation_id: ${result.operationID}`, `memory: ${result.file}`, `updated: ${result.updated}`, "", result.content].join("\n"),
+          output: result.updated
+            ? [
+                `operation_id: ${result.operationID}`,
+                `memory: ${result.file}`,
+                `updated: true`,
+                "",
+                "Memory updated. Full memory content is intentionally not echoed after writes to avoid resurfacing credential handles from older notes. Use action=read only when the full redacted memory is needed.",
+              ].join("\n")
+            : [`operation_id: ${result.operationID}`, `memory: ${result.file}`, `updated: false`, "", result.content].join("\n"),
           metadata: {
             operationID: result.operationID,
             file: result.file,

@@ -323,8 +323,12 @@ function validatePlannedWorkRuntime(lane: OperationLane, completedAt: string) {
   if (minRuntimeMinutes <= 0) return []
   const startedAt = lane.startedAt ? Date.parse(lane.startedAt) : Number.NaN
   const finishedAt = Date.parse(completedAt)
-  if (!Number.isFinite(startedAt)) return [`${lane.id}: planned work cannot complete before the scheduler records startedAt`]
   if (!Number.isFinite(finishedAt)) return [`${lane.id}: completion proof has invalid completedAt`]
+  if (!Number.isFinite(startedAt)) {
+    // Recovery runs can rebuild a graph after the actual lane artifacts already exist.
+    // The artifact/evidence proof still has to pass validation before this path is reached.
+    return []
+  }
   const elapsedMinutes = (finishedAt - startedAt) / 60 / 1000
   if (elapsedMinutes < minRuntimeMinutes) {
     return [

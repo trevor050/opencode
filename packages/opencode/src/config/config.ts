@@ -2,7 +2,6 @@ import * as Log from "@opencode-ai/core/util/log"
 import path from "path"
 import { pathToFileURL } from "url"
 import os from "os"
-import z from "zod"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
 import fsNode from "fs/promises"
@@ -22,9 +21,9 @@ import { InstanceState } from "@/effect/instance-state"
 import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath } from "../project/instance-context"
-import { zod } from "@/util/effect-zod"
-import { NonNegativeInt, PositiveInt, withStatics, type DeepMutable } from "@/util/schema"
+import { NonNegativeInt, PositiveInt, type DeepMutable } from "@opencode-ai/core/schema"
 import { ConfigAgent } from "./agent"
+import { ConfigAttachment } from "./attachment"
 import { ConfigCommand } from "./command"
 import { ConfigFormatter } from "./formatter"
 import { ConfigLayout } from "./layout"
@@ -111,8 +110,6 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPlugin.Spec[] }>(
   return config
 }
 
-export const Server = ConfigServer.Server.zod
-export const Layout = ConfigLayout.Layout.zod
 export type Layout = ConfigLayout.Layout
 
 const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate({
@@ -120,14 +117,6 @@ const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate
   description: "Log level",
 })
 
-// The Effect Schema is the canonical source of truth. The `.zod` compatibility
-// surface is derived so existing Hono validators keep working without a parallel
-// Zod definition.
-//
-// The walker emits `z.object({...})` which is non-strict by default. Config
-// historically uses `.strict()` (additionalProperties: false in openapi.json),
-// so layer that on after derivation.  Re-apply the Config ref afterward
-// since `.strict()` strips the walker's meta annotation.
 export const Info = Schema.Struct({
   $schema: Schema.optional(Schema.String).annotate({
     description: "JSON schema reference for configuration validation",
@@ -144,7 +133,7 @@ export const Info = Schema.Struct({
   }),
   skills: Schema.optional(ConfigSkills.Info).annotate({ description: "Additional skill folder paths" }),
   reference: Schema.optional(ConfigReference.Info).annotate({
-    description: "Named git or local directory references that can be @ mentioned as Scout-backed subagents",
+    description: "Named git or local directory references that can be mentioned as @alias or @alias/path",
   }),
   watcher: Schema.optional(
     Schema.Struct({
@@ -245,6 +234,9 @@ export const Info = Schema.Struct({
   layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(ConfigPermission.Info),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  attachment: Schema.optional(ConfigAttachment.Info).annotate({
+    description: "Attachment processing configuration, including image size limits and resizing behavior",
+  }),
   enterprise: Schema.optional(
     Schema.Struct({
       url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
@@ -286,10 +278,6 @@ export const Info = Schema.Struct({
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
-      enable_sse_json_repair: Schema.optional(Schema.Boolean).annotate({
-        description:
-          "Repair malformed JSON in SSE data frames before provider stream parsing. Disabled by default; enable only for providers known to emit malformed SSE chunks.",
-      }),
       batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
       openTelemetry: Schema.optional(Schema.Boolean).annotate({
         description: "Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)",
@@ -305,17 +293,9 @@ export const Info = Schema.Struct({
       }),
     }),
   ),
-})
-  .annotate({ identifier: "Config" })
-  .pipe(
-    withStatics((s) => ({
-      zod: (zod(s) as unknown as z.ZodObject<any>).strict().meta({ ref: "Config" }) as unknown as z.ZodType<
-        DeepMutable<Schema.Schema.Type<typeof s>>
-      >,
-    })),
-  )
+}).annotate({ identifier: "Config" })
 
-// Uses the shared `DeepMutable` from `@/util/schema`. See the definition
+// Uses the shared `DeepMutable` from `@opencode-ai/core/schema`. See the definition
 // there for why the local variant is needed over `Types.DeepMutable` from
 // effect-smol (the upstream version collapses `unknown` to `{}`).
 export type Info = DeepMutable<Schema.Schema.Type<typeof Info>> & {
@@ -329,14 +309,6 @@ type State = {
   directories: string[]
   deps: Fiber.Fiber<void, never>[]
   consoleState: ConsoleState
-  files: string[]
-  fingerprints: Record<string, string>
-}
-
-type GlobalState = {
-  config: Info
-  files: string[]
-  fingerprints: Record<string, string>
 }
 
 export interface Interface {
@@ -362,47 +334,14 @@ export function applyMcpAllowlist(config: Info) {
   return config
 }
 
-function globalConfigDir() {
-  return Flag.OPENCODE_CONFIG_DIR ?? Global.Path.config
-}
-
 function globalConfigFile() {
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
-    path.join(globalConfigDir(), file),
+    path.join(Global.Path.config, file),
   )
   for (const file of candidates) {
     if (existsSync(file)) return file
   }
   return candidates[0]
-}
-
-function globalConfigFiles() {
-  return ["config.json", "opencode.json", "opencode.jsonc", "config"].map((file) =>
-    path.join(globalConfigDir(), file),
-  )
-}
-
-async function fingerprintFile(filepath: string) {
-  try {
-    const stat = await fsNode.stat(filepath)
-    return `${stat.size}:${stat.mtimeMs}`
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing"
-    throw error
-  }
-}
-
-async function fingerprintFiles(files: string[]) {
-  const result: Record<string, string> = {}
-  for (const file of files) {
-    result[file] = await fingerprintFile(file)
-  }
-  return result
-}
-
-async function fingerprintsChanged(files: string[], previous: Record<string, string>) {
-  const latest = await fingerprintFiles(files)
-  return files.some((file) => latest[file] !== previous[file])
 }
 
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
@@ -431,14 +370,11 @@ function writableGlobal(info: Info) {
   return next
 }
 
-export const ConfigDirectoryTypoError = NamedError.create(
-  "ConfigDirectoryTypoError",
-  z.object({
-    path: z.string(),
-    dir: z.string(),
-    suggestion: z.string(),
-  }),
-)
+export const ConfigDirectoryTypoError = NamedError.create("ConfigDirectoryTypoError", {
+  path: Schema.String,
+  dir: Schema.String,
+  suggestion: Schema.String,
+})
 
 export const layer = Layer.effect(
   Service,
@@ -462,7 +398,7 @@ export const layer = Layer.effect(
         ),
       )
       const parsed = ConfigParse.jsonc(expanded, source)
-      const data = ConfigParse.effectSchema(Info, normalizeLoadedConfig(parsed, source), source)
+      const data = ConfigParse.schema(Info, normalizeLoadedConfig(parsed, source), source)
       if (!("path" in options)) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
@@ -483,13 +419,21 @@ export const layer = Layer.effect(
 
     const loadGlobal = Effect.fnUntraced(function* () {
       let result: Info = {}
-      const files = globalConfigFiles()
-      const configDir = globalConfigDir()
-      result = mergeConfig(result, yield* loadFile(path.join(configDir, "config.json")))
-      result = mergeConfig(result, yield* loadFile(path.join(configDir, "opencode.json")))
-      result = mergeConfig(result, yield* loadFile(path.join(configDir, "opencode.jsonc")))
+      // Seed the default global config with the schema for editor completion, but avoid writing when the user
+      // explicitly routes config through env-provided paths or content.
+      if (!Flag.OPENCODE_CONFIG && !Flag.OPENCODE_CONFIG_DIR && !Flag.OPENCODE_CONFIG_CONTENT) {
+        const file = globalConfigFile()
+        if (!existsSync(file)) {
+          yield* fs
+            .writeWithDirs(file, JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2))
+            .pipe(Effect.catch(() => Effect.void))
+        }
+      }
+      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "config.json")))
+      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.json")))
+      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc")))
 
-      const legacy = path.join(configDir, "config")
+      const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {
         yield* Effect.promise(() =>
           import(pathToFileURL(legacy).href, { with: { type: "toml" } })
@@ -498,18 +442,14 @@ export const layer = Layer.effect(
               if (provider && model) result.model = `${provider}/${model}`
               result["$schema"] = "https://opencode.ai/config.json"
               result = mergeConfig(result, rest)
-              await fsNode.writeFile(path.join(configDir, "config.json"), JSON.stringify(result, null, 2))
+              await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
             })
             .catch(() => {}),
         )
       }
 
-      return {
-        config: result,
-        files,
-        fingerprints: yield* Effect.promise(() => fingerprintFiles(files)),
-      }
+      return result
     })
 
     const [cachedGlobal, invalidateGlobal] = yield* Effect.cachedInvalidateWithTTL(
@@ -517,23 +457,13 @@ export const layer = Layer.effect(
         Effect.tapError((error) =>
           Effect.sync(() => log.error("failed to load global config, using defaults", { error: String(error) })),
         ),
-        Effect.orElseSucceed(
-          (): GlobalState => ({
-            config: {},
-            files: globalConfigFiles(),
-            fingerprints: {},
-          }),
-        ),
+        Effect.orElseSucceed((): Info => ({})),
       ),
       Duration.infinity,
     )
 
     const getGlobal = Effect.fn("Config.getGlobal")(function* () {
-      const current = yield* cachedGlobal
-      const changed = yield* Effect.promise(() => fingerprintsChanged(current.files, current.fingerprints))
-      if (!changed) return current.config
-      yield* invalidateGlobal
-      return (yield* cachedGlobal).config
+      return yield* cachedGlobal
     })
 
     const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
@@ -559,7 +489,6 @@ export const layer = Layer.effect(
         const auth = yield* authSvc.all().pipe(Effect.orDie)
 
         let result: Info = {}
-        const files = new Set<string>(globalConfigFiles())
         const consoleManagedProviders = new Set<string>()
         let activeOrgName: string | undefined
 
@@ -639,17 +568,15 @@ export const layer = Layer.effect(
         }
 
         const global = yield* getGlobal()
-        yield* merge(globalConfigDir(), global, "global")
+        yield* merge(Global.Path.config, global, "global")
 
         if (Flag.OPENCODE_CONFIG) {
-          files.add(Flag.OPENCODE_CONFIG)
           yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG))
           log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
         }
 
         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
           for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
-            files.add(file)
             yield* merge(file, yield* loadFile(file), "local")
           }
         }
@@ -670,7 +597,6 @@ export const layer = Layer.effect(
           if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(dir, file)
-              files.add(source)
               log.debug(`loading config from ${source}`)
               yield* merge(source, yield* loadFile(source))
               result.agent ??= {}
@@ -766,7 +692,6 @@ export const layer = Layer.effect(
         if (existsSync(managedDir)) {
           for (const file of ["opencode.json", "opencode.jsonc"]) {
             const source = path.join(managedDir, file)
-            files.add(source)
             yield* merge(source, yield* loadFile(source), "global")
           }
         }
@@ -821,17 +746,12 @@ export const layer = Layer.effect(
         if (Flag.OPENCODE_DISABLE_PRUNE) {
           result.compaction = { ...result.compaction, prune: false }
         }
-
         applyMcpAllowlist(result)
-
-        const trackedFiles = Array.from(files)
 
         return {
           config: result,
           directories,
           deps,
-          files: trackedFiles,
-          fingerprints: yield* Effect.promise(() => fingerprintFiles(trackedFiles)),
           consoleState: {
             consoleManagedProviders: Array.from(consoleManagedProviders),
             activeOrgName,
@@ -848,29 +768,22 @@ export const layer = Layer.effect(
       }),
     )
 
-    const getState = Effect.fn("Config.getState")(function* () {
-      const current = yield* InstanceState.get(state)
-      const changed = yield* Effect.promise(() => fingerprintsChanged(current.files, current.fingerprints))
-      if (!changed) return current
-      yield* invalidateGlobal
-      yield* InstanceState.invalidate(state)
-      return yield* InstanceState.get(state)
-    })
-
     const get = Effect.fn("Config.get")(function* () {
-      return (yield* getState()).config
+      return yield* InstanceState.use(state, (s) => s.config)
     })
 
     const directories = Effect.fn("Config.directories")(function* () {
-      return (yield* getState()).directories
+      return yield* InstanceState.use(state, (s) => s.directories)
     })
 
     const getConsoleState = Effect.fn("Config.getConsoleState")(function* () {
-      return (yield* getState()).consoleState
+      return yield* InstanceState.use(state, (s) => s.consoleState)
     })
 
     const waitForDependencies = Effect.fn("Config.waitForDependencies")(function* () {
-      yield* Effect.forEach((yield* getState()).deps, Fiber.join, { concurrency: "unbounded" }).pipe(Effect.asVoid)
+      yield* InstanceState.useEffect(state, (s) =>
+        Effect.forEach(s.deps, Fiber.join, { concurrency: "unbounded" }).pipe(Effect.asVoid),
+      )
     })
 
     const update = Effect.fn("Config.update")(function* (config: Info) {
@@ -894,7 +807,7 @@ export const layer = Layer.effect(
       let next: Info
       let changed: boolean
       if (!file.endsWith(".jsonc")) {
-        const existing = ConfigParse.effectSchema(Info, ConfigParse.jsonc(before, file), file)
+        const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
         const merged = mergeDeep(writable(existing), patch)
         const serialized = JSON.stringify(merged, null, 2)
         changed = serialized !== before
@@ -902,7 +815,7 @@ export const layer = Layer.effect(
         next = merged
       } else {
         const updated = patchJsonc(before, patch)
-        next = ConfigParse.effectSchema(Info, ConfigParse.jsonc(updated, file), file)
+        next = ConfigParse.schema(Info, ConfigParse.jsonc(updated, file), file)
         changed = updated !== before
         if (changed) yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
       }

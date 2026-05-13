@@ -1,12 +1,13 @@
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { isTransportError } from "./transport-error"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import {
   CallToolResultSchema,
+  ListToolsResultSchema,
+  ToolSchema,
   type Tool as MCPToolDef,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js"
@@ -14,7 +15,6 @@ import { Config } from "@/config/config"
 import { ConfigMCP } from "../config/mcp"
 import * as Log from "@opencode-ai/core/util/log"
 import { NamedError } from "@opencode-ai/core/util/error"
-import z from "zod/v4"
 import { Installation } from "../installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { withTimeout } from "@/util/timeout"
@@ -31,11 +31,13 @@ import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { zod as effectZod } from "@/util/effect-zod"
-import { withStatics } from "@/util/schema"
 
 const log = Log.create({ service: "mcp" })
 const DEFAULT_TIMEOUT = 30_000
+
+const TolerantListToolsResultSchema = ListToolsResultSchema.extend({
+  tools: ToolSchema.omit({ outputSchema: true }).array(),
+})
 
 export const Resource = Schema.Struct({
   name: Schema.String,
@@ -43,9 +45,7 @@ export const Resource = Schema.Struct({
   description: Schema.optional(Schema.String),
   mimeType: Schema.optional(Schema.String),
   client: Schema.String,
-})
-  .annotate({ identifier: "McpResource" })
-  .pipe(withStatics((s) => ({ zod: effectZod(s) })))
+}).annotate({ identifier: "McpResource" })
 export type Resource = Schema.Schema.Type<typeof Resource>
 
 export const ToolsChanged = BusEvent.define(
@@ -63,12 +63,9 @@ export const BrowserOpenFailed = BusEvent.define(
   }),
 )
 
-export const Failed = NamedError.create(
-  "MCPFailed",
-  z.object({
-    name: z.string(),
-  }),
-)
+export const Failed = NamedError.create("MCPFailed", {
+  name: Schema.String,
+})
 
 type MCPClient = Client
 
@@ -95,9 +92,7 @@ export const Status = Schema.Union([
   StatusFailed,
   StatusNeedsAuth,
   StatusNeedsClientRegistration,
-])
-  .annotate({ identifier: "MCPStatus", discriminator: "status" })
-  .pipe(withStatics((s) => ({ zod: effectZod(s) })))
+]).annotate({ identifier: "MCPStatus", discriminator: "status" })
 export type Status = Schema.Schema.Type<typeof Status>
 
 // Store transports for OAuth servers to allow finishing auth
@@ -120,12 +115,74 @@ function remoteURL(key: string, value: string) {
   log.warn("invalid remote mcp url", { key })
 }
 
-function defs(key: string, client: MCPClient, timeout?: number) {
+function isOutputSchemaValidationError(error: Error) {
+  return /can't resolve reference|resolves to more than one schema|outputSchema|schema.*reference|reference.*schema/i.test(
+    error.message,
+  )
+}
+
+function listTools(key: string, client: MCPClient, timeout: number) {
   return Effect.tryPromise({
-    try: () => withTimeout(client.listTools(), timeout ?? DEFAULT_TIMEOUT),
+    try: () => client.listTools(undefined, { timeout }),
     catch: (err) => (err instanceof Error ? err : new Error(String(err))),
   }).pipe(
     Effect.map((result) => result.tools),
+    Effect.catch((error) => {
+      if (!isOutputSchemaValidationError(error)) return Effect.fail(error)
+
+      log.warn("failed to validate MCP tool output schemas, retrying without output schema validation", { key, error })
+      return Effect.tryPromise({
+        try: () =>
+          client.request({ method: "tools/list" }, TolerantListToolsResultSchema, {
+            timeout,
+          }),
+        catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+      }).pipe(
+        Effect.map((result) =>
+          result.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          })),
+        ),
+      )
+    }),
+  )
+}
+
+// Convert MCP tool definition to AI SDK Tool type
+function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
+  const inputSchema = mcpTool.inputSchema
+
+  // Spread first, then override type to ensure it's always "object"
+  const schema: JSONSchema7 = {
+    ...(inputSchema as JSONSchema7),
+    type: "object",
+    properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+    additionalProperties: false,
+  }
+
+  return dynamicTool({
+    description: mcpTool.description ?? "",
+    inputSchema: jsonSchema(schema),
+    execute: async (args: unknown) => {
+      return client.callTool(
+        {
+          name: mcpTool.name,
+          arguments: (args || {}) as Record<string, unknown>,
+        },
+        CallToolResultSchema,
+        {
+          resetTimeoutOnProgress: true,
+          timeout,
+        },
+      )
+    },
+  })
+}
+
+function defs(key: string, client: MCPClient, timeout?: number) {
+  return listTools(key, client, timeout ?? DEFAULT_TIMEOUT).pipe(
     Effect.catch((err) => {
       log.error("failed to get tools from client", { key, error: err })
       return Effect.succeed(undefined)
@@ -213,8 +270,6 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const auth = yield* McpAuth.Service
     const bus = yield* Bus.Service
-    const layerBridge = yield* EffectBridge.make()
-    const reconnecting = new Map<string, Promise<boolean>>()
 
     type Transport = StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport
 
@@ -607,69 +662,6 @@ export const layer = Layer.effect(
       const config = cfg.mcp ?? {}
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
-      // Single-flight reconnect: concurrent tool calls for the same MCP name
-      // share one in-flight Promise instead of each triggering a new connect.
-      // The entry is removed on both success and failure.
-      const reconnectClient = (name: string): Promise<boolean> => {
-        const existing = reconnecting.get(name)
-        if (existing) return existing
-        const p = layerBridge
-          .promise(getMcpConfig(name))
-          .then((mcp) => {
-            if (!mcp) return false
-            return layerBridge
-              .promise(createAndStore(name, { ...mcp, enabled: true }))
-              .then((status) => status.status === "connected")
-          })
-          .catch((err) => {
-            log.error("mcp reconnect failed", { name, error: err instanceof Error ? err.message : String(err) })
-            return false
-          })
-          .finally(() => {
-            reconnecting.delete(name)
-          })
-        reconnecting.set(name, p)
-        return p
-      }
-
-      // Wraps an MCP tool as an AI SDK dynamicTool. The key piece is the
-      // catch branch in execute: on a transport error, call reconnectClient
-      // and retry once with the fresh client. Non-transport errors and
-      // failed reconnects are rethrown as-is so business errors stay visible.
-      const makeTool = (clientName: string, mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool => {
-        const schema: JSONSchema7 = {
-          ...(mcpTool.inputSchema as JSONSchema7),
-          type: "object",
-          properties: (mcpTool.inputSchema.properties ?? {}) as JSONSchema7["properties"],
-          additionalProperties: false,
-        }
-        return dynamicTool({
-          description: mcpTool.description ?? "",
-          inputSchema: jsonSchema(schema),
-          execute: (args: unknown) => {
-            const payload = {
-              name: mcpTool.name,
-              arguments: (args || {}) as Record<string, unknown>,
-            }
-            const opts = { resetTimeoutOnProgress: true, timeout }
-            return client.callTool(payload, CallToolResultSchema, opts).catch(async (e) => {
-              if (!isTransportError(e)) throw e
-              log.warn("mcp transport error, attempting reconnect", {
-                clientName,
-                tool: mcpTool.name,
-                error: e instanceof Error ? e.message : String(e),
-              })
-              const ok = await reconnectClient(clientName)
-              if (!ok) throw e
-              const next = await layerBridge.promise(InstanceState.get(state))
-              const fresh = next.clients[clientName]
-              if (!fresh || next.status[clientName]?.status !== "connected") throw e
-              return fresh.callTool(payload, CallToolResultSchema, opts)
-            })
-          },
-        })
-      }
-
       const connectedClients = Object.entries(s.clients).filter(
         ([clientName]) => s.status[clientName]?.status === "connected",
       )
@@ -689,12 +681,7 @@ export const layer = Layer.effect(
 
             const timeout = entry?.timeout ?? defaultTimeout
             for (const mcpTool of listed) {
-              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = makeTool(
-                clientName,
-                mcpTool,
-                client,
-                timeout,
-              )
+              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(mcpTool, client, timeout)
             }
           }),
         { concurrency: "unbounded" },

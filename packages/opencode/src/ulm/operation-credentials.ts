@@ -87,6 +87,28 @@ function storageKey(operationID: string, credentialID: string) {
   return ["ulm", "credential", slug(operationID, "operation"), slug(credentialID, "credential")]
 }
 
+async function readCredentialSecretFromProfileStorage(key: string[]) {
+  const dataDirs = [
+    process.env.ULMCODE_CREDENTIAL_FALLBACK_DATA_DIR,
+    path.join(os.homedir(), ".local", "share", "ulmcode"),
+  ].filter((item): item is string => Boolean(item))
+
+  for (const dataDir of dataDirs) {
+    const file = path.join(dataDir, "storage", ...key) + ".json"
+    const secret = await readPrivateJson<OperationCredentialSecret>(file)
+    if (secret) return secret
+  }
+  return undefined
+}
+
+async function readCredentialSecret(storage: Storage.Interface, key: string[]) {
+  try {
+    return await Effect.runPromise(storage.read<OperationCredentialSecret>(key))
+  } catch {
+    return readCredentialSecretFromProfileStorage(key)
+  }
+}
+
 async function readIndex(file: string, operationID: string): Promise<CredentialIndex> {
   try {
     return JSON.parse(await fs.readFile(file, "utf8")) as CredentialIndex
@@ -243,9 +265,7 @@ export async function inspectOperationCredentials(
   const selected = selectCredentials(await readIndex(file, operationID), input.credentialID ? [input.credentialID] : undefined)
   const credentials = await Promise.all(
     selected.map(async (credential): Promise<OperationCredentialInspectableRecord> => {
-      const secret = await Effect.runPromise(storage.read<OperationCredentialSecret>(storageKey(operationID, credential.credentialID))).catch(
-        () => undefined,
-      )
+      const secret = await readCredentialSecret(storage, storageKey(operationID, credential.credentialID))
       return {
         ...credential,
         username: credential.username ?? secret?.username,
@@ -361,11 +381,7 @@ export async function materializeOperationCredentials(
   const selected = selectCredentials(await readIndex(file, operationID), input.credentialIDs)
   const secrets = await Promise.all(
     selected.map(async (credential) => {
-      try {
-        return await Effect.runPromise(storage.read<OperationCredentialSecret>(storageKey(operationID, credential.credentialID)))
-      } catch {
-        return undefined
-      }
+      return readCredentialSecret(storage, storageKey(operationID, credential.credentialID))
     }),
   )
   const entries = selected.flatMap((credential, index) => {

@@ -242,6 +242,88 @@ describe("ULM operation supervisor", () => {
     expect(reportingDecision?.requiredArtifacts).toContain("deliverables/operation-audit.json")
   })
 
+  test("monitors instead of reopening report closeout for target-window handoff blockers", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, {
+      operationID: "school",
+      objective: "Authorized overnight assessment",
+      targetDurationHours: 9,
+    })
+    await writeOperationCheckpoint(dir.path, {
+      operationID: "school",
+      objective: "Authorized overnight assessment",
+      stage: "handoff",
+      status: "running",
+      summary: "Final artifacts are content-complete but target runtime is still active.",
+      nextActions: ["Continue periodic supervision until the target stop window."],
+    })
+    await writeMinimalPlan(dir.path)
+    const graph = await writeOperationGraph(dir.path, { operationID: "school" })
+    const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    parsed.lanes = parsed.lanes.map((lane: { status: string }) => ({ ...lane, status: "complete", terminalState: "complete" }))
+    await fs.writeFile(graph.json, JSON.stringify(parsed, null, 2) + "\n")
+    await writeCoverageContract(dir.path, {
+      operationID: "school",
+      status: "released",
+      goals: ["All required handoff lanes completed."],
+      minimumEvidence: ["Lane completion proofs and report artifacts exist."],
+      requiredLanes: parsed.lanes.map((lane: { id: string }) => lane.id),
+      allowedSkippedLanes: [],
+      fallbackRules: ["No fallback required for this fixture."],
+      retryRules: ["No retry required for this fixture."],
+      subagentOpportunities: ["Report review lanes."],
+      reportGates: ["report_lint finalHandoff=true"],
+      releaseNotes: ["Fixture coverage released."],
+    })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "school",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "school")
+    await fs.mkdir(path.join(root, "deliverables", "final"), { recursive: true })
+    await fs.writeFile(path.join(root, "deliverables", "final", "manifest.json"), JSON.stringify({ operationID: "school" }) + "\n")
+    await fs.writeFile(
+      path.join(root, "deliverables", "operation-audit.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          ok: false,
+          blockers: [
+            "final_handoff: handoff stage must be marked complete before final report handoff",
+            "final_handoff: operation status must be complete for final handoff",
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+    await fs.mkdir(path.join(root, "deliverables", "stage-gates"), { recursive: true })
+    await fs.writeFile(
+      path.join(root, "deliverables", "stage-gates", "handoff.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          ok: false,
+          gaps: [
+            "handoff stage must be marked complete before final report handoff",
+            "operation status must be complete for final handoff",
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const review = await superviseOperation(dir.path, { operationID: "school", reviewKind: "heartbeat", writeArtifacts: false })
+
+    expect(review.decisions.some((item) => item.reason === "final operation audit has unresolved blockers")).toBe(false)
+    expect(review.decisions.some((item) => item.reason === "handoff stage gate has unresolved blockers")).toBe(false)
+    const monitorDecision = review.decisions.find((item) => item.reason === "final handoff is waiting for target stop window")
+    expect(monitorDecision?.action).toBe("continue")
+    expect(monitorDecision?.requiredNextTool).toBe("operation_status")
+  })
+
   test("does not release handoff when the handoff stage gate is failing", async () => {
     await using dir = await tmpdir({ git: true })
     const goal = await createOperationGoal(dir.path, {

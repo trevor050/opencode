@@ -4,6 +4,7 @@ import type { BackgroundJob } from "@/background/job"
 import { operationPath, slug } from "./artifact"
 import { containsRawCredentialSecret } from "./credential-safety"
 import { auditFirstRunObjective } from "./first-run-objective-audit"
+import { auditULMModelRoutes } from "./model-route-audit"
 import { runRuntimeScheduler, type RuntimeSchedulerCycle } from "./runtime-scheduler"
 import type { OperationRunResult } from "./operation-run"
 import { markRecoveredLanesRunning, restartableOperationJobs } from "./operation-recovery"
@@ -33,6 +34,7 @@ export type RuntimeDaemonInput = {
   ensureReadinessProof?: Parameters<typeof runRuntimeScheduler>[1]["ensureReadinessProof"]
   requireLaptopPreflight?: boolean
   requireFirstRunLaunchReadiness?: boolean
+  includeInstalledModelRouteAudit?: boolean
   toolManifestPath?: Parameters<typeof runRuntimeScheduler>[1]["toolManifestPath"]
   recoverBackgroundJob?: (job: BackgroundJob.Info) => Promise<{ jobID?: string | undefined } | undefined>
   maxRecoveriesPerTick?: number
@@ -89,6 +91,16 @@ async function laptopPreflightGap(file: string, targetSeconds: number) {
     return `laptop preflight target_hours=${preflight.targetHours ?? "missing"} is shorter than daemon duration`
   }
   return undefined
+}
+
+async function modelRouteAuditGap(worktree: string, operationID: string, includeInstalled: boolean | undefined) {
+  const audit = await auditULMModelRoutes({
+    worktree,
+    operationID,
+    includeInstalled,
+    checkLaunchEnv: false,
+  })
+  return audit.ok ? undefined : audit.gaps.join("; ")
 }
 
 async function schoolLaptopTemplate(root: string) {
@@ -176,6 +188,28 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
   let consecutiveErrors = 0
   let lastSchedulerError: string | undefined
   const requireLaptopPreflight = input.requireLaptopPreflight ?? maxRuntimeSeconds >= 20 * 60 * 60
+  if (maxRuntimeSeconds >= 20 * 60 * 60) {
+    const gap = await modelRouteAuditGap(worktree, operationID, input.includeInstalledModelRouteAudit)
+    if (gap) {
+      const ended = now()
+      const result: RuntimeDaemonResult = {
+        operationID,
+        lockPath,
+        heartbeatPath,
+        logPath,
+        cycles,
+        startedAt: started.toISOString(),
+        endedAt: ended.toISOString(),
+        elapsedSeconds: Math.max(0, (ended.getTime() - started.getTime()) / 1000),
+        stopped: true,
+        reason: `model route audit blocked: ${gap}`,
+        recoveredJobs,
+      }
+      await writeJson(heartbeatPath, result)
+      await appendJsonl(logPath, result)
+      return result
+    }
+  }
 
   if (requireLaptopPreflight) {
     const gap = await laptopPreflightGap(path.join(daemonDir, "laptop-preflight.json"), maxRuntimeSeconds)

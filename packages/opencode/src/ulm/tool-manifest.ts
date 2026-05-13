@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { operationPath, slug } from "./artifact"
+import { credentialGuessingPolicyGaps } from "./credential-safety"
 
 export type ToolSafety = "non_destructive" | "interactive_destructive"
 
@@ -161,6 +162,8 @@ export async function buildCommandPlan(input: CommandPlanInput): Promise<Command
   const commandRoot = await commandRootForPlan({ root, profileID: profile.id, outputPrefix })
   const variables = { ...input.variables, outputPrefix }
   const command = renderTemplate(profile.template, variables)
+  const guessingGaps = credentialGuessingPolicyGaps({ profileID: profile.id, variables, command })
+  if (guessingGaps.length) throw new Error(guessingGaps.join("; "))
   const artifacts = renderedArtifacts(profile, outputPrefix)
   const stdoutPath = path.join(commandRoot, "stdout.log")
   const stderrPath = path.join(commandRoot, "stderr.log")

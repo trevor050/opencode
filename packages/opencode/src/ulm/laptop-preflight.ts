@@ -11,6 +11,7 @@ import {
   missingCredentialServices,
   validCredentialSubmittedAt,
 } from "./credential-safety"
+import { auditULMModelRoutes } from "./model-route-audit"
 import { writeRuntimeGovernorRouteAudit } from "./runtime-governor"
 import { acquireManifestTools } from "./tool-acquisition"
 
@@ -125,7 +126,12 @@ async function prepareLaptopPreflightPrerequisites(
       manifestPath: input.toolManifestPath,
     }).catch((error) => writeBlockedToolPreflight(input.toolPreflightPath, input.operationID, error))
   }
-  await writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID }).catch(() => undefined)
+  await auditULMModelRoutes({
+    worktree,
+    operationID: input.operationID,
+    checkLaunchEnv: false,
+    includeInstalled: false,
+  }).catch(() => writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID }).catch(() => undefined))
 }
 
 function numberArg(command: string[] | undefined, name: string) {
@@ -236,6 +242,10 @@ export async function auditLaptopPreflight(
     })
   }
   const toolPreflight = await readJson<{ total?: number; available?: number; blocked?: number }>(toolPreflightPath)
+  const modelRouteAudit = await readJson<{ ok?: boolean; gaps?: unknown[] }>(modelRouteAuditPath)
+  const modelRouteGaps = Array.isArray(modelRouteAudit?.gaps)
+    ? modelRouteAudit.gaps.filter((gap): gap is string => typeof gap === "string")
+    : []
   const reportOutline = await readText(reportOutlinePath)
   const targetPages = outlineTargetPages(reportOutline)
   const requiredTargetPages = requiredReportTargetPages(plan, targetHours)
@@ -367,9 +377,14 @@ export async function auditLaptopPreflight(
   checks.push(
     check({
       id: "model-route-audit",
-      status: (await exists(modelRouteAuditPath)) ? "ok" : "fail",
+      status: modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0) ? "ok" : "fail",
       required: true,
-      detail: (await exists(modelRouteAuditPath)) ? "model route audit exists" : "model-route-audit.json is missing",
+      detail:
+        modelRouteAudit?.ok === true || ((await exists(modelRouteAuditPath)) && modelRouteGaps.length === 0)
+          ? "model route audit passed"
+          : (await exists(modelRouteAuditPath))
+            ? `model route audit failed: ${modelRouteGaps.join("; ") || "ok flag missing"}`
+            : "model-route-audit.json is missing",
       path: modelRouteAuditPath,
     }),
   )
