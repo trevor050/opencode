@@ -16,15 +16,12 @@ export type Event =
   | EventPermissionReplied
   | EventSessionDiff
   | EventSessionError
-  | EventInstallationUpdated
-  | EventInstallationUpdateAvailable
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
   | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
-  | EventSessionCompacted
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow1
@@ -33,6 +30,7 @@ export type Event =
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
   | EventProjectUpdated
+  | EventSessionCompacted
   | EventVcsBranchUpdated
   | EventWorkspaceReady
   | EventWorkspaceFailed
@@ -43,6 +41,8 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
+  | EventInstallationUpdated
+  | EventInstallationUpdateAvailable
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
@@ -78,6 +78,7 @@ export type Event =
   | EventSessionNextCompactionEnded
   | EventServerConnected
   | EventGlobalDisposed
+  | EventCatalogModelUpdated
 
 export type OAuth = {
   type: "oauth"
@@ -808,15 +809,12 @@ export type GlobalEvent = {
     | EventPermissionReplied
     | EventSessionDiff
     | EventSessionError
-    | EventInstallationUpdated
-    | EventInstallationUpdateAvailable
     | EventQuestionAsked
     | EventQuestionReplied
     | EventQuestionRejected
     | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
-    | EventSessionCompacted
     | EventTuiPromptAppend
     | EventTuiCommandExecute
     | EventTuiToastShow
@@ -825,6 +823,7 @@ export type GlobalEvent = {
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
     | EventProjectUpdated
+    | EventSessionCompacted
     | EventVcsBranchUpdated
     | EventWorkspaceReady
     | EventWorkspaceFailed
@@ -835,6 +834,8 @@ export type GlobalEvent = {
     | EventPtyUpdated
     | EventPtyExited
     | EventPtyDeleted
+    | EventInstallationUpdated
+    | EventInstallationUpdateAvailable
     | EventMessageUpdated
     | EventMessageRemoved
     | EventMessagePartUpdated
@@ -870,6 +871,7 @@ export type GlobalEvent = {
     | EventSessionNextCompactionEnded
     | EventServerConnected
     | EventGlobalDisposed
+    | EventCatalogModelUpdated
     | SyncEventMessageUpdated
     | SyncEventMessageRemoved
     | SyncEventMessagePartUpdated
@@ -2901,22 +2903,6 @@ export type EventSessionError = {
   }
 }
 
-export type EventInstallationUpdated = {
-  id: string
-  type: "installation.updated"
-  properties: {
-    version: string
-  }
-}
-
-export type EventInstallationUpdateAvailable = {
-  id: string
-  type: "installation.update-available"
-  properties: {
-    version: string
-  }
-}
-
 export type EventQuestionAsked = {
   id: string
   type: "question.asked"
@@ -2961,14 +2947,6 @@ export type EventSessionIdle = {
   }
 }
 
-export type EventSessionCompacted = {
-  id: string
-  type: "session.compacted"
-  properties: {
-    sessionID: string
-  }
-}
-
 export type EventMcpToolsChanged = {
   id: string
   type: "mcp.tools.changed"
@@ -3001,6 +2979,14 @@ export type EventProjectUpdated = {
   id: string
   type: "project.updated"
   properties: Project
+}
+
+export type EventSessionCompacted = {
+  id: string
+  type: "session.compacted"
+  properties: {
+    sessionID: string
+  }
 }
 
 export type EventVcsBranchUpdated = {
@@ -3083,6 +3069,22 @@ export type EventPtyDeleted = {
   type: "pty.deleted"
   properties: {
     id: string
+  }
+}
+
+export type EventInstallationUpdated = {
+  id: string
+  type: "installation.updated"
+  properties: {
+    version: string
+  }
+}
+
+export type EventInstallationUpdateAvailable = {
+  id: string
+  type: "installation.update-available"
+  properties: {
+    version: string
   }
 }
 
@@ -3548,6 +3550,112 @@ export type EventGlobalDisposed = {
   }
 }
 
+export type ModelV2Info = {
+  id: string
+  apiID: string
+  providerID: string
+  family?: string
+  name: string
+  endpoint:
+    | {
+        type: "unknown"
+      }
+    | {
+        type: "openai/responses"
+        url: string
+        websocket?: boolean
+      }
+    | {
+        type: "openai/completions"
+        url: string
+        reasoning?:
+          | {
+              type: "reasoning_content"
+            }
+          | {
+              type: "reasoning_details"
+            }
+      }
+    | {
+        type: "anthropic/messages"
+        url: string
+      }
+    | {
+        type: "aisdk"
+        package: string
+        url?: string
+      }
+  capabilities: {
+    tools: boolean
+    input: Array<string>
+    output: Array<string>
+  }
+  options: {
+    headers: {
+      [key: string]: string
+    }
+    body: {
+      [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
+    variant?: string
+  }
+  variants: Array<{
+    id: string
+    headers: {
+      [key: string]: string
+    }
+    body: {
+      [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
+  }>
+  time: {
+    released: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
+  cost: Array<{
+    tier?: {
+      type: "context"
+      size: number
+    }
+    input: number
+    output: number
+    cache: {
+      read: number
+      write: number
+    }
+  }>
+  status: "alpha" | "beta" | "deprecated" | "active"
+  enabled: boolean
+  limit: {
+    context: number
+    input?: number
+    output: number
+  }
+}
+
+export type EventCatalogModelUpdated = {
+  id: string
+  type: "catalog.model.updated"
+  properties: {
+    model: ModelV2Info
+  }
+}
+
 export type SessionInfo = {
   id: string
   parentID?: string
@@ -3783,104 +3891,6 @@ export type SessionMessage =
   | SessionMessageAssistant
   | SessionMessageCompaction
 
-export type ModelV2Info = {
-  id: string
-  apiID: string
-  providerID: string
-  family?: string
-  name: string
-  endpoint:
-    | {
-        type: "unknown"
-      }
-    | {
-        type: "openai/responses"
-        url: string
-        websocket?: boolean
-      }
-    | {
-        type: "openai/completions"
-        url: string
-        reasoning?:
-          | {
-              type: "reasoning_content"
-            }
-          | {
-              type: "reasoning_details"
-            }
-      }
-    | {
-        type: "anthropic/messages"
-        url: string
-      }
-    | {
-        type: "aisdk"
-        package: string
-        url?: string
-      }
-  capabilities: {
-    tools: boolean
-    input: Array<string>
-    output: Array<string>
-  }
-  options: {
-    headers: {
-      [key: string]: string
-    }
-    body: {
-      [key: string]: unknown
-    }
-    aisdk: {
-      provider: {
-        [key: string]: unknown
-      }
-      request: {
-        [key: string]: unknown
-      }
-    }
-    variant?: string
-  }
-  variants: Array<{
-    id: string
-    headers: {
-      [key: string]: string
-    }
-    body: {
-      [key: string]: unknown
-    }
-    aisdk: {
-      provider: {
-        [key: string]: unknown
-      }
-      request: {
-        [key: string]: unknown
-      }
-    }
-  }>
-  time: {
-    released: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  cost: Array<{
-    tier?: {
-      type: "context"
-      size: number
-    }
-    input: number
-    output: number
-    cache: {
-      read: number
-      write: number
-    }
-  }>
-  status: "alpha" | "beta" | "deprecated" | "active"
-  enabled: boolean
-  limit: {
-    context: number
-    input?: number
-    output: number
-  }
-}
-
 export type ProviderV2Info = {
   id: string
   name: string
@@ -3956,6 +3966,104 @@ export type EventTuiToastShow1 = {
     message: string
     variant: "info" | "success" | "warning" | "error"
     duration?: number
+  }
+}
+
+export type ModelV2Info1 = {
+  id: string
+  apiID: string
+  providerID: string
+  family?: string
+  name: string
+  endpoint:
+    | {
+        type: "unknown"
+      }
+    | {
+        type: "openai/responses"
+        url: string
+        websocket?: boolean
+      }
+    | {
+        type: "openai/completions"
+        url: string
+        reasoning?:
+          | {
+              type: "reasoning_content"
+            }
+          | {
+              type: "reasoning_details"
+            }
+      }
+    | {
+        type: "anthropic/messages"
+        url: string
+      }
+    | {
+        type: "aisdk"
+        package: string
+        url?: string
+      }
+  capabilities: {
+    tools: boolean
+    input: Array<string>
+    output: Array<string>
+  }
+  options: {
+    headers: {
+      [key: string]: string
+    }
+    body: {
+      [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
+    variant?: string
+  }
+  variants: Array<{
+    id: string
+    headers: {
+      [key: string]: string
+    }
+    body: {
+      [key: string]: unknown
+    }
+    aisdk: {
+      provider: {
+        [key: string]: unknown
+      }
+      request: {
+        [key: string]: unknown
+      }
+    }
+  }>
+  time: {
+    released: number | "NaN" | "Infinity" | "-Infinity"
+  }
+  cost: Array<{
+    tier?: {
+      type: "context"
+      size: number
+    }
+    input: number
+    output: number
+    cache: {
+      read: number
+      write: number
+    }
+  }>
+  status: "alpha" | "beta" | "deprecated" | "active"
+  enabled: boolean
+  limit: {
+    context: number
+    input?: number
+    output: number
   }
 }
 
@@ -7145,7 +7253,12 @@ export type V2SessionMessagesResponse2 = V2SessionMessagesResponses[keyof V2Sess
 export type V2ModelListData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
   url: "/api/model"
 }
 
@@ -7161,7 +7274,12 @@ export type V2ModelListResponse = V2ModelListResponses[keyof V2ModelListResponse
 export type V2ProviderListData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
   url: "/api/provider"
 }
 
@@ -7179,7 +7297,12 @@ export type V2ProviderGetData = {
   path: {
     providerID: string
   }
-  query?: never
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
   url: "/api/provider/{providerID}"
 }
 

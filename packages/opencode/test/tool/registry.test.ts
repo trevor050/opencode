@@ -61,10 +61,7 @@ const registryLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
     Layer.provide(RuntimeFlags.layer(flags)),
-  ).pipe(
-    Layer.provide(BackgroundJob.defaultLayer),
-    Layer.provide(SessionStatus.defaultLayer),
-  )
+  ).pipe(Layer.provide(Layer.mergeAll(SessionStatus.defaultLayer, BackgroundJob.defaultLayer)))
 
 const it = testEffect(Layer.mergeAll(registryLayer(), node, Agent.defaultLayer))
 const scout = testEffect(Layer.mergeAll(registryLayer({ experimentalScout: true }), node, Agent.defaultLayer))

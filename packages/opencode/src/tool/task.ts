@@ -1,5 +1,6 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./task.txt"
+import { ToolJsonSchema } from "./json-schema"
 import { Bus } from "@/bus"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
@@ -12,7 +13,8 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import { BackgroundJob } from "@/background/job"
 import { Cause, Effect, Exit, Option, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
-import { Instance } from "@/project/instance"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import { InstanceState } from "@/effect/instance-state"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
 import { containsRawCredentialSecret, credentialGuessingPolicyGaps } from "@/ulm/credential-safety"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -28,7 +30,7 @@ export interface TaskPromptOps {
 
 const id = "task"
 
-export const Parameters = Schema.Struct({
+const BaseParameters = Schema.Struct({
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
   subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
@@ -49,6 +51,10 @@ export const Parameters = Schema.Struct({
   allowedTools: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "Optional ULMCode lane tool allowlist enforced for the child task session.",
   }),
+})
+
+export const Parameters = Schema.Struct({
+  ...BaseParameters.fields,
   background: Schema.optional(Schema.Boolean).annotate({
     description: "When true, launch the subagent in the background and return immediately.",
   }),
@@ -89,22 +95,6 @@ function backgroundMessage(input: { sessionID: SessionID; description: string; s
 function errorText(error: unknown) {
   if (error instanceof Error) return error.message
   return String(error)
-}
-
-function currentWorktree() {
-  try {
-    return Instance.worktree
-  } catch {
-    return undefined
-  }
-}
-
-function currentDirectory() {
-  try {
-    return Instance.directory
-  } catch {
-    return undefined
-  }
 }
 
 function modelFromRoute(route: string | undefined) {
@@ -190,6 +180,7 @@ export const TaskTool = Tool.define(
     const status = yield* SessionStatus.Service
     const jobs = yield* BackgroundJob.Service
     const scope = yield* Scope.Scope
+    const flags = yield* RuntimeFlags.Service
 
     const run = Effect.fn("TaskTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -211,6 +202,12 @@ export const TaskTool = Tool.define(
         : []
       if (guessingGaps.length) return yield* Effect.fail(new Error(guessingGaps.join("; ")))
       const cfg = yield* config.get()
+      const runInBackground = params.background === true
+      if (runInBackground && !flags.experimentalBackgroundSubagents) {
+        return yield* Effect.fail(
+          new Error("Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"),
+        )
+      }
 
       if (!ctx.extra?.bypassAgentCheck) {
         yield* ctx.ask({
@@ -274,8 +271,9 @@ export const TaskTool = Tool.define(
 
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
+      const instanceCtx = yield* InstanceState.context.pipe(Effect.catch(() => Effect.succeed(undefined)))
 
-      const background = params.background === true
+      const background = runInBackground
       const routeModel = modelFromRoute(params.modelRoute)
       const model = routeModel ?? next.model ?? {
         modelID: msg.info.modelID,
@@ -290,7 +288,10 @@ export const TaskTool = Tool.define(
         return {
           title: params.description,
           metadata: {
+            parentSessionId: ctx.sessionID,
+            parentSessionID: ctx.sessionID,
             sessionId: SessionID.make(duplicateBackgroundTask.id),
+            sessionID: SessionID.make(duplicateBackgroundTask.id),
             model,
             operationID: params.operationID,
             laneID: params.laneID,
@@ -312,8 +313,8 @@ export const TaskTool = Tool.define(
         modelID: msg.info.modelID,
         providerID: msg.info.providerID,
       }
-      const operationDirectory = currentDirectory() ?? process.cwd()
-      const operationWorktree = currentWorktree() ?? operationDirectory
+      const operationDirectory = instanceCtx?.directory ?? process.cwd()
+      const operationWorktree = instanceCtx?.worktree ?? operationDirectory
       const ulmConfig: ULMRuntimeConfig = params.operationID
         ? yield* Effect.promise(() => readULMConfig({ directory: operationDirectory, worktree: operationWorktree }).catch(() => ({})))
         : {}
@@ -324,12 +325,15 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(new Error(`Task ${nextSession.id} is already running`))
       }
       const metadata = {
+        parentSessionId: ctx.sessionID,
+        parentSessionID: ctx.sessionID,
         sessionId: nextSession.id,
+        sessionID: nextSession.id,
         model,
-        ...(params.operationID ? { operationID: params.operationID } : {}),
-        ...(params.laneID ? { laneID: params.laneID } : {}),
-        ...(params.modelRoute ? { modelRoute: params.modelRoute } : {}),
-        ...(background ? { background: true } : {}),
+        operationID: params.operationID,
+        laneID: params.laneID,
+        modelRoute: params.modelRoute ?? modelRouteForDedupe,
+        background,
       }
 
       yield* ctx.metadata({
@@ -440,13 +444,15 @@ export const TaskTool = Tool.define(
           yield* resumeParent({ userID: message.info.id, state }).pipe(Effect.ignore, Effect.forkIn(scope))
         })
 
-        const worktree = currentWorktree()
+        const worktree = instanceCtx?.worktree
         yield* jobs.start({
           id: nextSession.id,
           type: id,
           title: params.description,
           metadata: {
+            parentSessionId: ctx.sessionID,
             parentSessionID: ctx.sessionID,
+            sessionId: nextSession.id,
             sessionID: nextSession.id,
             subagent: next.name,
             subagent_type: params.subagent_type,
@@ -534,6 +540,7 @@ export const TaskTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
+      jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         run(params, ctx).pipe(Effect.orDie),
     }

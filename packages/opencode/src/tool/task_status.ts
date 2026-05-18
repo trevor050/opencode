@@ -35,9 +35,8 @@ export function taskStatusWaitTimeout(input: { job?: BackgroundJob.Info; request
 }
 
 function format(input: { taskID: SessionID; state: State; text: string }) {
-  return [`task_id: ${input.taskID}`, `state: ${input.state}`, "", "<task_result>", input.text, "</task_result>"].join(
-    "\n",
-  )
+  const tag = input.state === "completed" || input.state === "running" ? "task_result" : "task_error"
+  return [`task_id: ${input.taskID}`, `state: ${input.state}`, "", `<${tag}>`, input.text, `</${tag}>`].join("\n")
 }
 
 function errorText(error: NonNullable<MessageV2.Assistant["error"]>) {

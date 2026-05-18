@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store"
 import { createMemo, createSignal, For, Show } from "solid-js"
+import { useRenderer } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { selectedForeground, tint, useTheme } from "../../context/theme"
 import type { QuestionAnswer, QuestionRequest } from "@opencode-ai/sdk/v2"
@@ -15,6 +16,7 @@ const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
   const { theme } = useTheme()
+  const renderer = useRenderer()
   const tuiConfig = useTuiConfig()
 
   const questions = createMemo(() => props.request.questions)
@@ -404,6 +406,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                     onMouseOver={() => setTabHover(index())}
                     onMouseOut={() => setTabHover(null)}
                     onMouseUp={() => {
+                      if (renderer.getSelection()?.getSelectedText()) return
                       touchOperatorPrompt()
                       selectTab(index())
                     }}
@@ -432,6 +435,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
               onMouseOver={() => setTabHover("confirm")}
               onMouseOut={() => setTabHover(null)}
               onMouseUp={() => {
+                if (renderer.getSelection()?.getSelectedText()) return
                 touchOperatorPrompt()
                 selectTab(questions().length)
               }}
@@ -459,6 +463,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                       onMouseOver={() => moveTo(i())}
                       onMouseDown={() => moveTo(i())}
                       onMouseUp={() => {
+                        if (renderer.getSelection()?.getSelectedText()) return
                         touchOperatorPrompt()
                         selectOption()
                       }}
@@ -491,6 +496,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                   onMouseOver={() => moveTo(options().length)}
                   onMouseDown={() => moveTo(options().length)}
                   onMouseUp={() => {
+                    if (renderer.getSelection()?.getSelectedText()) return
                     touchOperatorPrompt()
                     selectOption()
                   }}

@@ -357,11 +357,9 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
-  ).pipe(
-    Layer.provide(RuntimeFlags.defaultLayer),
-    Layer.provide(BackgroundJob.defaultLayer),
-    Layer.provide(SessionStatus.defaultLayer),
-  ),
+  )
+    .pipe(Layer.provide(Layer.mergeAll(SessionStatus.defaultLayer, BackgroundJob.defaultLayer)))
+    .pipe(Layer.provide(RuntimeFlags.defaultLayer)),
 )
 
 function isZodType(value: unknown): value is z.ZodType {

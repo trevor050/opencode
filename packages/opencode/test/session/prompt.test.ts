@@ -51,6 +51,7 @@ import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { reply, TestLLMServer } from "../lib/llm-server"
 import { SyncEvent } from "@/sync"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
 
@@ -170,6 +171,7 @@ function makeHttp() {
     AppFileSystem.defaultLayer,
     status,
     SyncEvent.defaultLayer,
+    EventV2Bridge.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))
@@ -220,7 +222,7 @@ function makeHttp() {
   ).pipe(Layer.provide(summary))
 }
 
-const it = testEffect(makeHttp())
+const it = testEffect(makeHttp() as unknown as Layer.Layer<any, any>)
 const unix = process.platform !== "win32" ? it.instance : it.instance.skip
 
 // Config that registers a custom "test" provider with a "test-model" model
