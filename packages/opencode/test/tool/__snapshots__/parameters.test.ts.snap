@@ -325,6 +325,13 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "allowedTools": {
+      "description": "Optional ULMCode lane tool recommendations emitted as positive child-task tool hints.",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
     "background": {
       "description": "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
       "type": "boolean",

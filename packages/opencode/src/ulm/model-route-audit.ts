@@ -144,17 +144,17 @@ function expectedEnvPath(value: string | undefined) {
 function validateLaunchEnv(env: NodeJS.ProcessEnv, configDir: string) {
   const gaps: string[] = []
   const expectedConfig = path.join(configDir, "opencode.json")
-  if (env.OPENCODE_APP_NAME && env.OPENCODE_APP_NAME !== "ulmcode") {
-    gaps.push(`OPENCODE_APP_NAME must be ulmcode, got ${env.OPENCODE_APP_NAME}`)
+  if (env.OPENCODE_APP_NAME !== "ulmcode") {
+    gaps.push(`OPENCODE_APP_NAME must be ulmcode, got ${env.OPENCODE_APP_NAME ?? "unset"}`)
   }
-  if (env.OPENCODE_CONFIG_DIR && expectedEnvPath(env.OPENCODE_CONFIG_DIR) !== path.resolve(configDir)) {
-    gaps.push(`OPENCODE_CONFIG_DIR must point at ${configDir}, got ${env.OPENCODE_CONFIG_DIR}`)
+  if (expectedEnvPath(env.OPENCODE_CONFIG_DIR) !== path.resolve(configDir)) {
+    gaps.push(`OPENCODE_CONFIG_DIR must point at ${configDir}, got ${env.OPENCODE_CONFIG_DIR ?? "unset"}`)
   }
-  if (env.OPENCODE_CONFIG && expectedEnvPath(env.OPENCODE_CONFIG) !== path.resolve(expectedConfig)) {
-    gaps.push(`OPENCODE_CONFIG must point at ${expectedConfig}, got ${env.OPENCODE_CONFIG}`)
+  if (expectedEnvPath(env.OPENCODE_CONFIG) !== path.resolve(expectedConfig)) {
+    gaps.push(`OPENCODE_CONFIG must point at ${expectedConfig}, got ${env.OPENCODE_CONFIG ?? "unset"}`)
   }
-  if (env.OPENCODE_DISABLE_PROJECT_CONFIG && env.OPENCODE_DISABLE_PROJECT_CONFIG !== "1") {
-    gaps.push(`OPENCODE_DISABLE_PROJECT_CONFIG must be 1, got ${env.OPENCODE_DISABLE_PROJECT_CONFIG}`)
+  if (env.OPENCODE_DISABLE_PROJECT_CONFIG !== "1") {
+    gaps.push(`OPENCODE_DISABLE_PROJECT_CONFIG must be 1, got ${env.OPENCODE_DISABLE_PROJECT_CONFIG ?? "unset"}`)
   }
   if (env.OPENCODE_MCP_ALLOWLIST) {
     const allowed = new Set([
@@ -209,7 +209,10 @@ function routeAuditMarkdown(result: ULMModelRouteAuditResult) {
 export async function auditULMModelRoutes(input: ULMModelRouteAuditInput): Promise<ULMModelRouteAuditResult> {
   const operationID = input.operationID ? slug(input.operationID, "operation") : undefined
   const checkedAt = new Date().toISOString()
-  const installedConfigDir = path.resolve(input.installedConfigDir ?? path.join(os.homedir(), ".config", "ulmcode"))
+  const launchEnvSource = input.launchEnv ?? process.env
+  const installedConfigDir = path.resolve(
+    input.installedConfigDir ?? expectedEnvPath(launchEnvSource.OPENCODE_CONFIG_DIR) ?? path.join(os.homedir(), ".config", "ulmcode"),
+  )
   const worktreeProfileConfigPath = path.join(input.worktree, "tools", "ulmcode-profile", "opencode.json")
   const repoProfileConfigPath = path.resolve(import.meta.dir, "../../../..", "tools", "ulmcode-profile", "opencode.json")
   const profileConfigPath = path.resolve(
@@ -237,7 +240,7 @@ export async function auditULMModelRoutes(input: ULMModelRouteAuditInput): Promi
     if (!opencodeText || !ulmcodeText) driftGaps.push("installed opencode.json and ulmcode.json must both exist")
     else if (opencodeText !== ulmcodeText) driftGaps.push("installed opencode.json and ulmcode.json disagree on model routing")
   }
-  const launchEnv = input.checkLaunchEnv === false ? { checked: false, ok: true, gaps: [] } : validateLaunchEnv(input.launchEnv ?? process.env, installedConfigDir)
+  const launchEnv = input.checkLaunchEnv === false ? { checked: false, ok: true, gaps: [] } : validateLaunchEnv(launchEnvSource, installedConfigDir)
   let graphRouteAudit: ULMModelRouteAuditResult["graphRouteAudit"]
   const graphGaps: string[] = []
   if (operationID) {

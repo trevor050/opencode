@@ -87,7 +87,10 @@ export const OperationResumeTool = Tool.define(
 
             for (const item of restartable) {
               const result = item.taskArgs
-                ? yield* taskDef.execute(item.taskArgs, ctx)
+                ? yield* taskDef.execute(item.taskArgs, {
+                    ...ctx,
+                    extra: { ...ctx.extra, recoverExistingOperationJob: true },
+                  })
                 : yield* commandDef.execute(item.commandArgs!, ctx)
               restarted.push(
                 [

@@ -65,20 +65,28 @@ export function containsRawCredentialSecret(value: unknown): boolean {
   })
 }
 
+const NEGATED_CREDENTIAL_GUESSING_PATTERN =
+  /\b(?:no|do\s+not|don't|never|avoid|without)\b[\s\S]{0,140}\b(?:password\s+(?:spray|spraying|guess|guessing|brute|bruteforce|brute-force)|brute\s+force|default\s+(?:credential|credentials|password|passwords|login|logins)|credential\s+guessing|vendor\s+defaults?)\b(?:\s+(?:is|are)\s+(?:authorized|allowed|permitted))?/gi
+
+function withoutNegatedCredentialGuessingPolicy(text: string) {
+  return text.replace(NEGATED_CREDENTIAL_GUESSING_PATTERN, " ")
+}
+
 const DEFAULT_CREDENTIAL_GUESS_PATTERNS = [
   /\badmin\s*[:/]\s*admin\b/i,
   /\badmin\s*[:/]\s*password\b/i,
   /\badministrator\s*[:/]\s*password\b/i,
   /\broot\s*[:/]\s*root\b/i,
   /\bguest\s*[:/]\s*guest\b/i,
-  /\b(?:try|trying|test|testing|guess|guessing|spray|spraying)\b[\s\S]{0,120}\b(?:admin|administrator|root|guest)\b[\s\S]{0,80}\b(?:password|admin|default|vendor)\b/i,
+  /\b(?:try|trying|guess|guessing|spray|spraying)\b[\s\S]{0,120}\b(?:admin|administrator|root|guest)\b(?:\s*[:/]\s*(?:password|admin|default|vendor|root|guest)|[\s\S]{0,80}\b(?:password|credential|login|default|vendor)\b)/i,
+  /\b(?:test|testing)\b[\s\S]{0,80}\b(?:default|vendor|factory)\b[\s\S]{0,80}\b(?:admin|administrator|root|guest|password|credential|login)\b/i,
   /\b(?:hydra|medusa|ncrack|crackmapexec|netexec)\b[\s\S]{0,160}\b(?:password|user|username|login|credential)\b/i,
   /\b(?:default|vendor|factory)\s+(?:password|credential|login|admin)\b/i,
   /\bpassword\s+(?:spray|spraying|guess|guessing|brute|bruteforce|brute-force)\b/i,
 ]
 
 export function credentialGuessingPolicyGaps(value: unknown): string[] {
-  const text = typeof value === "string" ? value : JSON.stringify(value ?? "")
+  const text = withoutNegatedCredentialGuessingPolicy(typeof value === "string" ? value : JSON.stringify(value ?? ""))
   if (!text.trim()) return []
   if (/\b(?:vault|operation_credentials|ULMCODE_CREDENTIAL_|credentialID|credential_id|redacted credential)\b/i.test(text)) {
     return []

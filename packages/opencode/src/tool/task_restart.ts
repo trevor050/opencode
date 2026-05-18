@@ -27,7 +27,10 @@ export const TaskRestartTool = Tool.define(
           const restartArgs = taskRestartArgs(job)
           if (!restartArgs) return yield* Effect.fail(new Error(`Background task ${params.task_id} has no restart args`))
 
-          const restarted = yield* taskDef.execute(restartArgs, ctx)
+          const restarted = yield* taskDef.execute(restartArgs, {
+            ...ctx,
+            extra: { ...ctx.extra, recoverExistingOperationJob: true },
+          })
           return {
             title: `Restarted ${params.task_id}`,
             output: restarted.output,

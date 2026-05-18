@@ -41,6 +41,10 @@ export const LaptopPreflightTool = Tool.define<typeof Parameters, Metadata, neve
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
+        const launchEnv =
+          typeof ctx.extra?.modelRouteLaunchEnv === "object" && ctx.extra.modelRouteLaunchEnv !== null
+            ? (ctx.extra.modelRouteLaunchEnv as NodeJS.ProcessEnv)
+            : process.env
         const result = yield* Effect.tryPromise(() =>
           auditLaptopPreflight(Instance.worktree, {
             operationID: params.operationID,
@@ -48,6 +52,7 @@ export const LaptopPreflightTool = Tool.define<typeof Parameters, Metadata, neve
             operatorConfirmed: params.operatorConfirmed ? [...params.operatorConfirmed] : undefined,
             preparePrerequisites: params.preparePrerequisites,
             toolManifestPath: params.toolManifestPath,
+            modelRouteLaunchEnv: launchEnv,
           }),
         ).pipe(Effect.orDie)
         yield* Effect.promise(() =>

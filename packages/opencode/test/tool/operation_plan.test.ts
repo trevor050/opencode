@@ -184,6 +184,127 @@ describe("tool.operation_plan", () => {
     })
   })
 
+  test("reuses an approved Discovery Charter when writing a full-duration plan", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: () =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationPlanTool
+            const def = yield* tool.init()
+            yield* def.execute(
+              {
+                operationID: "home-network-hardrun-20260507",
+                planningMode: "discovery-charter",
+                planningApproval: {
+                  status: "approved",
+                  discoveryCharterPath: "plans/discovery-charter.md",
+                  approver: "operator",
+                  notes: ["Operator approved the Discovery Charter."],
+                },
+                discoveryCharter: {
+                  purpose: "Research and bounded discovery before the full autonomous plan.",
+                  researchQuestions: ["Which hosts and services are in scope?"],
+                  reconInvestments: ["Passive baseline and bounded service inventory."],
+                  operatorQuestions: ["Use conservative defaults after kickoff."],
+                  candidateDeepWorkLanes: ["LAN discovery", "router review", "report closeout"],
+                  decisionCriteriaForFullPlan: ["Enough safe work exists for the target duration."],
+                },
+              },
+              {
+                sessionID: SessionID.make("session-1"),
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+
+            const result = yield* def.execute(
+              {
+                operationID: "home-network-hardrun-20260507",
+                planningMode: "full-duration",
+                templateName: "home-network-full-duration",
+                trustLevel: "unattended",
+                scanProfile: "aggressive",
+                assumptions: ["Authorized non-destructive home-network run."],
+                timeBudget: {
+                  targetHours: 2.5,
+                  finalizationWindowHours: 0.5,
+                  durationFit: {
+                    confidence: "duration_sized",
+                    evidence: ["Approved charter and initial discovery identify enough bounded safe work."],
+                    overflowBacklog: ["Spend spare time on evidence normalization and report review."],
+                  },
+                  allocations: [
+                    { stage: "recon", hours: 1, work: "Bounded LAN discovery and service inventory." },
+                    { stage: "validation", hours: 0.5, work: "Validate or reject candidates safely." },
+                    { stage: "reporting", hours: 0.5, work: "Write and lint the report." },
+                  ],
+                  executionBlocks: executionBlocks({ minutes: 120 }),
+                },
+                coverageContract: {
+                  status: "unmet",
+                  goals: ["Complete safe scoped discovery and reporting."],
+                  minimumEvidence: ["Discovery output or explicit blockers."],
+                  requiredLanes: ["recon", "finding_validation", "report_review"],
+                  allowedSkippedLanes: [],
+                  fallbackRules: ["Use narrower checks when a command stalls."],
+                  retryRules: ["Retry timeouts once with narrower scope."],
+                  subagentOpportunities: ["recon", "validator", "report-reviewer"],
+                  reportGates: ["report_lint", "report_render", "operation_audit"],
+                },
+                phases: [
+                  {
+                    stage: "recon",
+                    objective: "Map scoped services safely.",
+                    actions: ["Run bounded discovery."],
+                    successCriteria: ["Evidence or blockers are recorded."],
+                    subagents: ["recon"],
+                    noSubagents: [],
+                  },
+                  {
+                    stage: "validation",
+                    objective: "Validate candidates safely.",
+                    actions: ["Review candidate findings."],
+                    successCriteria: ["Candidates are validated or rejected."],
+                    subagents: ["validator"],
+                    noSubagents: [],
+                  },
+                  {
+                    stage: "reporting",
+                    objective: "Produce the handoff report.",
+                    actions: ["Draft, lint, render, and summarize."],
+                    successCriteria: ["Report and runtime summary exist."],
+                    subagents: ["report-writer"],
+                    noSubagents: [],
+                  },
+                ],
+                reportingCloseout: ["report_lint", "report_render", "runtime_summary", "operation_audit"],
+              },
+              {
+                sessionID: SessionID.make("session-1"),
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+            const record = yield* Effect.promise(() => fs.readFile(result.metadata.json, "utf8").then(JSON.parse))
+
+            expect(result.output).toContain("planning_approval: approved")
+            expect(record.planningApproval.status).toBe("approved")
+            expect(record.discoveryCharter.purpose).toContain("Research and bounded discovery")
+          }).pipe(Effect.provide(layer)),
+        ),
+    })
+  })
+
   test("rejects coverage contracts with lane ids that operation_schedule cannot create", async () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({

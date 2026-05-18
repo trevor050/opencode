@@ -5,10 +5,30 @@ import { createOperationGoal } from "@/ulm/operation-goal"
 import { operationPath, writeOperationPlan, writeRuntimeSummary } from "@/ulm/artifact"
 import { writeFirstRunLaunchPacket } from "@/ulm/first-run-launch-packet"
 import { writeOperationGraph } from "@/ulm/operation-graph"
-import { runRuntimeDaemon } from "@/ulm/runtime-daemon"
+import { runRuntimeDaemon as runRuntimeDaemonRaw, type RuntimeDaemonInput } from "@/ulm/runtime-daemon"
 import { tmpdir } from "../fixture/fixture"
 
 const packageRoot = path.join(__dirname, "../..")
+const testConfigDir = path.join(packageRoot, ".artifacts", "runtime-daemon-test-config")
+const profileConfigPath = path.resolve(packageRoot, "../../tools/ulmcode-profile/opencode.json")
+
+await fs.mkdir(testConfigDir, { recursive: true })
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "opencode.json"))
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "ulmcode.json"))
+
+const testLaunchEnv: NodeJS.ProcessEnv = {
+  OPENCODE_APP_NAME: "ulmcode",
+  OPENCODE_CONFIG_DIR: testConfigDir,
+  OPENCODE_CONFIG: path.join(testConfigDir, "opencode.json"),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+}
+
+function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInput) {
+  return runRuntimeDaemonRaw(worktree, {
+    modelRouteLaunchEnv: testLaunchEnv,
+    ...input,
+  })
+}
 
 function fakeClock(start: string, stepSeconds: number) {
   let tick = 0
@@ -486,6 +506,70 @@ describe("ULM runtime daemon", () => {
     expect(queue.units[0].jobID).toBe("cmd-work-unit-http")
   })
 
+  test("syncs CLI command worker completion into the work queue", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    const root = operationPath(dir.path, "School")
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(
+      path.join(root, "work-queue.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          generatedAt: "2026-05-05T00:00:00.000Z",
+          units: [
+            {
+              id: "work-unit-http",
+              operationID: "school",
+              laneID: "web_inventory",
+              profileID: "http-discovery",
+              status: "running",
+              variables: { inputFile: "queues/hosts.txt" },
+              outputPrefix: "evidence/raw/http-discovery",
+              rationale: "test",
+              safety: "non_destructive",
+              attempts: 1,
+              jobID: "cli-command-work-unit-http",
+              createdAt: "2026-05-05T00:00:00.000Z",
+              updatedAt: "2026-05-05T00:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    )
+
+    await runRuntimeDaemon(dir.path, {
+      operationID: "School",
+      maxRuntimeSeconds: 120,
+      cycleIntervalSeconds: 0,
+      maxCycles: 1,
+      now: fakeClock("2026-05-05T00:00:00.000Z", 10),
+      sleep: async () => {},
+      commandJobProvider: async () => [
+        {
+          id: "cli-command-work-unit-http",
+          type: "command_supervise",
+          title: "http-discovery",
+          status: "completed",
+          startedAt: Date.parse("2026-05-05T00:00:00.000Z"),
+          completedAt: Date.parse("2026-05-05T00:01:00.000Z"),
+          metadata: { operationID: "school", laneID: "web_inventory", workUnitID: "work-unit-http", worktree: dir.path },
+        },
+      ],
+    })
+
+    const queue = JSON.parse(await fs.readFile(path.join(root, "work-queue.json"), "utf8"))
+    expect(queue.units[0].status).toBe("complete")
+    expect(queue.units[0].jobID).toBe("cli-command-work-unit-http")
+  })
+
   test("passes supervisor cadence through daemon ticks", async () => {
     await using dir = await tmpdir({ git: true })
     await writeDaemonSupervisorFixture(dir.path)
@@ -709,6 +793,7 @@ describe("ULM runtime daemon", () => {
         stderr: "pipe",
         env: {
           ...process.env,
+          ...testLaunchEnv,
           ULMCODE_ALLOW_LONG_RUN_PREFLIGHT_BYPASS: "1",
           ULMCODE_DAEMON_DRY_RUN_LAUNCHES: "1",
         },

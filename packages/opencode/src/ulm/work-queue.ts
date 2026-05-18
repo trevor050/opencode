@@ -89,6 +89,14 @@ export type WorkQueueJobSyncResult = {
   failedUnits: string[]
 }
 
+export type WorkQueueExternalJob = BackgroundJob.Info | {
+  id: string
+  status: BackgroundJob.Status
+  startedAt: number
+  completedAt?: number
+  metadata?: Record<string, unknown>
+}
+
 export type WorkQueueLeaseResult = {
   operationID: string
   queuePath: string
@@ -373,7 +381,7 @@ export async function nextWorkUnits(worktree: string, input: WorkQueueNextInput)
 
 export async function syncWorkQueueJobs(
   worktree: string,
-  input: { operationID: string; backgroundJobs?: BackgroundJob.Info[] },
+  input: { operationID: string; backgroundJobs?: WorkQueueExternalJob[] },
 ): Promise<WorkQueueJobSyncResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
@@ -392,7 +400,7 @@ export async function syncWorkQueueJobs(
     const metadataOperation = job.metadata?.operationID
     const workUnitID = job.metadata?.workUnitID
     if (metadataOperation !== operationID || typeof workUnitID !== "string") continue
-    if (!jobMatchesWorktree(job, worktree)) continue
+    if ("type" in job && !jobMatchesWorktree(job, worktree)) continue
     const unit = unitsByID.get(workUnitID)
     if (!unit) continue
     unit.jobID = job.id
@@ -452,6 +460,7 @@ export async function requeueStaleWorkUnits(
     const updated = Date.parse(unit.updatedAt)
     if (Number.isNaN(updated) || now.getTime() - updated <= leaseMs) continue
     unit.status = "queued"
+    unit.jobID = undefined
     unit.updatedAt = now.toISOString()
     requeuedUnits.push(unit.id)
   }

@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./finding_record.txt"
 import { Instance } from "@/project/instance"
 import { writeFinding } from "@/ulm/artifact"
+import { errorMessage } from "@/util/error"
 
 const EvidenceRef = Schema.Struct({
   id: Schema.String,
@@ -40,6 +41,13 @@ function normalizeConfidence(value: number) {
   return value
 }
 
+function toolPromise<T>(try_: () => Promise<T>) {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (error) => new Error(errorMessage(error)),
+  })
+}
+
 export const FindingRecordTool = Tool.define<typeof Parameters, Metadata, never>(
   "finding_record",
   Effect.succeed({
@@ -48,9 +56,7 @@ export const FindingRecordTool = Tool.define<typeof Parameters, Metadata, never>
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
         const normalized = { ...params, confidence: normalizeConfidence(params.confidence) }
-        const { root, record } = yield* Effect.tryPromise(() => writeFinding(Instance.worktree, normalized)).pipe(
-          Effect.orDie,
-        )
+        const { root, record } = yield* toolPromise(() => writeFinding(Instance.worktree, normalized)).pipe(Effect.orDie)
         return {
           title: `${record.severity}: ${record.title}`,
           output: [

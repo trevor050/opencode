@@ -31,6 +31,7 @@ export type LaptopPreflightInput = {
   operatorConfirmed?: string[]
   preparePrerequisites?: boolean
   toolManifestPath?: string
+  modelRouteLaunchEnv?: NodeJS.ProcessEnv
   allowSyntheticCredentials?: boolean
   now?: () => Date
 }
@@ -117,7 +118,7 @@ async function writeBlockedToolPreflight(file: string, operationID: string, erro
 
 async function prepareLaptopPreflightPrerequisites(
   worktree: string,
-  input: { operationID: string; toolManifestPath?: string; toolPreflightPath: string },
+  input: { operationID: string; toolManifestPath?: string; toolPreflightPath: string; modelRouteLaunchEnv?: NodeJS.ProcessEnv },
 ) {
   if (!(await exists(input.toolPreflightPath))) {
     await acquireManifestTools({
@@ -129,8 +130,9 @@ async function prepareLaptopPreflightPrerequisites(
   await auditULMModelRoutes({
     worktree,
     operationID: input.operationID,
-    checkLaunchEnv: false,
-    includeInstalled: false,
+    checkLaunchEnv: true,
+    includeInstalled: true,
+    launchEnv: input.modelRouteLaunchEnv,
   }).catch(() => writeRuntimeGovernorRouteAudit(worktree, { operationID: input.operationID }).catch(() => undefined))
 }
 
@@ -239,6 +241,7 @@ export async function auditLaptopPreflight(
       operationID,
       toolManifestPath: input.toolManifestPath,
       toolPreflightPath,
+      modelRouteLaunchEnv: input.modelRouteLaunchEnv,
     })
   }
   const toolPreflight = await readJson<{ total?: number; available?: number; blocked?: number }>(toolPreflightPath)

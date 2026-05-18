@@ -6,6 +6,7 @@ import { containsRawCredentialSecret } from "./credential-safety"
 import { auditFirstRunObjective } from "./first-run-objective-audit"
 import { auditULMModelRoutes } from "./model-route-audit"
 import { runRuntimeScheduler, type RuntimeSchedulerCycle } from "./runtime-scheduler"
+import { syncWorkQueueJobs, type WorkQueueExternalJob } from "./work-queue"
 import type { OperationRunResult } from "./operation-run"
 import { markRecoveredLanesRunning, restartableOperationJobs } from "./operation-recovery"
 import { generateOperationBacklog } from "./operation-backlog"
@@ -22,6 +23,7 @@ export type RuntimeDaemonInput = {
   staleLockSeconds?: number
   backgroundJobs?: BackgroundJob.Info[]
   backgroundJobProvider?: () => Promise<BackgroundJob.Info[]>
+  commandJobProvider?: () => Promise<WorkQueueExternalJob[]>
   launchModelLane?: (
     params: NonNullable<OperationRunResult["taskParams"]>,
   ) => Promise<{ jobID?: string | undefined } | undefined>
@@ -35,6 +37,7 @@ export type RuntimeDaemonInput = {
   requireLaptopPreflight?: boolean
   requireFirstRunLaunchReadiness?: boolean
   includeInstalledModelRouteAudit?: boolean
+  modelRouteLaunchEnv?: NodeJS.ProcessEnv
   toolManifestPath?: Parameters<typeof runRuntimeScheduler>[1]["toolManifestPath"]
   recoverBackgroundJob?: (job: BackgroundJob.Info) => Promise<{ jobID?: string | undefined } | undefined>
   maxRecoveriesPerTick?: number
@@ -93,12 +96,18 @@ async function laptopPreflightGap(file: string, targetSeconds: number) {
   return undefined
 }
 
-async function modelRouteAuditGap(worktree: string, operationID: string, includeInstalled: boolean | undefined) {
+async function modelRouteAuditGap(
+  worktree: string,
+  operationID: string,
+  includeInstalled: boolean | undefined,
+  launchEnv: NodeJS.ProcessEnv | undefined,
+) {
   const audit = await auditULMModelRoutes({
     worktree,
     operationID,
     includeInstalled,
-    checkLaunchEnv: false,
+    checkLaunchEnv: true,
+    launchEnv,
   })
   return audit.ok ? undefined : audit.gaps.join("; ")
 }
@@ -189,7 +198,7 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
   let lastSchedulerError: string | undefined
   const requireLaptopPreflight = input.requireLaptopPreflight ?? maxRuntimeSeconds >= 20 * 60 * 60
   if (maxRuntimeSeconds >= 20 * 60 * 60) {
-    const gap = await modelRouteAuditGap(worktree, operationID, input.includeInstalledModelRouteAudit)
+    const gap = await modelRouteAuditGap(worktree, operationID, input.includeInstalledModelRouteAudit, input.modelRouteLaunchEnv)
     if (gap) {
       const ended = now()
       const result: RuntimeDaemonResult = {
@@ -276,6 +285,10 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
       }
 
       const backgroundJobs = input.backgroundJobProvider ? await input.backgroundJobProvider() : input.backgroundJobs
+      const commandJobs = input.commandJobProvider ? await input.commandJobProvider() : undefined
+      const commandJobSync = commandJobs?.length
+        ? await syncWorkQueueJobs(worktree, { operationID, backgroundJobs: commandJobs })
+        : undefined
       const recoveredThisTick: string[] = []
       const recoveredJobIDs = new Set<string>()
       if (input.recoverBackgroundJob && backgroundJobs?.length) {
@@ -338,6 +351,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
           consecutiveErrors,
           lockPath,
           recoveredJobs: recoveredThisTick,
+          syncedCommandJobs: commandJobSync?.syncedUnits ?? [],
+          completedCommandJobs: commandJobSync?.completedUnits ?? [],
+          failedCommandJobs: commandJobSync?.failedUnits ?? [],
         }
         await writeJson(lockPath, {
           pid: process.pid,
@@ -385,6 +401,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
           consecutiveErrors,
           lockPath,
           recoveredJobs: recoveredThisTick,
+          syncedCommandJobs: commandJobSync?.syncedUnits ?? [],
+          completedCommandJobs: commandJobSync?.completedUnits ?? [],
+          failedCommandJobs: commandJobSync?.failedUnits ?? [],
           supervisorAction: scheduler.cycles.at(-1)?.supervisor?.action,
           supervisorReason: scheduler.cycles.at(-1)?.supervisor?.reason,
           supervisorRan: scheduler.cycles.at(-1)?.supervisor?.ran ?? false,
@@ -431,6 +450,9 @@ export async function runRuntimeDaemon(worktree: string, input: RuntimeDaemonInp
         reason,
         lockPath,
         recoveredJobs: recoveredThisTick,
+        syncedCommandJobs: commandJobSync?.syncedUnits ?? [],
+        completedCommandJobs: commandJobSync?.completedUnits ?? [],
+        failedCommandJobs: commandJobSync?.failedUnits ?? [],
         supervisorAction: scheduler.cycles.at(-1)?.supervisor?.action,
         supervisorReason: scheduler.cycles.at(-1)?.supervisor?.reason,
         supervisorRan: scheduler.cycles.at(-1)?.supervisor?.ran ?? false,

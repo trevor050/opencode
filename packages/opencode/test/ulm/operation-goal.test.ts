@@ -109,18 +109,22 @@ describe("ULM operation goal", () => {
 
   test("marks goal complete when completion artifacts exist", async () => {
     await using dir = await tmpdir({ git: true })
-    const created = await createOperationGoal(dir.path, { operationID: "school", objective: "Finish full report", targetDurationHours: 20 })
+    const created = await createOperationGoal(
+      dir.path,
+      { operationID: "school", objective: "Finish full report", targetDurationHours: 20 },
+      { now: "2026-05-06T00:00:00.000Z" },
+    )
     const root = path.join(dir.path, ".ulmcode", "operations", "school")
     await writeJson(path.join(root, "deliverables", "runtime-summary.json"), { operationID: "school" })
     await writeJson(path.join(root, "deliverables", "final", "manifest.json"), { operationID: "school" })
     await writeJson(path.join(root, "deliverables", "operation-audit.json"), { operationID: "school", ok: true })
     await writeJson(path.join(root, "deliverables", "stage-gates", "handoff.json"), { operationID: "school", ok: true })
 
-    const result = await completeOperationGoal(dir.path, { operationID: "school" }, { now: "2026-05-06T03:00:00.000Z" })
+    const result = await completeOperationGoal(dir.path, { operationID: "school" }, { now: "2026-05-07T00:00:00.000Z" })
 
     expect(result.completed).toBe(true)
     expect(result.goal?.status).toBe("complete")
-    expect(result.goal?.completedAt).toBe("2026-05-06T03:00:00.000Z")
+    expect(result.goal?.completedAt).toBe("2026-05-07T00:00:00.000Z")
     expect(await fs.readFile(created.files.json, "utf8")).toContain('"status": "complete"')
   })
 

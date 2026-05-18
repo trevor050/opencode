@@ -226,6 +226,11 @@ const REPORT_AUTOCOMPLETE_LANES = new Set([
 
 function operationRunRepairHints(blockers: readonly string[], next?: OperationNextAction) {
   const hints = new Set<string>()
+  if (blockers.includes("operation graph is missing")) {
+    hints.add(
+      "Operation graph is missing. During Discovery Charter/pre-schedule work, record progress or blockers with operation_checkpoint plus task_status/operation_status, then finish operation_plan and run operation_schedule once the full graph is ready.",
+    )
+  }
   const missingExpected = blockers
     .map((blocker) => blocker.match(/^proof does not cover expected artifact: (.+)$/)?.[1])
     .filter((value): value is string => Boolean(value))
@@ -533,7 +538,26 @@ async function syncBackgroundJobs(
     if (job.status === "running") lane.status = "running"
     if (job.status === "completed") {
       const proof = await readLaneCompletionProof(root, lane)
-      if (!proof || !(await proofIsValid(root, lane, proof))) continue
+      if (!proof || !(await proofIsValid(root, lane, proof))) {
+        if (job.type === "command_supervise") continue
+        const attempts = (lane.activeJobs ?? []).filter(
+          (item) =>
+            item.type === job.type &&
+            ["completed_missing_proof", "stale", "error", "cancelled", "completed"].includes(item.status),
+        ).length
+        if (!lane.restartPolicy.restartable || attempts >= lane.restartPolicy.maxAttempts) {
+          lane.status = "failed"
+          lane.terminalState = "failed"
+          failed.push(lane.id)
+        } else {
+          lane.status = "ready"
+          lane.startedAt = undefined
+        }
+        lane.activeJobs = (lane.activeJobs ?? []).map((item) =>
+          item.id === job.id ? { ...item, status: "completed_missing_proof" } : item,
+        )
+        continue
+      }
       lane.status = "complete"
       lane.terminalState = "complete"
       completed.push(lane.id)
@@ -570,6 +594,9 @@ function scopeRulePromptLines(scopeRules: string[]) {
 }
 
 function laneSpecificInstruction(lane: OperationLane) {
+  if (lane.id === "network_discovery" || lane.id === "service_inventory") {
+    return "For command_supervise profiles that require target variables, pass an explicit approved host/CIDR target or first create a work queue from discovered leads with operation_queue/operation_queue_next. Do not call service-inventory with an empty target."
+  }
   if (lane.id.startsWith("planned_work_"))
     return `This is a duration-plan execution block. The harness will reject completion before the wall-clock floor${
       lane.minRuntimeMinutes ? ` of ${lane.minRuntimeMinutes} minutes` : ""
@@ -593,9 +620,9 @@ function taskParamsForLane(lane: OperationLane, scopeRules: string[]) {
       `Expected artifacts: ${lane.expectedArtifacts.join(", ")}`,
       "",
       ...scopeRulePromptLines(scopeRules),
-      "Use only the allowed tools listed above. Bash, browser, and Playwright tools are unavailable for this lane unless they are explicitly listed.",
+      "Use the listed tools as the lane toolbox. Bounded foreground shell is fine when bash is listed; use supervised/background execution for broad or uncertain commands.",
       "Checkpoint material progress, preserve evidence references, and finish with a lane summary, blockers, and validation limits.",
-      "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep. Do not use bash, sleep, cat, tail, or foreground shell commands for command polling.",
+      "When supervised commands are running, poll their heartbeat/stdout/stderr artifacts with read/grep, task_status, operation_status, or short bounded shell reads. Avoid sleep-wait loops and open-ended tail commands.",
       ...(specific ? [specific] : []),
       "Before exiting, call operation_run for this operation and lane with mode=complete_lane once expected artifacts exist; use block_lane or skip_lane with a clear reason if the lane cannot be completed safely.",
       "Do not call operation_run with mode=advance, runtime_scheduler, runtime_daemon, task, or command_supervise to launch downstream lanes; the parent scheduler owns the next-lane handoff.",
@@ -639,7 +666,45 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   const { root, graphPath, runLogPath } = graphPaths(worktree, operationID)
   const graphExists = await Bun.file(graphPath).exists()
   if (!graphExists) {
-    if (mode !== "advance") throw new Error("operation graph is missing; run operation_schedule first")
+    if (mode !== "advance") {
+      const next = await decideOperationNext(worktree, { operationID, now })
+      const laneID = input.laneID
+      const blockers = [
+        "operation graph is missing",
+        `${mode} cannot update ${laneID ?? "an unspecified lane"} before operation_schedule writes the graph`,
+      ]
+      const reason =
+        "operation graph is missing; pre-schedule Discovery Charter and research progress must be tracked with checkpoints until operation_schedule writes the lane graph"
+      await appendJsonl(runLogPath, {
+        time: now.toISOString(),
+        mode,
+        laneID,
+        jobID: input.jobID,
+        summary: input.summary,
+        action: "wait",
+        reason,
+      })
+      return {
+        operationID,
+        mode,
+        action: "wait",
+        reason,
+        laneID,
+        graphPath,
+        runLogPath,
+        commandProfiles: [],
+        completedLanes: [],
+        skippedLanes: [],
+        blockedLanes: [],
+        failedLanes: [],
+        syncedJobs: [],
+        syncedWorkUnits: [],
+        completedWorkUnits: [],
+        failedWorkUnits: [],
+        blockers,
+        repairHints: operationRunRepairHints(blockers, next.action),
+      }
+    }
     const next = await decideOperationNext(worktree, { operationID, now })
     const taskParams =
       next.action.action === "research_charter" ? taskParamsForDiscoveryResearch(next.action) : undefined
@@ -784,7 +849,8 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
   }
 
   if (mode === "advance" && input.controller === "tool") {
-    const reason = "operation_run advance is scheduler-owned; use runtime_scheduler or runtime_daemon to launch lanes"
+    const reason =
+      "operation_run advance is scheduler-owned. Use operation_next to inspect the next action, or let runtime_scheduler/runtime_daemon/supervisor launch and relaunch lanes automatically."
     const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
       time: now.toISOString(),
       mode,

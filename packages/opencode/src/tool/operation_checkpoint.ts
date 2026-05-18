@@ -3,6 +3,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./operation_checkpoint.txt"
 import { Instance } from "@/project/instance"
 import { writeOperationCheckpoint } from "@/ulm/artifact"
+import { errorMessage } from "@/util/error"
 
 const EvidenceRef = Schema.Struct({
   id: Schema.String,
@@ -37,6 +38,13 @@ type Metadata = {
   status: string
 }
 
+function toolPromise<T>(try_: () => Promise<T>) {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (error) => new Error(errorMessage(error)),
+  })
+}
+
 export const OperationCheckpointTool = Tool.define<typeof Parameters, Metadata, never>(
   "operation_checkpoint",
   Effect.succeed({
@@ -44,9 +52,7 @@ export const OperationCheckpointTool = Tool.define<typeof Parameters, Metadata, 
     parameters: Parameters,
     execute: (params: Schema.Schema.Type<typeof Parameters>) =>
       Effect.gen(function* () {
-        const { root, record } = yield* Effect.tryPromise(() => writeOperationCheckpoint(Instance.worktree, params)).pipe(
-          Effect.orDie,
-        )
+        const { root, record } = yield* toolPromise(() => writeOperationCheckpoint(Instance.worktree, params)).pipe(Effect.orDie)
         return {
           title: `${record.operationID}: ${record.stage}/${record.status}`,
           output: [

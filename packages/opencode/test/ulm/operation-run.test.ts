@@ -7,6 +7,28 @@ import { formatOperationRun, runOperationStep } from "@/ulm/operation-run"
 import { tmpdir } from "../fixture/fixture"
 
 describe("ULM operation run controller", () => {
+  test("returns repair guidance instead of throwing for pre-graph terminal lane updates", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      mode: "block_lane",
+      laneID: "charter_research",
+      summary: "Service inventory cannot start until target variables are clarified.",
+    })
+
+    expect(result.action).toBe("wait")
+    expect(result.reason).toContain("operation graph is missing")
+    expect(result.blockers).toContain("operation graph is missing")
+    expect(result.blockers).toContain("block_lane cannot update charter_research before operation_schedule writes the graph")
+    expect(result.repairHints.join("\n")).toContain("operation_checkpoint")
+    expect(result.repairHints.join("\n")).toContain("operation_plan")
+    expect(result.taskParams).toBeUndefined()
+    const runLog = await fs.readFile(result.runLogPath, "utf8")
+    expect(runLog).toContain('"mode":"block_lane"')
+    expect(runLog).toContain('"action":"wait"')
+  })
+
   test("advances the first ready lane without manual graph mutation", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
@@ -22,11 +44,13 @@ describe("ULM operation run controller", () => {
     expect(result.laneID).toBe("district_profile")
     expect(result.taskParams?.background).toBe(true)
     expect(result.taskParams?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
-    expect(result.taskParams?.allowedTools).toEqual(["district_profile", "webfetch", "websearch", "evidence_record", "task", "operation_run"])
-    expect(result.taskParams?.prompt).toContain("Use only the allowed tools listed above")
-    expect(result.taskParams?.prompt).toContain("Bash, browser, and Playwright tools are unavailable")
+    expect(result.taskParams?.allowedTools).toEqual(
+      expect.arrayContaining(["district_profile", "webfetch", "websearch", "evidence_record", "task", "operation_run", "bash", "read", "grep", "glob"]),
+    )
+    expect(result.taskParams?.prompt).toContain("Use the listed tools as the lane toolbox")
+    expect(result.taskParams?.prompt).toContain("Bounded foreground shell is fine when bash is listed")
     expect(result.taskParams?.prompt).toContain("poll their heartbeat/stdout/stderr artifacts with read/grep")
-    expect(result.taskParams?.prompt).toContain("Do not use bash, sleep, cat, tail, or foreground shell commands")
+    expect(result.taskParams?.prompt).toContain("Avoid sleep-wait loops and open-ended tail commands")
     expect(result.commandProfiles).toEqual([])
     const graph = JSON.parse(await fs.readFile(result.graphPath, "utf8"))
     expect(graph.lanes.find((lane: { id: string }) => lane.id === "district_profile")?.status).toBe("running")
@@ -1116,6 +1140,44 @@ describe("ULM operation run controller", () => {
     expect(result.failedLanes).not.toContain("recon")
     expect(recon?.status).toBe("running")
     expect(recon?.activeJobs[0]?.status).toBe("error")
+  })
+
+  test("completed model jobs without lane proof become recoverable instead of passive wait", async () => {
+    await using dir = await tmpdir({ git: true })
+    const graph = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+    await runOperationStep(dir.path, { operationID: "School" })
+    const started = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    started.lanes.find((lane: { id: string }) => lane.id === "recon").status = "running"
+    await fs.writeFile(graph.json, JSON.stringify(started, null, 2) + "\n")
+
+    const result = await runOperationStep(dir.path, {
+      operationID: "School",
+      backgroundJobs: [
+        {
+          id: "task_recon_no_proof",
+          type: "task",
+          title: "Recon",
+          status: "completed",
+          startedAt: Date.now() - 1000,
+          completedAt: Date.now(),
+          metadata: { operationID: "school", laneID: "recon" },
+        },
+      ],
+    })
+
+    const updated = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    const recon = updated.lanes.find((lane: { id: string }) => lane.id === "recon")
+    expect(result.syncedJobs).toContain("task_recon_no_proof")
+    expect(result.action).toBe("launch_lane")
+    expect(result.laneID).not.toBeUndefined()
+    expect(result.taskParams?.laneID).not.toBeUndefined()
+    expect(recon?.status).toBe("ready")
+    expect(recon?.activeJobs[0]?.status).toBe("completed_missing_proof")
   })
 
   test("syncs a recovered running job back from failed to running", async () => {

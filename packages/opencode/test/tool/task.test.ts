@@ -256,6 +256,67 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("background task_id resume returns the running task instead of failing", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const jobs = yield* BackgroundJob.Service
+      const storage = yield* Storage.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "Running child" })
+      yield* Effect.addFinalizer(() => storage.remove(["background_job", child.id]).pipe(Effect.ignore))
+      yield* jobs.start({
+        id: child.id,
+        type: TaskTool.id,
+        title: "Running child",
+        metadata: {
+          parentSessionID: chat.id,
+          sessionID: child.id,
+          subagent: "general",
+          subagent_type: "general",
+          description: "inspect bug",
+          prompt: "continue the already-running lane",
+          operationID: "school",
+          laneID: "charter_research",
+          modelRoute: "test/test-model",
+        },
+        run: Effect.never,
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let prompted = false
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "please resume the lane and collect the latest evidence",
+          subagent_type: "general",
+          task_id: child.id,
+          background: true,
+          operationID: "school",
+          laneID: "charter_research",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps({ onPrompt: () => (prompted = true) }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(prompted).toBe(false)
+      expect(result.metadata.sessionId).toBe(child.id)
+      expect(result.metadata.background).toBe(true)
+      expect(result.output).toContain(`task_id: ${child.id}`)
+      expect(result.output).toContain("state: running")
+      expect(result.output).toContain("deduped: true")
+      expect(result.output).toContain("Poll it with task_status")
+    }),
+  )
+
   it.instance("execute asks by default and skips checks when bypassed", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
@@ -458,7 +519,7 @@ describe("tool.task", () => {
   )
 
   it.instance(
-    "execute disables guarded lane tools that are not in the lane allowlist",
+    "execute sends positive lane tool hints without disabling omitted tools",
     () =>
       Effect.gen(function* () {
         const { chat, assistant } = yield* seed()
@@ -487,17 +548,14 @@ describe("tool.task", () => {
         )
 
         expect(seen?.tools).toMatchObject({
-          operation_recover: false,
-          runtime_scheduler: false,
-          runtime_daemon: false,
           task: true,
           command_supervise: true,
-          bash: false,
           write: true,
-          browser_evidence: false,
-          playwright_browser_wait_for: false,
-          playwright_browser_navigate: false,
         })
+        expect(seen?.tools?.bash).toBeUndefined()
+        expect(seen?.tools?.operation_recover).toBeUndefined()
+        expect(seen?.tools?.browser_evidence).toBeUndefined()
+        expect(seen?.tools?.playwright_browser_wait_for).toBeUndefined()
       }),
     {
       config: {

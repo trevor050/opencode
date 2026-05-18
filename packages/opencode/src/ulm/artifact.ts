@@ -1060,6 +1060,16 @@ async function exists(file: string) {
   }
 }
 
+async function nonEmptyFile(file: string) {
+  try {
+    const stat = await fs.stat(file)
+    return stat.isFile() && stat.size > 0
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+}
+
 async function fileSize(file: string) {
   try {
     const stat = await fs.stat(file)
@@ -1986,6 +1996,9 @@ export async function buildOperationAudit(
   const finalHandoffOptions = { ...options, finalHandoff: finalHandoffRequired }
   const minOutlineTargetPages = finalHandoffMinOutlineTargetPages(plan, finalHandoffOptions)
   const minOutlineWordsPerPage = finalHandoffMinOutlineWordsPerPage(finalHandoffOptions)
+  const requireOutlineSections = options.requireOutlineSections ?? finalHandoffRequired
+  const requireFindingSections = options.requireFindingSections ?? finalHandoffRequired
+  const minFindingWords = options.minFindingWords ?? (finalHandoffRequired ? 75 : undefined)
   const minPdfPages = finalHandoffRequired
     ? Math.max(options.minPdfPages ?? 0, minOutlineTargetPages ?? 0) || undefined
     : options.minPdfPages
@@ -2001,11 +2014,11 @@ export async function buildOperationAudit(
     requireOutlineBudget: options.requireOutlineBudget,
     minOutlineTargetPages,
     minOutlineWordsPerPage,
-    requireOutlineSections: options.requireOutlineSections,
+    requireOutlineSections,
     minOutlineSectionWords: options.minOutlineSectionWords,
     minOutlineSectionWordsPerPage: options.minOutlineSectionWordsPerPage,
-    requireFindingSections: options.requireFindingSections,
-    minFindingWords: options.minFindingWords,
+    requireFindingSections,
+    minFindingWords,
     minPdfPages,
     finalHandoff: finalHandoffRequired,
     requireOperationPlan: options.requireOperationPlan,
@@ -3705,8 +3718,12 @@ export function validateFinding(input: FindingInput) {
   if (["validated", "report_ready"].includes(input.state) && input.evidence.length === 0) {
     gaps.push(`${input.state} findings require at least one evidence reference`)
   }
-  if (input.state === "report_ready" && !input.impact) gaps.push("report_ready findings require impact")
-  if (input.state === "report_ready" && !input.remediation) gaps.push("report_ready findings require remediation")
+  if (["validated", "report_ready"].includes(input.state) && !input.impact) {
+    gaps.push(`${input.state} findings require impact`)
+  }
+  if (["validated", "report_ready"].includes(input.state) && !input.remediation) {
+    gaps.push(`${input.state} findings require remediation`)
+  }
   return gaps
 }
 
@@ -3879,6 +3896,10 @@ export async function readEvidenceRecords(root: string) {
   return records
 }
 
+function evidenceArtifactPath(root: string, evidencePath: string) {
+  return path.isAbsolute(evidencePath) ? evidencePath : path.join(root, evidencePath)
+}
+
 export async function writeEvidence(worktree: string, input: EvidenceInput): Promise<EvidenceWriteResult> {
   if (containsRawCredentialSecret(input)) throw new Error("evidence records must not contain raw credential secrets")
   const now = new Date().toISOString()
@@ -3887,8 +3908,8 @@ export async function writeEvidence(worktree: string, input: EvidenceInput): Pro
   const evidenceID = makeEvidenceID(input)
   const json = path.join(root, "evidence", `${evidenceID}.json`)
   const current = await readJson<EvidenceRecord>(json)
-  const rawRelativePath = input.content === undefined ? undefined : path.join("evidence", "raw", `${evidenceID}.txt`)
-  const rawPath = rawRelativePath ? path.join(root, rawRelativePath) : undefined
+  const rawRelativePath = input.content === undefined ? undefined : (input.path ?? path.join("evidence", "raw", `${evidenceID}.txt`))
+  const rawPath = rawRelativePath ? evidenceArtifactPath(root, rawRelativePath) : undefined
   const record: EvidenceRecord = {
     operationID,
     evidenceID,
@@ -3906,6 +3927,8 @@ export async function writeEvidence(worktree: string, input: EvidenceInput): Pro
   if (rawPath) {
     await fs.mkdir(path.dirname(rawPath), { recursive: true })
     await fs.writeFile(rawPath, input.content ?? "")
+  } else if (input.path && !(await nonEmptyFile(evidenceArtifactPath(root, input.path)))) {
+    throw new Error(`evidence artifact is missing or empty: ${input.path}`)
   }
   await writeJson(json, record)
   await appendJsonl(path.join(root, "evidence.jsonl"), { type: "evidence", ...record })
@@ -4052,8 +4075,9 @@ function authoredReportBody(input: { format: "html" | "markdown"; content: strin
   return /<body[^>]*>([\s\S]*?)<\/body>/i.exec(input.content)?.[1] ?? input.content
 }
 
-function markdownHeadingPattern(value: string) {
-  return new RegExp(`^#{1,6}\\s+.*${escapeRegExp(value)}.*$`, "im")
+function markdownHeadingPattern(value: string, minLevel = 1) {
+  const minimum = Math.min(6, Math.max(1, Math.floor(minLevel)))
+  return new RegExp(`^#{${minimum},6}\\s+.*${escapeRegExp(value)}.*$`, "im")
 }
 
 function escapeRegExp(value: string) {
@@ -4073,7 +4097,7 @@ function wordCount(value: string) {
 
 function reportSectionForFinding(report: string, finding: FindingRecord) {
   const heading =
-    markdownHeadingPattern(finding.findingID).exec(report) ?? markdownHeadingPattern(finding.title).exec(report)
+    markdownHeadingPattern(finding.title).exec(report) ?? markdownHeadingPattern(finding.findingID, 2).exec(report)
   if (heading?.index !== undefined) {
     const bodyStart = heading.index + heading[0].length
     const rest = report.slice(bodyStart)
@@ -4852,6 +4876,18 @@ export async function lintReport(
   const evidenceRecords = await readEvidenceRecords(root)
   const evidenceIDs = new Set(evidenceRecords.map((item) => item.evidenceID))
   const evidencePaths = new Set(evidenceRecords.flatMap((item) => (item.path ? [item.path] : [])))
+  const evidenceByID = new Map(evidenceRecords.map((item) => [item.evidenceID, item]))
+  const evidenceByPath = new Map(evidenceRecords.flatMap((item) => (item.path ? [[item.path, item] as const] : [])))
+
+  for (const evidence of evidenceRecords) {
+    if (!evidence.path) {
+      if (evidence.kind !== "note") gaps.push(`${evidence.evidenceID}: evidence record is missing raw artifact path`)
+      continue
+    }
+    if (!(await nonEmptyFile(evidenceArtifactPath(root, evidence.path)))) {
+      gaps.push(`${evidence.evidenceID}: evidence artifact is missing or empty: ${evidence.path}`)
+    }
+  }
 
   for (const finding of findings) {
     for (const gap of validateFinding(finding)) gaps.push(`${finding.findingID}: ${gap}`)
@@ -4861,6 +4897,15 @@ export async function lintReport(
       for (const ref of finding.evidence) {
         if (!evidenceIDs.has(ref.id) && (!ref.path || !evidencePaths.has(ref.path))) {
           gaps.push(`${finding.findingID}: evidence reference ${ref.id} is not recorded`)
+          continue
+        }
+        const evidence = evidenceByID.get(ref.id) ?? (ref.path ? evidenceByPath.get(ref.path) : undefined)
+        if (!evidence?.path) {
+          gaps.push(`${finding.findingID}: evidence reference ${ref.id} has no raw artifact path`)
+          continue
+        }
+        if (!(await nonEmptyFile(evidenceArtifactPath(root, evidence.path)))) {
+          gaps.push(`${finding.findingID}: evidence reference ${ref.id} artifact is missing or empty: ${evidence.path}`)
         }
       }
     }
@@ -6018,10 +6063,11 @@ export async function renderReport(worktree: string, input: ReportRenderInput): 
   const sanitizedCehTechnicalReport = finalArtifactMap.get("deliverables/final/ceh-technical-report.md") as string
   const sanitizedUlmTeamReport = finalArtifactMap.get("deliverables/final/ulm-team-report.md") as string
   const sanitizedRuntimeSummary = finalArtifactMap.get("deliverables/final/runtime-summary.md") as string
+  const minMainReportPages = reportOutlineTargetFloor(plan)
 
   await fs.mkdir(internalReviewDir, { recursive: true })
   await fs.writeFile(htmlPath, sanitizedHtml)
-  await fs.writeFile(pdfPath, buildStyledPdf({ title, operationID, operation, reportHtml: sanitizedHtml }))
+  await fs.writeFile(pdfPath, buildStyledPdf({ title, operationID, operation, reportHtml: sanitizedHtml, minPages: minMainReportPages }))
   await fs.writeFile(readmePath, sanitizedReadme)
   await writeJson(findingsJsonPath, sanitizedFindingsJson)
   await writeJson(evidenceIndexPath, sanitizedEvidenceIndex)

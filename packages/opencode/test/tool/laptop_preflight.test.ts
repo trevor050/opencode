@@ -15,7 +15,20 @@ import { MessageID } from "@/session/schema"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
 
 const packageRoot = path.join(__dirname, "../..")
+const testConfigDir = path.join(packageRoot, ".artifacts", "laptop-preflight-tool-test-config")
+const profileConfigPath = path.resolve(packageRoot, "../../tools/ulmcode-profile/opencode.json")
 const layer = Layer.mergeAll(Agent.defaultLayer, Config.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer)
+
+await fs.mkdir(testConfigDir, { recursive: true })
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "opencode.json"))
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "ulmcode.json"))
+
+const testLaunchEnv: NodeJS.ProcessEnv = {
+  OPENCODE_APP_NAME: "ulmcode",
+  OPENCODE_CONFIG_DIR: testConfigDir,
+  OPENCODE_CONFIG: path.join(testConfigDir, "opencode.json"),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+}
 
 async function writeJson(file: string, data: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true })
@@ -91,6 +104,7 @@ describe("tool.laptop_preflight", () => {
                 agent: "pentest",
                 abort: new AbortController().signal,
                 messages: [],
+                extra: { modelRouteLaunchEnv: testLaunchEnv },
                 metadata: () => Effect.void,
                 ask: () => Effect.void,
               },

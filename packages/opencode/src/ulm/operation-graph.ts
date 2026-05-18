@@ -579,7 +579,23 @@ const SUPERVISOR_LANE: (typeof BASE_LANES)[number] = {
   title: "Supervisor heartbeat and recovery review",
   agent: "pentest",
   dependsOn: [],
-  allowedTools: ["operation_supervise", "operation_resume", "runtime_summary", "operation_audit"],
+  allowedTools: [
+    "operation_supervise",
+    "operation_resume",
+    "operation_recover",
+    "operation_next",
+    "operation_run",
+    "operation_status",
+    "runtime_summary",
+    "runtime_scheduler",
+    "runtime_daemon",
+    "operation_audit",
+    "task",
+    "task_status",
+    "task_list",
+    "task_restart",
+    "command_supervise",
+  ],
   expectedArtifacts: ["supervisor/latest.md"],
   route: "reasoning",
   budgetWeight: 0,
@@ -596,6 +612,12 @@ const REPORTING_LANE_IDS = new Set([
   "report_review",
   "operator_summary",
 ])
+
+const COMMON_LANE_TOOLS = ["bash", "read", "grep", "glob"] as const
+
+function withLaneTools(tools: readonly string[], extra: readonly string[] = []) {
+  return [...new Set([...tools, ...COMMON_LANE_TOOLS, ...extra])]
+}
 
 function routeFor(input: OperationScheduleInput, route: string) {
   return (
@@ -686,8 +708,8 @@ export function buildOperationGraph(input: OperationScheduleInput): OperationGra
         fallbackModelRoutes: fallbackRoutesFor(input, templateLane.route, modelRoute),
         allowedTools:
           templateLane.id === "supervisor"
-            ? [...templateLane.allowedTools]
-            : [...new Set([...templateLane.allowedTools, "operation_run"])],
+            ? withLaneTools(templateLane.allowedTools)
+            : withLaneTools(templateLane.allowedTools, ["operation_run"]),
         expectedArtifacts: [...templateLane.expectedArtifacts],
         budget: budgetUSD !== undefined ? { maxUSD: Number((budgetUSD * templateLane.budgetWeight).toFixed(4)) } : {},
         restartPolicy: {
@@ -877,9 +899,17 @@ function expandGraphWithExecutionBlocks(graph: OperationGraphRecord, blocks: Ope
       agent: block.subagents[0] ?? "pentest",
       status: "pending",
       dependsOn: [previous, baseDependency].filter((item): item is string => !!item),
-      modelRoute: "openai/gpt-5.4-mini-fast",
-      fallbackModelRoutes: ["openai/gpt-5.5"],
-      allowedTools: ["operation_checkpoint", "command_supervise", "evidence_record", "finding_record", "write", "task", "operation_run"],
+      modelRoute: "openai/gpt-5.5",
+      fallbackModelRoutes: [],
+      allowedTools: withLaneTools([
+        "operation_checkpoint",
+        "command_supervise",
+        "evidence_record",
+        "finding_record",
+        "write",
+        "task",
+        "operation_run",
+      ]),
       expectedArtifacts: block.expectedArtifacts?.length ? [...block.expectedArtifacts] : [`work-blocks/${id}.md`],
       budget: {},
       restartPolicy: {

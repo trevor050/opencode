@@ -107,9 +107,17 @@ function resolveOperationFile(root: string, file: string) {
 async function collectFromCommandPlans(root: string, commandPlanPaths: string[]) {
   const artifacts = new Set<string>()
   for (const planPath of commandPlanPaths) {
-    const plan = await readJson<CommandPlanRecord>(resolveOperationFile(root, planPath))
+    let plan: CommandPlanRecord | undefined
+    try {
+      plan = await readJson<CommandPlanRecord>(resolveOperationFile(root, planPath))
+    } catch (error) {
+      if (error instanceof SyntaxError) continue
+      throw error
+    }
     if (!plan) continue
-    for (const candidate of [plan.stdoutPath, plan.stderrPath, ...(plan.artifacts ?? [])]) {
+    const explicitArtifacts = plan.artifacts ?? []
+    const candidates = explicitArtifacts.length ? explicitArtifacts : [plan.stdoutPath, plan.stderrPath]
+    for (const candidate of candidates) {
       if (!candidate) continue
       const resolved = path.isAbsolute(candidate) ? candidate : path.join(plan.operationRoot ?? root, candidate)
       try {
