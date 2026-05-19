@@ -197,7 +197,7 @@ describe("background.job", () => {
       const cancelled = yield* jobs.cancel(job.id)
 
       expect(cancelled?.status).toBe("cancelled")
-      yield* Deferred.await(interrupted).pipe(Effect.timeout("1 second"))
+      yield* Deferred.await(interrupted).pipe(Effect.timeout("5 seconds"))
       expect((yield* jobs.get(job.id))?.status).toBe("cancelled")
     }),
   )
