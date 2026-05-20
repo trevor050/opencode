@@ -9,6 +9,7 @@ import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { MessageID } from "@/session/schema"
 import { SessionStatus } from "@/session/status"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Storage } from "@/storage/storage"
 import { OperationRunTool } from "@/tool/operation_run"
 import { ToolRegistry } from "@/tool/registry"
@@ -27,6 +28,7 @@ const layer = Layer.mergeAll(
   CrossSpawnSpawner.defaultLayer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
+  RuntimeFlags.layer({ experimentalBackgroundSubagents: true }),
   Storage.defaultLayer,
   ToolRegistry.defaultLayer,
   Truncate.defaultLayer,

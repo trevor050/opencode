@@ -5,6 +5,7 @@ import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Instance } from "@/project/instance"
 import { formatRuntimeScheduler, runRuntimeScheduler } from "@/ulm/runtime-scheduler"
 import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
@@ -41,6 +42,7 @@ export const RuntimeSchedulerTool = Tool.define<
   | Config.Service
   | Session.Service
   | SessionStatus.Service
+  | RuntimeFlags.Service
   | Scope.Scope
   | Truncate.Service
 >(
