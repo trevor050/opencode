@@ -105,6 +105,10 @@ export type WellKnownAuth = {
 
 export type Auth = OAuth | ApiAuth | WellKnownAuth
 
+export type EffectHttpApiErrorBadRequest = {
+  _tag: "BadRequest"
+}
+
 export type EventTuiPromptAppend = {
   id: string
   type: "tui.prompt.append"
@@ -7111,9 +7115,13 @@ export type V2SessionListData = {
 
 export type V2SessionListErrors = {
   /**
-   * Bad request
+   * BadRequest
    */
-  400: BadRequestError
+  400: EffectHttpApiErrorBadRequest
+  /**
+   * Unauthorized
+   */
+  401: unknown
 }
 
 export type V2SessionListError = V2SessionListErrors[keyof V2SessionListErrors]
@@ -7142,6 +7150,13 @@ export type V2SessionPromptData = {
   url: "/api/session/{sessionID}/prompt"
 }
 
+export type V2SessionPromptErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
+}
+
 export type V2SessionPromptResponses = {
   /**
    * Session.Message
@@ -7161,6 +7176,13 @@ export type V2SessionCompactData = {
     workspace?: string
   }
   url: "/api/session/{sessionID}/compact"
+}
+
+export type V2SessionCompactErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
 }
 
 export type V2SessionCompactResponses = {
@@ -7184,6 +7206,13 @@ export type V2SessionWaitData = {
   url: "/api/session/{sessionID}/wait"
 }
 
+export type V2SessionWaitErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
+}
+
 export type V2SessionWaitResponses = {
   /**
    * <No Content>
@@ -7203,6 +7232,13 @@ export type V2SessionContextData = {
     workspace?: string
   }
   url: "/api/session/{sessionID}/context"
+}
+
+export type V2SessionContextErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
 }
 
 export type V2SessionContextResponses = {
@@ -7234,9 +7270,13 @@ export type V2SessionMessagesData = {
 
 export type V2SessionMessagesErrors = {
   /**
-   * Bad request
+   * BadRequest
    */
-  400: BadRequestError
+  400: EffectHttpApiErrorBadRequest
+  /**
+   * Unauthorized
+   */
+  401: unknown
 }
 
 export type V2SessionMessagesError = V2SessionMessagesErrors[keyof V2SessionMessagesErrors]
@@ -7262,6 +7302,13 @@ export type V2ModelListData = {
   url: "/api/model"
 }
 
+export type V2ModelListErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
+}
+
 export type V2ModelListResponses = {
   /**
    * Success
@@ -7281,6 +7328,13 @@ export type V2ProviderListData = {
     }
   }
   url: "/api/provider"
+}
+
+export type V2ProviderListErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
 }
 
 export type V2ProviderListResponses = {
@@ -7307,6 +7361,10 @@ export type V2ProviderGetData = {
 }
 
 export type V2ProviderGetErrors = {
+  /**
+   * Unauthorized
+   */
+  401: unknown
   /**
    * NotFoundError
    */

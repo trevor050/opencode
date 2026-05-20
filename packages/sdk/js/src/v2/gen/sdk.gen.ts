@@ -221,17 +221,23 @@ import type {
   UlmOperationResumeResponses,
   UlmOperationStatusResponses,
   UlmOperationTemplateStartResponses,
+  V2ModelListErrors,
   V2ModelListResponses,
   V2ProviderGetErrors,
   V2ProviderGetResponses,
+  V2ProviderListErrors,
   V2ProviderListResponses,
+  V2SessionCompactErrors,
   V2SessionCompactResponses,
+  V2SessionContextErrors,
   V2SessionContextResponses,
   V2SessionListErrors,
   V2SessionListResponses,
   V2SessionMessagesErrors,
   V2SessionMessagesResponses,
+  V2SessionPromptErrors,
   V2SessionPromptResponses,
+  V2SessionWaitErrors,
   V2SessionWaitResponses,
   VcsApplyErrors,
   VcsApplyResponses,
@@ -4328,7 +4334,7 @@ export class Session3 extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).post<V2SessionPromptResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<V2SessionPromptResponses, V2SessionPromptErrors, ThrowOnError>({
       url: "/api/session/{sessionID}/prompt",
       ...options,
       ...params,
@@ -4365,7 +4371,7 @@ export class Session3 extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).post<V2SessionCompactResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<V2SessionCompactResponses, V2SessionCompactErrors, ThrowOnError>({
       url: "/api/session/{sessionID}/compact",
       ...options,
       ...params,
@@ -4397,7 +4403,7 @@ export class Session3 extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).post<V2SessionWaitResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<V2SessionWaitResponses, V2SessionWaitErrors, ThrowOnError>({
       url: "/api/session/{sessionID}/wait",
       ...options,
       ...params,
@@ -4429,7 +4435,7 @@ export class Session3 extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).get<V2SessionContextResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<V2SessionContextResponses, V2SessionContextErrors, ThrowOnError>({
       url: "/api/session/{sessionID}/context",
       ...options,
       ...params,
@@ -4491,7 +4497,7 @@ export class Model extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "location" }] }])
-    return (options?.client ?? this.client).get<V2ModelListResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<V2ModelListResponses, V2ModelListErrors, ThrowOnError>({
       url: "/api/model",
       ...options,
       ...params,
@@ -4515,7 +4521,7 @@ export class Provider2 extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "location" }] }])
-    return (options?.client ?? this.client).get<V2ProviderListResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<V2ProviderListResponses, V2ProviderListErrors, ThrowOnError>({
       url: "/api/provider",
       ...options,
       ...params,

@@ -9,7 +9,7 @@ import { SplitBorder } from "../../component/border"
 import { useDialog } from "../../ui/dialog"
 import { OperatorAutoResume } from "./operator-auto-resume"
 import { useTuiConfig } from "../../context/tui-config"
-import { useBindings } from "../../keymap"
+import { OPENCODE_BASE_MODE, useBindings } from "../../keymap"
 
 const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
@@ -140,6 +140,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const dialog = useDialog()
 
   useBindings(() => ({
+    mode: OPENCODE_BASE_MODE,
     enabled: dialog.stack.length === 0 && store.editing && !confirm(),
     commands: [
       {
@@ -225,7 +226,8 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     const max = Math.min(total, 9)
 
     return {
-      enabled: dialog.stack.length === 0 && !store.editing,
+      mode: OPENCODE_BASE_MODE,
+      enabled: !store.editing,
       commands: [
         {
           name: "app.exit",
