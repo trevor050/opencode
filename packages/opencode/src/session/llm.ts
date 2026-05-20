@@ -2,7 +2,10 @@ import { Provider } from "@/provider/provider"
 import * as Log from "@opencode-ai/core/util/log"
 import { Context, Effect, Layer, Record } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool as aiTool, jsonSchema } from "ai"
+import type { LLMEvent } from "@opencode-ai/llm"
+import { LLMClient, RequestExecutor } from "@opencode-ai/llm/route"
+import type { LLMClientService } from "@opencode-ai/llm/route"
 import { mergeDeep } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
@@ -24,10 +27,11 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { laneToolVisible } from "@/ulm/lane-tool-guard"
+import { LLMAISDK } from "./llm/ai-sdk"
+import { LLMNativeRuntime } from "./llm/native-runtime"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
-type Result = Awaited<ReturnType<typeof streamText>>
 
 // Avoid re-instantiating remeda's deep merge types in this hot LLM path; the runtime behavior is still mergeDeep.
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
@@ -52,10 +56,8 @@ export type StreamRequest = StreamInput & {
   abort: AbortSignal
 }
 
-export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
-
 export interface Interface {
-  readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
+  readonly stream: (input: StreamInput) => Stream.Stream<LLMEvent, unknown>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM") {}
@@ -94,7 +96,13 @@ export function buildSystemPrompts(input: {
 const live: Layer.Layer<
   Service,
   never,
-  Auth.Service | Config.Service | Provider.Service | Plugin.Service | Permission.Service | RuntimeFlags.Service
+  | Auth.Service
+  | Config.Service
+  | Provider.Service
+  | Plugin.Service
+  | Permission.Service
+  | LLMClientService
+  | RuntimeFlags.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -103,6 +111,7 @@ const live: Layer.Layer<
     const provider = yield* Provider.Service
     const plugin = yield* Plugin.Service
     const perm = yield* Permission.Service
+    const llmClient = yield* LLMClient.Service
     const flags = yield* RuntimeFlags.Service
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
@@ -231,7 +240,7 @@ const live: Layer.Layer<
         Object.keys(tools).length === 0 &&
         hasToolCalls(input.messages)
       ) {
-        tools["_noop"] = tool({
+        tools["_noop"] = aiTool({
           description: "Do not call this tool. It exists only for API compatibility and must never be invoked.",
           inputSchema: jsonSchema({
             type: "object",
@@ -351,79 +360,134 @@ const live: Layer.Layer<
         ? (yield* InstanceState.context).project.id
         : undefined
 
-      return streamText({
-        onError(error) {
-          l.error("stream error", {
-            error,
-          })
-        },
-        async experimental_repairToolCall(failed) {
-          const repaired = repairToolCallFailure({
-            toolCall: failed.toolCall,
-            errorMessage: failed.error.message,
-            toolNames: Object.keys(tools),
-          })
-          if (repaired.toolName !== failed.toolCall.toolName && repaired.toolName !== "invalid") {
-            l.info("repairing tool call", {
-              tool: failed.toolCall.toolName,
-              repaired: repaired.toolName,
-            })
+      const requestHeaders = {
+        ...(input.model.providerID.startsWith("opencode")
+          ? {
+              ...(opencodeProjectID ? { "x-opencode-project": opencodeProjectID } : {}),
+              "x-opencode-session": input.sessionID,
+              "x-opencode-request": input.user.id,
+              "x-opencode-client": flags.client,
+              "User-Agent": `opencode/${InstallationVersion}`,
+            }
+          : {
+              "x-session-affinity": input.sessionID,
+              ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+              "User-Agent": `opencode/${InstallationVersion}`,
+            }),
+        ...input.model.headers,
+        ...headers,
+      }
+
+      if (flags.experimentalNativeLlm) {
+        const native = LLMNativeRuntime.stream({
+          model: input.model,
+          provider: item,
+          auth: info,
+          llmClient,
+          isOpenaiOauth,
+          system,
+          messages,
+          tools: sortedTools,
+          toolChoice: input.toolChoice,
+          temperature: params.temperature,
+          topP: params.topP,
+          topK: params.topK,
+          maxOutputTokens: params.maxOutputTokens,
+          providerOptions: params.options,
+          headers: requestHeaders,
+          abort: input.abort,
+        })
+        if (native.type === "supported") {
+          yield* Effect.logInfo("llm runtime selected").pipe(
+            Effect.annotateLogs({
+              "llm.runtime": "native",
+              "llm.provider": input.model.providerID,
+              "llm.model": input.model.id,
+            }),
+          )
+          return {
+            type: "native" as const,
+            stream: native.stream,
           }
-          return repaired
-        },
-        temperature: params.temperature,
-        topP: params.topP,
-        topK: params.topK,
-        providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-        activeTools: Object.keys(sortedTools).filter((x) => x !== "invalid"),
-        tools: sortedTools,
-        toolChoice: input.toolChoice,
-        maxOutputTokens: params.maxOutputTokens,
-        abortSignal: input.abort,
-        headers: {
-          ...(input.model.providerID.startsWith("opencode")
-            ? {
-                "x-opencode-project": opencodeProjectID,
-                "x-opencode-session": input.sessionID,
-                "x-opencode-request": input.user.id,
-                "x-opencode-client": flags.client,
-                "User-Agent": `opencode/${InstallationVersion}`,
-              }
-            : {
-                "x-session-affinity": input.sessionID,
-                ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
-                "User-Agent": `opencode/${InstallationVersion}`,
-              }),
-          ...input.model.headers,
-          ...headers,
-        },
-        maxRetries: input.retries ?? 0,
-        messages,
-        model: wrapLanguageModel({
-          model: language,
-          middleware: [
-            {
-              specificationVersion: "v3" as const,
-              async transformParams(args) {
-                if (args.type === "stream") {
-                  // @ts-expect-error
-                  args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
-                }
-                return args.params
-              },
-            },
-          ],
+        }
+        yield* Effect.logInfo("llm runtime selected").pipe(
+          Effect.annotateLogs({
+            "llm.runtime": "ai-sdk",
+            "llm.provider": input.model.providerID,
+            "llm.model": input.model.id,
+            "llm.native_unsupported_reason": native.reason,
+          }),
+        )
+        l.info("native runtime unavailable; falling back to ai-sdk", { reason: native.reason })
+      }
+
+      yield* Effect.logInfo("llm runtime selected").pipe(
+        Effect.annotateLogs({
+          "llm.runtime": "ai-sdk",
+          "llm.provider": input.model.providerID,
+          "llm.model": input.model.id,
         }),
-        experimental_telemetry: {
-          isEnabled: cfg.experimental?.openTelemetry,
-          functionId: "session.llm",
-          tracer: telemetryTracer,
-          metadata: {
-            userId: cfg.username ?? "unknown",
-            sessionId: input.sessionID,
+      )
+      return {
+        type: "ai-sdk" as const,
+        result: streamText({
+          onError(error) {
+            l.error("stream error", {
+              error,
+            })
           },
-        },
-      })
+          async experimental_repairToolCall(failed) {
+            const repaired = repairToolCallFailure({
+              toolCall: failed.toolCall,
+              errorMessage: failed.error.message,
+              toolNames: Object.keys(tools),
+            })
+            if (repaired.toolName !== failed.toolCall.toolName && repaired.toolName !== "invalid") {
+              l.info("repairing tool call", {
+                tool: failed.toolCall.toolName,
+                repaired: repaired.toolName,
+              })
+            }
+            return repaired
+          },
+          temperature: params.temperature,
+          topP: params.topP,
+          topK: params.topK,
+          providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+          activeTools: Object.keys(sortedTools).filter((x) => x !== "invalid"),
+          tools: sortedTools,
+          toolChoice: input.toolChoice,
+          maxOutputTokens: params.maxOutputTokens,
+          abortSignal: input.abort,
+          headers: requestHeaders,
+          maxRetries: input.retries ?? 0,
+          messages,
+          model: wrapLanguageModel({
+            model: language,
+            middleware: [
+              {
+                specificationVersion: "v3" as const,
+                async transformParams(args) {
+                  if (args.type === "stream") {
+                    // @ts-expect-error
+                    args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                  }
+                  return args.params
+                },
+              },
+            ],
+          }),
+          experimental_telemetry: {
+            isEnabled: cfg.experimental?.openTelemetry,
+            functionId: "session.llm",
+            tracer: telemetryTracer,
+            metadata: {
+              userId: cfg.username ?? "unknown",
+              sessionId: input.sessionID,
+            },
+          },
+        }),
+      }
     })
 
     const stream: Interface["stream"] = (input) =>
@@ -437,7 +501,15 @@ const live: Layer.Layer<
 
             const result = yield* run({ ...input, abort: ctrl.signal })
 
-            return Stream.fromAsyncIterable(result.fullStream, (e) => (e instanceof Error ? e : new Error(String(e))))
+            if (result.type === "native") return result.stream
+
+            const state = LLMAISDK.adapterState()
+            return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
+              e instanceof Error ? e : new Error(String(e)),
+            ).pipe(
+              Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
+              Stream.flatMap((events) => Stream.fromIterable(events)),
+            )
           }),
         ),
       )
@@ -454,6 +526,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Config.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
+    Layer.provide(LLMClient.layer.pipe(Layer.provide(RequestExecutor.defaultLayer))),
     Layer.provide(RuntimeFlags.defaultLayer),
   ),
 )

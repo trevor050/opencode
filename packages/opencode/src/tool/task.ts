@@ -29,6 +29,14 @@ export interface TaskPromptOps {
 }
 
 const id = "task"
+const BACKGROUND_DESCRIPTION = [
+  "",
+  "",
+  [
+    "Background mode: background=true launches the subagent asynchronously.",
+    "Use task_status(task_id=..., wait=false) to poll, or wait=true to block until done.",
+  ].join(" "),
+].join("\n")
 
 const BaseParameters = Schema.Struct({
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
@@ -386,21 +394,28 @@ export const TaskTool = Tool.define(
 
       const guardedRunTask = Effect.fn("TaskTool.guardedRunTask")(function* () {
         if (!noToolTimeoutMs) return yield* runTask()
-        return yield* Effect.race(runTask(), guardNoToolActivity())
+        return yield* Effect.scoped(Effect.race(runTask(), guardNoToolActivity()))
       })
 
-      const resumeParent: (input: {
+      type ResumeParentInput = {
         userID: MessageID
         state: "completed" | "error"
         attempts?: number
-      }) => Effect.Effect<void> = Effect.fn("TaskTool.resumeParent")(function* (input) {
+      }
+      const resumeParent = (input: ResumeParentInput): Effect.Effect<void> =>
+        Effect.gen(function* () {
         if ((yield* status.get(ctx.sessionID)).type !== "idle") {
           if ((input.attempts ?? 0) >= 60) return
-          yield* bus.subscribe(SessionStatus.Event.Idle).pipe(
-            Stream.filter((event) => event.properties.sessionID === ctx.sessionID),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.timeoutOption("1 second"),
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const idle = yield* bus.subscribe(SessionStatus.Event.Idle)
+              yield* idle.pipe(
+                Stream.filter((event) => event.properties.sessionID === ctx.sessionID),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.timeoutOption("1 second"),
+              )
+            }),
           )
           return yield* resumeParent({ ...input, attempts: (input.attempts ?? 0) + 1 })
         }
@@ -538,7 +553,7 @@ export const TaskTool = Tool.define(
     })
 
     return {
-      description: DESCRIPTION,
+      description: flags.experimentalBackgroundSubagents ? DESCRIPTION + BACKGROUND_DESCRIPTION : DESCRIPTION,
       parameters: Parameters,
       jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
