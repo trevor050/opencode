@@ -7,6 +7,7 @@ import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -45,6 +46,7 @@ const it = testEffect(
     Bus.layer,
     BackgroundJob.defaultLayer,
     Storage.defaultLayer,
+    RuntimeFlags.layer({ experimentalBackgroundSubagents: true }),
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
   ),

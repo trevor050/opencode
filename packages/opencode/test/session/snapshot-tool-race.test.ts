@@ -58,7 +58,9 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { Format } from "../../src/format"
 import { Reference } from "../../src/reference/reference"
+import { RepositoryCache } from "../../src/reference/repository-cache"
 import { SyncEvent } from "@/sync"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
 
@@ -128,6 +130,7 @@ function makeHttp() {
     AppFileSystem.defaultLayer,
     status,
     SyncEvent.defaultLayer,
+    EventV2Bridge.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))
@@ -135,6 +138,7 @@ function makeHttp() {
     Layer.provide(Skill.defaultLayer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(CrossSpawnSpawner.defaultLayer),
+    Layer.provide(RepositoryCache.defaultLayer),
     Layer.provide(Git.defaultLayer),
     Layer.provide(Reference.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
@@ -179,7 +183,7 @@ function makeHttp() {
   )
 }
 
-const it = testEffect(makeHttp())
+const it = testEffect(makeHttp() as unknown as Layer.Layer<any, any>)
 
 const providerCfg = (url: string) => ({
   provider: {

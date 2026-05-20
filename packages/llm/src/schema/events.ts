@@ -91,6 +91,7 @@ export const TextDelta = Schema.Struct({
   type: Schema.tag("text-delta"),
   id: ContentBlockID,
   text: Schema.String,
+  providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.TextDelta" })
 export type TextDelta = Schema.Schema.Type<typeof TextDelta>
 
@@ -112,6 +113,7 @@ export const ReasoningDelta = Schema.Struct({
   type: Schema.tag("reasoning-delta"),
   id: ContentBlockID,
   text: Schema.String,
+  providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.ReasoningDelta" })
 export type ReasoningDelta = Schema.Schema.Type<typeof ReasoningDelta>
 
@@ -171,6 +173,7 @@ export const ToolError = Schema.Struct({
   id: ToolCallID,
   name: Schema.String,
   message: Schema.String,
+  error: Schema.optional(Schema.Defect),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.ToolError" })
 export type ToolError = Schema.Schema.Type<typeof ToolError>

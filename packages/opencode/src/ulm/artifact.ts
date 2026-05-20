@@ -3,6 +3,7 @@ import { existsSync } from "fs"
 import path from "path"
 import { Bus } from "@/bus"
 import { OperationEvent } from "./event"
+import { ProjectID } from "@/project/schema"
 import { Schema } from "effect"
 import { containsRawCredentialSecret, credentialIndexGaps, expectedCredentialServices, missingCredentialServices } from "./credential-safety"
 import { assertOperationArtifactSafe, scanOperationArtifacts } from "./operation-artifact-safety"
@@ -56,24 +57,37 @@ async function publishOperationUpdated(
 ) {
   try {
     const status = await readOperationStatus(worktree, input.operationID, { eventLimit: 0 }).catch(() => undefined)
-    await Bus.publish(OperationEvent.Updated, {
-      ...input,
-      operation: status?.operation
-        ? {
-            objective: status.operation.objective,
-            stage: status.operation.stage,
-            status: status.operation.status,
-            summary: status.operation.summary,
-            riskLevel: status.operation.riskLevel,
-            nextActions: status.operation.nextActions,
-            blockers: status.operation.blockers,
-          }
-        : undefined,
-      findings: status?.findings ? { total: status.findings.total } : undefined,
-      evidence: status?.evidence ? { total: status.evidence.total } : undefined,
-      reports: status?.reports,
-      runtimeSummary: status?.runtimeSummary,
-    })
+    await Bus.publish(
+      {
+        directory: worktree,
+        worktree,
+        project: {
+          id: ProjectID.global,
+          worktree,
+          time: { created: Date.now(), updated: Date.now() },
+          sandboxes: [],
+        },
+      },
+      OperationEvent.Updated,
+      {
+        ...input,
+        operation: status?.operation
+          ? {
+              objective: status.operation.objective,
+              stage: status.operation.stage,
+              status: status.operation.status,
+              summary: status.operation.summary,
+              riskLevel: status.operation.riskLevel,
+              nextActions: status.operation.nextActions,
+              blockers: status.operation.blockers,
+            }
+          : undefined,
+        findings: status?.findings ? { total: status.findings.total } : undefined,
+        evidence: status?.evidence ? { total: status.evidence.total } : undefined,
+        reports: status?.reports,
+        runtimeSummary: status?.runtimeSummary,
+      },
+    )
   } catch {}
 }
 
