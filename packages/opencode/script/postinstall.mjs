@@ -134,7 +134,12 @@ function installPackage(name) {
       ["install", "--ignore-scripts", "--no-save", "--loglevel=error", "--prefix", temp, `${name}@${version}`],
       { stdio: "inherit", windowsHide: true },
     )
-    if (result.status !== 0) return
+    if (result.error) {
+      throw new Error(`Fallback install failed because npm could not be started: ${result.error.message}`)
+    }
+    if (result.status !== 0) {
+      throw new Error(`Fallback install failed with exit code ${result.status}`)
+    }
     const packageDir = path.join(temp, "node_modules", name)
     copyBinary(path.join(packageDir, "bin", sourceBinary), targetBinary)
     return true
@@ -165,19 +170,28 @@ function verifyBinary() {
 }
 
 function main() {
+  const fallbackErrors = []
   for (const name of packageNames()) {
     try {
       copyBinary(resolveBinary(name), targetBinary)
       if (verifyBinary()) return
-    } catch {
-      if (installPackage(name) && verifyBinary()) return
+    } catch (error) {
+      try {
+        if (installPackage(name) && verifyBinary()) return
+      } catch (installError) {
+        const details = installError instanceof Error ? installError.message : String(installError)
+        const original = error instanceof Error ? error.message : String(error)
+        fallbackErrors.push(`${name}: ${details} (original: ${original})`)
+      }
     }
   }
 
   throw new Error(
     `It seems your package manager failed to install the right opencode CLI package. Try manually installing ${packageNames()
       .map((name) => JSON.stringify(name))
-      .join(" or ")}.`,
+      .join(" or ")}.${
+      fallbackErrors.length ? ` Fallback attempts also failed: ${fallbackErrors.join("; ")}` : ""
+    }`,
   )
 }
 

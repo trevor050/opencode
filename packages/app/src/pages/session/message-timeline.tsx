@@ -1139,7 +1139,7 @@ export function MessageTimeline(props: {
         return (
           <TimelineRowFrame row={row}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
-              <div data-slot="session-turn-assistant-content" aria-hidden={workingTurn(row.userMessageID)}>
+              <div data-slot="session-turn-assistant-content">
                 {renderAssistantPartGroup(row)}
               </div>
             </div>

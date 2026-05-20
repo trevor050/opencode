@@ -1,6 +1,6 @@
 import { createEffect, createMemo, For, mapArray, Match, Show, startTransition, Switch, untrack } from "solid-js"
 import { createStore, produce } from "solid-js/store"
-import { useLocation, useMatch, useNavigate, useParams } from "@solidjs/router"
+import { A, useLocation, useMatch, useNavigate, useParams } from "@solidjs/router"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Button } from "@opencode-ai/ui/button"
@@ -229,6 +229,8 @@ export function Titlebar() {
                         const index = tabs.findIndex((t) => t.href === href)
                         if (index === -1) return
                         tabs.splice(index, 1)
+                        if (location.pathname !== href) return
+
                         const nextTab = tabs[index] ?? tabs[tabs.length - 1]
                         if (nextTab) navigate(nextTab.href)
                         else navigate("/")
@@ -510,12 +512,12 @@ function TabNavItem(props: { href: string; title: string; hideClose?: boolean; o
       class="group flex flex-row items-center max-w-60 whitespace-nowrap [--tab-bg:var(--v2-background-bg-deep)] data-[active='true']:[--tab-bg:var(--v2-background-bg-layer-02)] hover:[--tab-bg:var(--v2-background-bg-layer-02)] bg-[var(--tab-bg)] h-7 rounded-[6px] relative overflow-hidden"
       data-active={isActive()}
     >
-      <a
+      <A
         href={props.href}
         class="w-full h-full pl-1.5 flex-1 max-w-full flex flex-row items-center overflow-hidden font-medium"
       >
         {props.title}
-      </a>
+      </A>
 
       <div class="absolute right-0 inset-y-0 flex flex-row items-center pr-1 py-1 w-8 pl-2">
         <div
