@@ -18,7 +18,7 @@ import { useUlm } from "@/context/ulm"
 import { operationStatusGroups } from "@/utils/ulm-operation-ui"
 import { isUlmDirectory } from "@/utils/ulm-workspace"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
-import { useQueryOptions } from "@/context/global-sync"
+import { useQueryOptions } from "@/context/server-sync"
 import { pathKey } from "@/utils/path-key"
 
 const pollMs = 10_000

@@ -1,16 +1,16 @@
 import { createStore } from "solid-js/store"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useRenderer } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { selectedForeground, tint, useTheme } from "../../context/theme"
 import type { QuestionAnswer, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../component/border"
-import { useDialog } from "../../ui/dialog"
 import { OperatorAutoResume } from "./operator-auto-resume"
 import { useTuiConfig } from "../../context/tui-config"
-import { OPENCODE_BASE_MODE, useBindings } from "../../keymap"
+import { OPENCODE_BASE_MODE, useBindings, useOpencodeModeStack } from "../../keymap"
 
+const QUESTION_MODE = "question"
 const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
@@ -18,6 +18,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const tuiConfig = useTuiConfig()
+  const modeStack = useOpencodeModeStack()
 
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
@@ -137,11 +138,14 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     pick(opt.label)
   }
 
-  const dialog = useDialog()
+  onMount(() => {
+    const popMode = modeStack.push(QUESTION_MODE)
+    onCleanup(popMode)
+  })
 
   useBindings(() => ({
-    mode: OPENCODE_BASE_MODE,
-    enabled: dialog.stack.length === 0 && store.editing && !confirm(),
+    mode: QUESTION_MODE,
+    enabled: store.editing && !confirm(),
     commands: [
       {
         name: "prompt.clear",
@@ -226,7 +230,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     const max = Math.min(total, 9)
 
     return {
-      mode: OPENCODE_BASE_MODE,
+      mode: QUESTION_MODE,
       enabled: !store.editing,
       commands: [
         {

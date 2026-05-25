@@ -6,7 +6,7 @@ import { Spinner } from "@tui/component/spinner"
 import { useTheme } from "@tui/context/theme"
 import { useLocal } from "@tui/context/local"
 import { Link } from "@tui/ui/link"
-import { reasoningTitle, useThinkingMode } from "@tui/context/thinking"
+import { reasoningSummary, useThinkingMode } from "@tui/context/thinking"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { TextAttributes, type BoxRenderable, type SyntaxStyle } from "@opentui/core"
 import { useBindings } from "../../keymap"
@@ -398,7 +398,7 @@ function AssistantReasoning(props: {
   const content = createMemo(() => props.part.text.replace("[REDACTED]", "").trim())
   const inMinimal = createMemo(() => thinking.mode() === "hide")
   const isDone = createMemo(() => props.completedAt() !== undefined)
-  const title = createMemo(() => reasoningTitle(content()))
+  const title = createMemo(() => reasoningSummary(content()).title)
 
   const toggle = () => {
     if (!inMinimal()) return

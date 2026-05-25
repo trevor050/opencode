@@ -1098,7 +1098,7 @@ describe("session.llm.stream", () => {
           } satisfies Agent.Info
 
           const user = {
-            id: MessageID.make("user-lane-tools"),
+            id: MessageID.make("msg_lane_tools"),
             sessionID,
             role: "user",
             time: { created: Date.now() },
