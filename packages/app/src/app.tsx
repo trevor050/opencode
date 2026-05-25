@@ -9,7 +9,7 @@ import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
-import { type BaseRouterProps, Route, Router } from "@solidjs/router"
+import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { Effect } from "effect"
 import {
@@ -30,8 +30,8 @@ import { Dynamic } from "solid-js/web"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
-import { GlobalSDKProvider } from "@/context/global-sdk"
-import { GlobalSyncProvider } from "@/context/global-sync"
+import { ServerSDKProvider } from "@/context/server-sdk"
+import { ServerSyncProvider } from "@/context/server-sync"
 import { HighlightsProvider } from "@/context/highlights"
 import { LanguageProvider, type Locale, useLanguage } from "@/context/language"
 import { LayoutProvider } from "@/context/layout"
@@ -52,16 +52,18 @@ const Operations = lazy(() => import("@/pages/operations"))
 const Deliverables = lazy(() => import("@/pages/deliverables"))
 const loadSession = () => import("@/pages/session")
 const Session = lazy(loadSession)
-const Loading = () => <div class="size-full" />
 
 if (typeof location === "object" && /\/session(?:\/|$)/.test(location.pathname)) {
   void loadSession()
 }
 
-const SessionRoute = () => (
-  <SessionProviders>
-    <Session />
-  </SessionProviders>
+const SessionRoute = Object.assign(
+  () => (
+    <SessionProviders>
+      <Session />
+    </SessionProviders>
+  ),
+  { preload: Session.preload },
 )
 
 const OperationsRoute = () => <Operations />
@@ -93,6 +95,7 @@ declare global {
         }>
       >
       readUlmTextArtifact?: (path: string) => Promise<string>
+      exportDebugLogs?: () => Promise<string>
     }
   }
 }
@@ -323,22 +326,22 @@ export function AppInterface(props: {
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
         <ServerKey>
           <QueryProvider>
-            <GlobalSDKProvider>
-              <GlobalSyncProvider>
+            <ServerSDKProvider>
+              <ServerSyncProvider>
                 <Dynamic
                   component={props.router ?? Router}
                   root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
                 >
                   <Route path="/" component={HomeRoute} />
                   <Route path="/:dir" component={DirectoryLayout}>
-                    <Route path="/" component={OperationsRoute} />
+                    <Route path="/" component={() => <Navigate href="session" />} />
                     <Route path="/operations/:operationID?" component={OperationsRoute} />
                     <Route path="/deliverables" component={DeliverablesRoute} />
                     <Route path="/session/:id?" component={SessionRoute} />
                   </Route>
                 </Dynamic>
-              </GlobalSyncProvider>
-            </GlobalSDKProvider>
+              </ServerSyncProvider>
+            </ServerSDKProvider>
           </QueryProvider>
         </ServerKey>
       </ConnectionGate>

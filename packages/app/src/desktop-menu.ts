@@ -80,6 +80,7 @@ export const DESKTOP_MENU: DesktopMenu[] = [
       { type: "item", label: "Settings", command: "settings.open", accelerator: { macos: "Cmd+," } },
       { type: "item", label: "Reload Webview", action: "view.reload" },
       { type: "item", label: "Restart", action: "app.relaunch" },
+      { type: "item", label: "Export Logs...", command: "logs.export" },
       { type: "separator" },
       { type: "item", role: "hide" },
       { type: "item", role: "hideOthers" },
@@ -201,6 +202,7 @@ export const DESKTOP_MENU: DesktopMenu[] = [
     items: [
       { type: "item", label: "ULMCode Releases", href: "https://github.com/trevor050/ulmcode/releases" },
       { type: "item", label: "Support Forum", href: "https://discord.com/invite/opencode" },
+      { type: "item", label: "Export Logs...", command: "logs.export" },
       { type: "separator" },
       {
         type: "item",
