@@ -322,7 +322,8 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
               document,
               "keydown",
               (event) => {
-                if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+                const primaryModifier = mac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+                if (!primaryModifier || event.altKey || event.shiftKey) return
                 if (event.key.toLowerCase() !== "w") return
                 if (!(closeCurrentSessionTab() || closeNewSessionTab())) return
 
@@ -376,7 +377,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                     category: "tab",
                     title: "",
                     keybind: `mod+${number}`,
-                    disabled: layout.projects.list().length <= index,
+                    disabled: tabsStore.length <= index,
                     hidden: true,
                     onSelect: () => {
                       const tab = tabsStore[index]
@@ -682,13 +683,13 @@ function TabNavItem(props: {
       class="group relative flex h-7 min-w-24 max-w-60 flex-row items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-[6px] bg-[var(--tab-bg)] pl-1.5 [--tab-bg:var(--v2-background-bg-deep)] hover:[--tab-bg:var(--v2-background-bg-layer-02)] data-[active='true']:[--tab-bg:var(--v2-background-bg-layer-02)]"
       data-active={isActive()}
     >
-      <a
+      <A
         href={props.href}
         class="flex h-full min-w-0 flex-1 flex-row items-center gap-1.5 overflow-hidden text-[13px] font-medium text-v2-text-text-faint group-data-[active='true']:text-v2-text-text-base"
       >
         <ProjectTabAvatar project={props.project} directory={props.directory} />
         <span class="text-clip">{props.title}</span>
-      </a>
+      </A>
 
       <div class="absolute right-0 inset-y-0 flex flex-row items-center pr-1 py-1 w-8 pl-2">
         <div
