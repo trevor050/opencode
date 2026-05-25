@@ -4,7 +4,7 @@ import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import { DialogSelectServer } from "@/components/dialog-select-server"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { useGlobalSync } from "@/context/global-sync"
+import { useServerSync } from "@/context/server-sync"
 import { useLayout } from "@/context/layout"
 import { useServer } from "@/context/server"
 import { sortedRootSessions } from "./layout/helpers"
@@ -12,7 +12,7 @@ import { sortedRootSessions } from "./layout/helpers"
 export default function Home() {
   const navigate = useNavigate()
   const dialog = useDialog()
-  const sync = useGlobalSync()
+  const sync = useServerSync()
   const layout = useLayout()
   const server = useServer()
   const [opening, setOpening] = createSignal(false)

@@ -4,6 +4,16 @@ Last updated: 2026-05-12
 
 This file is for future agents working in this repo. Keep notes that prevent real rediscovery or dangerous regressions. Delete trivia, stale status, and one-off postmortems once tests or source code already carry the lesson.
 
+## Commits and PR Titles
+
+Use conventional commit-style messages and PR titles: `type(scope): summary`.
+
+Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected package or area when helpful, e.g. `core`, `opencode`, `tui`, `app`, `desktop`, `sdk`, or `plugin`.
+
+Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributing guide`, `chore(sdk): regenerate types`.
+
+## Style Guide
+
 ## Repo Orientation
 
 - Real repo/worktree root: `/Users/trevorrosato/codeprojects/ULMcode/opencode`. The outer `/Users/trevorrosato/codeprojects/ULMcode` folder is a wrapper with a `.git` pointer into this checkout, so git can appear to work from both places while tracked paths are relative to `opencode/`.

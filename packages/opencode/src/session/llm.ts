@@ -1,41 +1,34 @@
 import { Provider } from "@/provider/provider"
+import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import * as Log from "@opencode-ai/core/util/log"
-import { Context, Effect, Layer, Record } from "effect"
+import { Context, Effect, Layer } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool as aiTool, jsonSchema } from "ai"
+import { streamText, wrapLanguageModel, type ModelMessage, type Tool } from "ai"
 import type { LLMEvent } from "@opencode-ai/llm"
-import { LLMClient, RequestExecutor } from "@opencode-ai/llm/route"
+import { LLMClient, RequestExecutor, WebSocketExecutor } from "@opencode-ai/llm/route"
 import type { LLMClientService } from "@opencode-ai/llm/route"
-import { mergeDeep } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
-import { InstanceState } from "@/effect/instance-state"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
-import { SystemPrompt } from "./system"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
 import { Auth } from "@/auth"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
-import { laneToolVisible } from "@/ulm/lane-tool-guard"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
+import { LLMRequestPrep } from "./llm/request"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
-
-// Avoid re-instantiating remeda's deep merge types in this hot LLM path; the runtime behavior is still mergeDeep.
-const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
-  mergeDeep(target, source ?? {}) as Record<string, any>
 
 export type StreamInput = {
   user: MessageV2.User
@@ -62,36 +55,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM") {}
 
-const PLAIN_NO_TOOL_SYSTEM =
-  "Plain chat mode: tools are disabled for this turn. Answer only the user's current message directly. Do not infer or continue background tasks, supervisor instructions, tool workflows, or operation state."
-
-export function usesPlainNoToolSystem(input: { userTools?: Record<string, boolean>; userSystem?: string }) {
-  return input.userTools?.["*"] === false
-}
-
-export function buildSystemPrompts(input: {
-  agentPrompt?: string
-  providerPrompt: string[]
-  system: string[]
-  userSystem?: string
-  userTools?: Record<string, boolean>
-}) {
-  if (usesPlainNoToolSystem({ userTools: input.userTools, userSystem: input.userSystem })) {
-    return [input.userSystem || PLAIN_NO_TOOL_SYSTEM]
-  }
-  return [
-    [
-      // use agent prompt otherwise provider prompt
-      ...(input.agentPrompt ? [input.agentPrompt] : input.providerPrompt),
-      // any custom prompt passed into this call
-      ...input.system,
-      // any custom prompt from last user message
-      ...(input.userSystem ? [input.userSystem] : []),
-    ]
-      .filter((x) => x)
-      .join("\n"),
-  ]
-}
+export const use = serviceUse(Service)
 
 const live: Layer.Layer<
   Service,
@@ -138,120 +102,15 @@ const live: Layer.Layer<
         { concurrency: "unbounded" },
       )
 
-      // TODO: move this to a proper hook
-      const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
-
-      const plainNoToolSystem = usesPlainNoToolSystem({ userTools: input.user.tools, userSystem: input.user.system })
-      const system = buildSystemPrompts({
-        agentPrompt: input.agent.prompt,
-        providerPrompt: SystemPrompt.provider(input.model),
-        system: input.system,
-        userSystem: input.user.system,
-        userTools: input.user.tools,
-      })
-
-      const header = system[0]
-      if (!plainNoToolSystem) {
-        yield* plugin.trigger(
-          "experimental.chat.system.transform",
-          { sessionID: input.sessionID, model: input.model },
-          { system },
-        )
-      }
-      // rejoin to maintain 2-part structure for caching if header unchanged
-      if (system.length > 2 && system[0] === header) {
-        const rest = system.slice(1)
-        system.length = 0
-        system.push(header, rest.join("\n"))
-      }
-
-      const variant =
-        !input.small && input.model.variants && input.user.model.variant
-          ? input.model.variants[input.user.model.variant]
-          : {}
-      const base = input.small
-        ? ProviderTransform.smallOptions(input.model)
-        : ProviderTransform.options({
-            model: input.model,
-            sessionID: input.sessionID,
-            providerOptions: item.options,
-          })
-      const options = mergeOptions(mergeOptions(mergeOptions(base, input.model.options), input.agent.options), variant)
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
-
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
-      const messages = isOpenaiOauth
-        ? input.messages
-        : isWorkflow
-          ? input.messages
-          : [
-              ...system.map(
-                (x): ModelMessage => ({
-                  role: "system",
-                  content: x,
-                }),
-              ),
-              ...input.messages,
-            ]
-
-      const params = yield* plugin.trigger(
-        "chat.params",
-        {
-          sessionID: input.sessionID,
-          agent: input.agent.name,
-          model: input.model,
-          provider: item,
-          message: input.user,
-        },
-        {
-          temperature: input.model.capabilities.temperature
-            ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
-            : undefined,
-          topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-          topK: ProviderTransform.topK(input.model),
-          maxOutputTokens: ProviderTransform.maxOutputTokens(input.model, flags.outputTokenMax),
-          options,
-        },
-      )
-
-      const { headers } = yield* plugin.trigger(
-        "chat.headers",
-        {
-          sessionID: input.sessionID,
-          agent: input.agent.name,
-          model: input.model,
-          provider: item,
-          message: input.user,
-        },
-        {
-          headers: {},
-        },
-      )
-
-      const tools = resolveTools(input)
-
-      // GitHub Copilot may require the tools parameter when message history contains
-      // tool calls but no tools are active (e.g. compaction). Inject a stub tool that
-      // is never meant to be invoked. LiteLLM-backed providers are excluded.
-      if (
-        input.model.providerID.includes("github-copilot") &&
-        Object.keys(tools).length === 0 &&
-        hasToolCalls(input.messages)
-      ) {
-        tools["_noop"] = aiTool({
-          description: "Do not call this tool. It exists only for API compatibility and must never be invoked.",
-          inputSchema: jsonSchema({
-            type: "object",
-            properties: {
-              reason: { type: "string", description: "Unused" },
-            },
-          }),
-          execute: async () => ({ output: "", title: "", metadata: {} }),
-        })
-      }
-      const sortedTools = Object.fromEntries(Object.entries(tools).toSorted(([a], [b]) => a.localeCompare(b)))
+      const prepared = yield* LLMRequestPrep.prepare({
+        ...input,
+        provider: item,
+        auth: info,
+        plugin,
+        flags,
+        isWorkflow,
+      })
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
       // from the workflow service are executed via opencode's tool system
@@ -263,9 +122,9 @@ const live: Layer.Layer<
           approvalHandler?: (approvalTools: { name: string; args: string }[]) => Promise<{ approved: boolean }>
         }
         workflowModel.sessionID = input.sessionID
-        workflowModel.systemPrompt = system.join("\n")
+        workflowModel.systemPrompt = prepared.system.join("\n")
         workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
-          const t = sortedTools[toolName]
+          const t = prepared.tools[toolName]
           if (!t || !t.execute) {
             return { result: "", error: `Unknown tool: ${toolName}` }
           }
@@ -287,7 +146,7 @@ const live: Layer.Layer<
         }
 
         const ruleset = Permission.merge(input.agent.permission ?? [], input.permission ?? [])
-        workflowModel.sessionPreapprovedTools = Object.keys(sortedTools).filter((name) => {
+        workflowModel.sessionPreapprovedTools = Object.keys(prepared.tools).filter((name) => {
           const match = ruleset.findLast((rule) => Wildcard.match(name, rule.permission))
           return !match || match.action !== "ask"
         })
@@ -356,45 +215,23 @@ const live: Layer.Layer<
           })
         : undefined
 
-      const opencodeProjectID = input.model.providerID.startsWith("opencode")
-        ? (yield* InstanceState.context).project.id
-        : undefined
-
-      const requestHeaders = {
-        ...(input.model.providerID.startsWith("opencode")
-          ? {
-              ...(opencodeProjectID ? { "x-opencode-project": opencodeProjectID } : {}),
-              "x-opencode-session": input.sessionID,
-              "x-opencode-request": input.user.id,
-              "x-opencode-client": flags.client,
-              "User-Agent": `opencode/${InstallationVersion}`,
-            }
-          : {
-              "x-session-affinity": input.sessionID,
-              ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
-              "User-Agent": `opencode/${InstallationVersion}`,
-            }),
-        ...input.model.headers,
-        ...headers,
-      }
-
+      // Runtime seam: native is an opt-in adapter over @opencode-ai/llm. It
+      // either returns a ready LLMEvent stream or a concrete fallback reason.
       if (flags.experimentalNativeLlm) {
         const native = LLMNativeRuntime.stream({
           model: input.model,
           provider: item,
           auth: info,
           llmClient,
-          isOpenaiOauth,
-          system,
-          messages,
-          tools: sortedTools,
+          messages: prepared.messages,
+          tools: prepared.tools,
           toolChoice: input.toolChoice,
-          temperature: params.temperature,
-          topP: params.topP,
-          topK: params.topK,
-          maxOutputTokens: params.maxOutputTokens,
-          providerOptions: params.options,
-          headers: requestHeaders,
+          temperature: prepared.params.temperature,
+          topP: prepared.params.topP,
+          topK: prepared.params.topK,
+          maxOutputTokens: prepared.params.maxOutputTokens,
+          providerOptions: prepared.params.options,
+          headers: prepared.headers,
           abort: input.abort,
         })
         if (native.type === "supported") {
@@ -428,6 +265,8 @@ const live: Layer.Layer<
           "llm.model": input.model.id,
         }),
       )
+      // Default runtime path: AI SDK owns provider execution and tool dispatch;
+      // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
       return {
         type: "ai-sdk" as const,
         result: streamText({
@@ -437,10 +276,10 @@ const live: Layer.Layer<
             })
           },
           async experimental_repairToolCall(failed) {
-            const repaired = repairToolCallFailure({
+            const repaired = LLMRequestPrep.repairToolCallFailure({
               toolCall: failed.toolCall,
               errorMessage: failed.error.message,
-              toolNames: Object.keys(tools),
+              toolNames: Object.keys(prepared.tools),
             })
             if (repaired.toolName !== failed.toolCall.toolName && repaired.toolName !== "invalid") {
               l.info("repairing tool call", {
@@ -450,18 +289,18 @@ const live: Layer.Layer<
             }
             return repaired
           },
-          temperature: params.temperature,
-          topP: params.topP,
-          topK: params.topK,
-          providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-          activeTools: Object.keys(sortedTools).filter((x) => x !== "invalid"),
-          tools: sortedTools,
+          temperature: prepared.params.temperature,
+          topP: prepared.params.topP,
+          topK: prepared.params.topK,
+          providerOptions: ProviderTransform.providerOptions(input.model, prepared.params.options),
+          activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid"),
+          tools: prepared.tools,
           toolChoice: input.toolChoice,
-          maxOutputTokens: params.maxOutputTokens,
+          maxOutputTokens: prepared.params.maxOutputTokens,
           abortSignal: input.abort,
-          headers: requestHeaders,
+          headers: prepared.headers,
           maxRetries: input.retries ?? 0,
-          messages,
+          messages: prepared.messages,
           model: wrapLanguageModel({
             model: language,
             middleware: [
@@ -470,7 +309,11 @@ const live: Layer.Layer<
                 async transformParams(args) {
                   if (args.type === "stream") {
                     // @ts-expect-error
-                    args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                    args.params.prompt = ProviderTransform.message(
+                      args.params.prompt,
+                      input.model,
+                      prepared.messageTransformOptions,
+                    )
                   }
                   return args.params
                 },
@@ -503,6 +346,8 @@ const live: Layer.Layer<
 
             if (result.type === "native") return result.stream
 
+            // Adapter seam: both runtimes expose the same LLMEvent stream. Native
+            // already returns one; AI SDK streams are converted here.
             const state = LLMAISDK.adapterState()
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
@@ -526,78 +371,17 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Config.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
-    Layer.provide(LLMClient.layer.pipe(Layer.provide(RequestExecutor.defaultLayer))),
+    Layer.provide(
+      LLMClient.layer.pipe(Layer.provide(Layer.mergeAll(RequestExecutor.defaultLayer, WebSocketExecutor.layer))),
+    ),
     Layer.provide(RuntimeFlags.defaultLayer),
   ),
 )
 
-export function repairToolCallFailure<T extends { toolName: string; input?: string }>(input: {
-  toolCall: T
-  errorMessage: string
-  toolNames: Iterable<string>
-}): T {
-  const tools = new Set(input.toolNames)
-  const lower = input.toolCall.toolName.toLowerCase()
-
-  if (lower !== input.toolCall.toolName && tools.has(lower)) {
-    return {
-      ...input.toolCall,
-      toolName: lower,
-    } as T
-  }
-
-  const original = input.toolCall.toolName
-  const known = tools.has(original) || tools.has(lower)
-
-  if (known) {
-    return {
-      ...input.toolCall,
-      input: JSON.stringify({
-        type: "known_tool_invalid_input",
-        tool: original,
-        error: input.errorMessage,
-        hint: "The tool name is valid, but the input was malformed or truncated. Retry with valid input or split large operations into smaller chunks.",
-      }),
-      toolName: "invalid",
-    } as T
-  }
-
-  return {
-    ...input.toolCall,
-    input: JSON.stringify({
-      type: "unknown_tool",
-      tool: original,
-      error: input.errorMessage,
-    }),
-    toolName: "invalid",
-  } as T
-}
-
-export function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
-  const disabled = Permission.disabled(
-    Object.keys(input.tools),
-    Permission.merge(input.agent.permission, input.permission ?? []),
-  )
-  const userToolOverrides = input.user.tools ?? {}
-  const defaultAllowed = userToolOverrides["*"] !== false
-  return Record.filter(input.tools, (_, k) => {
-    const userOverride = userToolOverrides[k]
-    if (userOverride === false) return false
-    if (userOverride !== true && !defaultAllowed) return false
-    return !disabled.has(k) && laneToolVisible(k)
-  })
-}
-
-// Check if messages contain any tool-call content
-// Used to determine if a dummy tool should be added (GitHub Copilot only; see stream()).
-export function hasToolCalls(messages: ModelMessage[]): boolean {
-  for (const msg of messages) {
-    if (!Array.isArray(msg.content)) continue
-    for (const part of msg.content) {
-      if (part.type === "tool-call" || part.type === "tool-result") return true
-    }
-  }
-  return false
-}
+export const buildSystemPrompts = LLMRequestPrep.buildSystemPrompts
+export const hasToolCalls = LLMRequestPrep.hasToolCalls
+export const repairToolCallFailure = LLMRequestPrep.repairToolCallFailure
+export const resolveTools = LLMRequestPrep.resolveTools
+export const usesPlainNoToolSystem = LLMRequestPrep.usesPlainNoToolSystem
 
 export * as LLM from "./llm"

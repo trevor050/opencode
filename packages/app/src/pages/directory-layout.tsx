@@ -6,7 +6,7 @@ import { createEffect, createMemo, createResource, type ParentProps, Show } from
 import { useLanguage } from "@/context/language"
 import { LocalProvider } from "@/context/local"
 import { SDKProvider } from "@/context/sdk"
-import { SyncProvider, useSync } from "@/context/sync"
+import { useSync } from "@/context/sync"
 import { UlmProvider } from "@/context/ulm"
 import { decode64 } from "@/utils/base64"
 import { Schema } from "effect"
@@ -82,12 +82,10 @@ export default function Layout(props: ParentProps) {
   return (
     <Show when={resolved()} keyed>
       {(resolved) => (
-        <SDKProvider directory={() => resolved}>
-          <SyncProvider>
-            <UlmProvider>
-              <DirectoryDataProvider directory={resolved}>{props.children}</DirectoryDataProvider>
-            </UlmProvider>
-          </SyncProvider>
+        <SDKProvider directory={resolved}>
+          <UlmProvider>
+            <DirectoryDataProvider directory={resolved}>{props.children}</DirectoryDataProvider>
+          </UlmProvider>
         </SDKProvider>
       )}
     </Show>
