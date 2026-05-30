@@ -7,6 +7,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useServerSync } from "@/context/server-sync"
 import { useLayout } from "@/context/layout"
 import { useServer } from "@/context/server"
+import { useServers } from "@/context/servers"
 import { sortedRootSessions } from "./layout/helpers"
 
 export default function Home() {
@@ -15,11 +16,12 @@ export default function Home() {
   const sync = useServerSync()
   const layout = useLayout()
   const server = useServer()
+  const servers = useServers()
   const [opening, setOpening] = createSignal(false)
   const [error, setError] = createSignal<string | undefined>()
 
   const serverDotClass = createMemo(() => {
-    const healthy = server.healthy()
+    const healthy = servers.health[server.key]?.healthy
     if (healthy === true) return "bg-icon-success-base"
     if (healthy === false) return "bg-icon-critical-base"
     return "bg-border-weak-base"
