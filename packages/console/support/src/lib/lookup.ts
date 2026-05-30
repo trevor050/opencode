@@ -157,7 +157,7 @@ async function loadWorkspace(workspaceID: string): Promise<WorkspaceSection> {
         subscription: BillingTable.subscription,
       })
       .from(UserTable)
-      .innerJoin(BillingTable, eq(BillingTable.workspaceID, workspace.id))
+      .leftJoin(BillingTable, eq(BillingTable.workspaceID, UserTable.workspaceID))
       .leftJoin(AuthTable, and(eq(UserTable.accountID, AuthTable.accountID), eq(AuthTable.provider, "email")))
       .leftJoin(SubscriptionTable, eq(SubscriptionTable.userID, UserTable.id))
       .where(eq(UserTable.workspaceID, workspace.id))

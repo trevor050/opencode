@@ -12,7 +12,7 @@ export function notifySessionTabsRemoved(input: SessionTabsRemovedDetail) {
 export function readSessionTabsRemovedDetail(event: Event): SessionTabsRemovedDetail | undefined {
   if (!(event instanceof CustomEvent)) return undefined
 
-  const detail: unknown = event.detail
+  const detail = event.detail as Record<string, unknown> | null
   if (!detail || typeof detail !== "object") return undefined
   if (!("directory" in detail)) return undefined
   if (!("sessionIDs" in detail)) return undefined

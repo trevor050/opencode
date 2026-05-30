@@ -65,20 +65,12 @@ export const build = (input: {
   readonly defaultModel?: DefaultModel
 }): Snapshot => {
   const modelOptions = Provider.sort(
-    Object.values(input.providers).flatMap((provider) =>
-      Object.values(provider.models).map((model) => ({
-        id: model.id,
-        providerID: provider.id,
-        providerName: provider.name,
-        modelID: model.id,
-        modelName: model.name,
-      })),
-    ),
+    Object.values(input.providers).flatMap((provider) => Object.values(provider.models)),
   ).map((model) => ({
     providerID: model.providerID,
-    providerName: model.providerName,
-    modelID: model.modelID,
-    modelName: model.modelName,
+    providerName: input.providers[model.providerID]?.name ?? model.providerID,
+    modelID: model.id,
+    modelName: model.name,
   }))
 
   return {

@@ -50,8 +50,9 @@ export function StatusPopover() {
               "absolute -top-px -right-px size-1.5 rounded-full": true,
               "bg-icon-success-base": ready() && healthy(),
               "bg-icon-warning-base": ready() && serverHealthy() && mcpIssue() === "warning",
-              "bg-icon-critical-base": serverHealthy() || (ready() && serverHealthy() && mcpIssue() === "critical"),
-              "bg-border-weak-base": serverHealthy() || !ready(),
+              "bg-icon-critical-base":
+                servers.health[server.key]?.healthy === false || (ready() && serverHealthy() && mcpIssue() === "critical"),
+              "bg-border-weak-base": servers.health[server.key]?.healthy === undefined || !ready(),
             }}
           />
         </div>

@@ -1,5 +1,7 @@
 import { lakeAthenaWorkgroup, lakeCatalog, lakeCluster, lakeQueryPermissions, lakeRegion, tableBucket } from "./lake"
 import { EMAILOCTOPUS_API_KEY } from "./app"
+import * as aws from "@pulumi/aws"
+import * as planetscale from "@pulumi/planetscale"
 
 const domain = (() => {
   if ($app.stage === "production") return "stats.opencode.ai"

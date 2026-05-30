@@ -968,13 +968,13 @@ function mcpConfig(server: McpServer) {
     return {
       type: "remote" as const,
       url: server.url,
-      headers: Object.fromEntries(server.headers.map((header) => [header.name, header.value])),
+      headers: Object.fromEntries((server.headers ?? []).map((header) => [header.name, header.value])),
     }
   }
   return {
     type: "local" as const,
     command: [server.command, ...server.args],
-    environment: Object.fromEntries(server.env.map((entry) => [entry.name, entry.value])),
+    environment: Object.fromEntries((server.env ?? []).map((entry) => [entry.name, entry.value])),
   }
 }
 

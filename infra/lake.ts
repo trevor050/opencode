@@ -1,4 +1,6 @@
 import { domain } from "./stage"
+import * as aws from "@pulumi/aws"
+import * as random from "@pulumi/random"
 
 const current = aws.getCallerIdentityOutput({})
 const partition = aws.getPartitionOutput({})
