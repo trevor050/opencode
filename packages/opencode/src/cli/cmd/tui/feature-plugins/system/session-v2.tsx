@@ -5,10 +5,9 @@ import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
 import { useTheme } from "@tui/context/theme"
 import { useLocal } from "@tui/context/local"
-import { Link } from "@tui/ui/link"
 import { reasoningSummary, useThinkingMode } from "@tui/context/thinking"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
-import { TextAttributes, type BoxRenderable, type SyntaxStyle } from "@opentui/core"
+import { RGBA, TextAttributes, type BoxRenderable, type SyntaxStyle } from "@opentui/core"
 import { useBindings } from "../../keymap"
 import { Locale } from "@/util/locale"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -25,7 +24,6 @@ import type {
   SessionMessageCompaction,
   SessionMessageModelSwitched,
   SessionMessageShell,
-  SessionMessageSynthetic,
   SessionMessageUser,
   ToolFileContent,
   ToolTextContent,
@@ -397,8 +395,10 @@ function AssistantReasoning(props: {
   const [expanded, setExpanded] = createSignal(false)
   const content = createMemo(() => props.part.text.replace("[REDACTED]", "").trim())
   const inMinimal = createMemo(() => thinking.mode() === "hide")
+  // v2 reasoning parts have no per-part `time.end` (see SessionMessageAssistantReasoning
+  // in the v2 SDK); we settle on parent-message completion instead.
   const isDone = createMemo(() => props.completedAt() !== undefined)
-  const title = createMemo(() => reasoningSummary(content()).title)
+  const summary = createMemo(() => reasoningSummary(content()))
 
   const toggle = () => {
     if (!inMinimal()) return
@@ -407,43 +407,60 @@ function AssistantReasoning(props: {
 
   return (
     <Show when={content()}>
-      <Switch>
-        <Match when={!inMinimal() || expanded()}>
-          <box
-            paddingLeft={2}
-            marginTop={1}
-            flexDirection="column"
-            border={["left"]}
-            customBorderChars={SplitBorder.customBorderChars}
-            borderColor={theme.backgroundElement}
-            flexShrink={0}
-            onMouseUp={toggle}
-          >
+      <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
+        <box onMouseUp={toggle}>
+          <ReasoningHeader
+            toggleable={inMinimal()}
+            open={!inMinimal() || expanded()}
+            done={isDone()}
+            title={summary().title}
+          />
+        </box>
+        <Show when={(!inMinimal() || expanded()) && summary().body}>
+          <box paddingLeft={inMinimal() ? 2 : 0} marginTop={1}>
             <code
               filetype="markdown"
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={props.subtleSyntax}
-              content={(inMinimal() ? "▼ " : "") + "_Thinking:_ " + content()}
+              content={summary().body}
               conceal={true}
               fg={theme.textMuted}
             />
           </box>
-        </Match>
-        <Match when={isDone()}>
-          <box paddingLeft={3} marginTop={1} flexShrink={0} onMouseUp={toggle}>
-            <text fg={theme.textMuted} wrapMode="none">
-              {title() ? "▶ Thought: " + title() : "▶ Thought"}
-            </text>
-          </box>
-        </Match>
-        <Match when={true}>
-          <box paddingLeft={3} marginTop={1} flexShrink={0} onMouseUp={toggle}>
-            <Spinner color={theme.textMuted}>{title() ? "Thinking: " + title() : "Thinking"}</Spinner>
-          </box>
-        </Match>
-      </Switch>
+        </Show>
+      </box>
     </Show>
+  )
+}
+
+function ReasoningHeader(props: { toggleable: boolean; open: boolean; done: boolean; title: string | null }) {
+  const { theme } = useTheme()
+  const fg = () =>
+    props.open
+      ? RGBA.fromValues(theme.warning.r, theme.warning.g, theme.warning.b, theme.thinkingOpacity)
+      : theme.warning
+
+  return (
+    <Switch>
+      <Match when={!props.done}>
+        <box flexDirection="row">
+          <Spinner color={fg()}>{props.title ? "Thinking: " + props.title : "Thinking"}</Spinner>
+        </box>
+      </Match>
+      <Match when={true}>
+        <text fg={fg()} wrapMode="none">
+          <Show when={props.toggleable}>
+            <span>{props.open ? "- " : "+ "}</span>
+          </Show>
+          <span>Thought</span>
+          <Show when={props.title}>
+            <span>: </span>
+            <span>{props.title}</span>
+          </Show>
+        </text>
+      </Match>
+    </Switch>
   )
 }
 
@@ -454,8 +471,7 @@ function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: st
       return input()
     },
     get metadata() {
-      const state = props.part.state as { structured?: unknown }
-      return isRecord(state.structured) ? state.structured : (props.part.provider?.metadata ?? {})
+      return props.part.provider?.metadata ?? {}
     },
     get output() {
       return props.part.state.status === "pending" ? undefined : toolOutput(props.part.state.content)
@@ -497,9 +513,6 @@ function AssistantTool(props: { part: SessionMessageAssistantTool; sessionID: st
       </Match>
       <Match when={props.part.name === "question"}>
         <Question {...toolprops} />
-      </Match>
-      <Match when={props.part.name === "operation_credentials"}>
-        <OperationCredentials {...toolprops} />
       </Match>
       <Match when={props.part.name === "skill"}>
         <Skill {...toolprops} />
@@ -1017,40 +1030,6 @@ function Question(props: ToolProps) {
         <InlineTool icon="→" pending="Asking questions..." complete={questions().length} part={props.part}>
           Asked {questions().length} question{questions().length === 1 ? "" : "s"}
         </InlineTool>
-      </Match>
-    </Switch>
-  )
-}
-
-function OperationCredentials(props: ToolProps) {
-  const { theme } = useTheme()
-  const action = createMemo(() => stringValue(props.input.action))
-  const operationID = createMemo(() => stringValue(props.metadata.operationID) ?? stringValue(props.input.operationID) ?? "")
-  const vaultUrl = createMemo(() => stringValue(props.metadata.fullVaultUrl) ?? stringValue(props.metadata.vaultUrl) ?? "")
-  const opened = createMemo(() => props.metadata.opened === true)
-  const isVault = createMemo(() => action() === "open_vault" || action() === "vault_url")
-
-  return (
-    <Switch>
-      <Match when={isVault()}>
-        <BlockTool title="# Credential Vault" part={props.part}>
-          <box gap={1}>
-            <text fg={theme.text}>Opening secure credential vault for {operationID()}</text>
-            <text fg={opened() ? theme.success : theme.warning}>
-              {opened() ? "Browser open requested." : "Browser did not confirm open. Use the fallback link below."}
-            </text>
-            <Show when={vaultUrl()}>
-              <box flexDirection="row" gap={1}>
-                <text fg={theme.textMuted}>Fallback:</text>
-                <Link href={vaultUrl()} fg={theme.primary} />
-              </box>
-            </Show>
-            <text fg={theme.textMuted}>Enter secrets only in the vault, then click Submit to agent.</text>
-          </box>
-        </BlockTool>
-      </Match>
-      <Match when={true}>
-        <GenericTool {...props} />
       </Match>
     </Switch>
   )
