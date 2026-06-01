@@ -1,14 +1,12 @@
-import { Bus } from "@/bus"
-import { BusEvent } from "@/bus/bus-event"
 import { ConfigPermission } from "@/config/permission"
 import { InstanceState } from "@/effect/instance-state"
-import { ProjectID } from "@/project/schema"
+import { ProjectV2 } from "@opencode-ai/core/project"
 import { MessageID, SessionID } from "@/session/schema"
-import { PermissionTable } from "@/session/session.sql"
-import { Database } from "@/storage/db"
+import { PermissionTable } from "@opencode-ai/core/session/sql"
+import { Database } from "@opencode-ai/core/database/database"
 import { eq } from "drizzle-orm"
 import * as Log from "@opencode-ai/core/util/log"
-import { Wildcard } from "@/util/wildcard"
+import { Wildcard } from "@opencode-ai/core/util/wildcard"
 import { Deferred, Effect, Layer, Schema, Context } from "effect"
 import os from "os"
 import { evaluate as evalRule } from "./evaluate"
@@ -16,6 +14,8 @@ import { PermissionID } from "./schema"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
 import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
 import { readULMConfig } from "@/ulm/config"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { EventV2 } from "@opencode-ai/core/event"
 
 const log = Log.create({ service: "permission" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
@@ -64,20 +64,20 @@ export const ReplyBody = Schema.Struct(reply).annotate({ identifier: "Permission
 export type ReplyBody = Schema.Schema.Type<typeof ReplyBody>
 
 export class Approval extends Schema.Class<Approval>("PermissionApproval")({
-  projectID: ProjectID,
+  projectID: ProjectV2.ID,
   patterns: Schema.Array(Schema.String),
 }) {}
 
 export const Event = {
-  Asked: BusEvent.define("permission.asked", Request),
-  Replied: BusEvent.define(
-    "permission.replied",
-    Schema.Struct({
+  Asked: EventV2.define({ type: "permission.asked", schema: Request.fields }),
+  Replied: EventV2.define({
+    type: "permission.replied",
+    schema: {
       sessionID: SessionID,
       requestID: PermissionID,
       reply: Reply,
-    }),
-  ),
+    },
+  }),
 }
 
 export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("PermissionRejectedError", {}) {
@@ -152,15 +152,19 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pe
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const bus = yield* Bus.Service
+    const events = yield* EventV2Bridge.Service
+    const { db } = yield* Database.Service
     const state = yield* InstanceState.make<State>(
       Effect.fn("Permission.state")(function* (ctx) {
-        const row = Database.use((db) =>
-          db.select().from(PermissionTable).where(eq(PermissionTable.project_id, ctx.project.id)).get(),
-        )
+        const row = yield* db
+          .select()
+          .from(PermissionTable)
+          .where(eq(PermissionTable.project_id, ctx.project.id))
+          .get()
+          .pipe(Effect.orDie)
         const state = {
           pending: new Map<PermissionID, PendingEntry>(),
-          approved: row?.data ?? [],
+          approved: [...(row?.data ?? [])],
         }
 
         yield* Effect.addFinalizer(() =>
@@ -223,7 +227,7 @@ export const layer = Layer.effect(
 
       const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
       pending.set(id, { info, deferred, timeoutExpiresAt, timeoutWindowMillis: timeoutMillis })
-      yield* bus.publish(Event.Asked, info)
+      yield* events.publish(Event.Asked, info)
       const timeout =
         activeOperation === undefined || timeoutMillis === undefined
           ? undefined
@@ -252,7 +256,7 @@ export const layer = Layer.effect(
                     sensitive,
                   }),
                 )
-                yield* bus.publish(Event.Replied, {
+                yield* events.publish(Event.Replied, {
                   sessionID: info.sessionID,
                   requestID: info.id,
                   reply: "reject",
@@ -294,7 +298,7 @@ export const layer = Layer.effect(
         timeoutAt: new Date(entry.timeoutExpiresAt).toISOString(),
         holdUntil: new Date(holdUntil).toISOString(),
       })
-      yield* bus.publish(Event.Asked, entry.info)
+      yield* events.publish(Event.Asked, entry.info)
       return true
     })
 
@@ -304,7 +308,7 @@ export const layer = Layer.effect(
       if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
 
       pending.delete(input.requestID)
-      yield* bus.publish(Event.Replied, {
+      yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
         reply: input.reply,
@@ -319,7 +323,7 @@ export const layer = Layer.effect(
         for (const [id, item] of pending.entries()) {
           if (item.info.sessionID !== existing.info.sessionID) continue
           pending.delete(id)
-          yield* bus.publish(Event.Replied, {
+          yield* events.publish(Event.Replied, {
             sessionID: item.info.sessionID,
             requestID: item.info.id,
             reply: "reject",
@@ -347,7 +351,7 @@ export const layer = Layer.effect(
         )
         if (!ok) continue
         pending.delete(id)
-        yield* bus.publish(Event.Replied, {
+        yield* events.publish(Event.Replied, {
           sessionID: item.info.sessionID,
           requestID: item.info.id,
           reply: "always",
@@ -404,6 +408,6 @@ export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
   return result
 }
 
-export const defaultLayer = layer.pipe(Layer.provide(Bus.layer))
+export const defaultLayer = layer.pipe(Layer.provide(Database.defaultLayer), Layer.provide(EventV2Bridge.defaultLayer))
 
 export * as Permission from "."

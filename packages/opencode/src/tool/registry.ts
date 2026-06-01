@@ -7,6 +7,7 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
+import { TaskRestartTool } from "./task_restart"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -20,7 +21,7 @@ import { Schema } from "effect"
 import z from "zod"
 import { Plugin } from "../plugin"
 import { Provider } from "@/provider/provider"
-import { ProviderID, type ModelID } from "../provider/schema"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { WebSearchTool } from "./websearch"
 import { RepoCloneTool } from "./repo_clone"
 import { RepoOverviewTool } from "./repo_overview"
@@ -54,11 +55,33 @@ import { Reference } from "@/reference/reference"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
 import { SessionStatus } from "@/session/status"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { OperationCheckpointTool } from "./operation_checkpoint"
+import { OperationGovernorTool } from "./operation_governor"
+import { OperationNextTool } from "./operation_next"
+import { OperationPlanTool } from "./operation_plan"
+import { OperationQueueTool } from "./operation_queue"
+import { OperationQueueNextTool } from "./operation_queue_next"
+import { OperationRecoverTool } from "./operation_recover"
+import { OperationResumeTool } from "./operation_resume"
+import { OperationRunTool } from "./operation_run"
+import { OperationScheduleTool } from "./operation_schedule"
+import { OperationStageGateTool } from "./operation_stage_gate"
+import { ReportLintTool } from "./report_lint"
+import { ReportRenderTool } from "./report_render"
+import { RuntimeDaemonTool } from "./runtime_daemon"
+import { RuntimeSchedulerTool } from "./runtime_scheduler"
+import { RuntimeSummaryTool } from "./runtime_summary"
+import { CommandSuperviseTool } from "./command_supervise"
+import { EvidenceNormalizeTool } from "./evidence_normalize"
+import { ToolAcquireTool } from "./tool_acquire"
+import { LaptopPreflightTool } from "./laptop_preflight"
 
 const log = Log.create({ service: "tool.registry" })
 
-export function webSearchEnabled(providerID: ProviderID, flags = { exa: false, parallel: false }) {
-  return providerID === ProviderID.opencode || flags.exa || flags.parallel
+export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
+  return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
 }
 
 type TaskDef = Tool.InferDef<typeof TaskTool>
@@ -75,7 +98,11 @@ export interface Interface {
   readonly ids: () => Effect.Effect<string[]>
   readonly all: () => Effect.Effect<Tool.Def[]>
   readonly named: () => Effect.Effect<{ task: TaskDef; read: ReadDef }>
-  readonly tools: (model: { providerID: ProviderID; modelID: ModelID; agent: Agent.Info }) => Effect.Effect<Tool.Def[]>
+  readonly tools: (model: {
+    providerID: ProviderV2.ID
+    modelID: ProviderV2.ModelID
+    agent: Agent.Info
+  }) => Effect.Effect<Tool.Def[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ToolRegistry") {}
@@ -106,6 +133,8 @@ export const layer: Layer.Layer<
   | Format.Service
   | Truncate.Service
   | RuntimeFlags.Service
+  | Database.Service
+  | EventV2Bridge.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -134,6 +163,27 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const taskRestart = yield* TaskRestartTool
+    const operationCheckpoint = yield* OperationCheckpointTool
+    const operationGovernor = yield* OperationGovernorTool
+    const operationNext = yield* OperationNextTool
+    const operationPlan = yield* OperationPlanTool
+    const operationQueue = yield* OperationQueueTool
+    const operationQueueNext = yield* OperationQueueNextTool
+    const operationRecover = yield* OperationRecoverTool
+    const operationResume = yield* OperationResumeTool
+    const operationRun = yield* OperationRunTool
+    const operationSchedule = yield* OperationScheduleTool
+    const operationStageGate = yield* OperationStageGateTool
+    const reportLint = yield* ReportLintTool
+    const reportRender = yield* ReportRenderTool
+    const runtimeDaemon = yield* RuntimeDaemonTool
+    const runtimeScheduler = yield* RuntimeSchedulerTool
+    const runtimeSummary = yield* RuntimeSummaryTool
+    const commandSupervise = yield* CommandSuperviseTool
+    const evidenceNormalize = yield* EvidenceNormalizeTool
+    const toolAcquire = yield* ToolAcquireTool
+    const laptopPreflight = yield* LaptopPreflightTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -243,6 +293,29 @@ export const layer: Layer.Layer<
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
         })
+        const ulm = yield* Effect.all({
+          operation_checkpoint: Tool.init(operationCheckpoint),
+          operation_governor: Tool.init(operationGovernor),
+          operation_next: Tool.init(operationNext),
+          operation_plan: Tool.init(operationPlan),
+          operation_queue: Tool.init(operationQueue),
+          operation_queue_next: Tool.init(operationQueueNext),
+          operation_recover: Tool.init(operationRecover),
+          operation_resume: Tool.init(operationResume),
+          operation_run: Tool.init(operationRun),
+          operation_schedule: Tool.init(operationSchedule),
+          operation_stage_gate: Tool.init(operationStageGate),
+          report_lint: Tool.init(reportLint),
+          report_render: Tool.init(reportRender),
+          runtime_daemon: Tool.init(runtimeDaemon),
+          runtime_scheduler: Tool.init(runtimeScheduler),
+          runtime_summary: Tool.init(runtimeSummary),
+          task_restart: Tool.init(taskRestart),
+          command_supervise: Tool.init(commandSupervise),
+          evidence_normalize: Tool.init(evidenceNormalize),
+          tool_acquire: Tool.init(toolAcquire),
+          laptop_preflight: Tool.init(laptopPreflight),
+        })
 
         return {
           custom,
@@ -262,6 +335,27 @@ export const layer: Layer.Layer<
             ...(flags.experimentalScout ? [tool.repo_clone, tool.repo_overview] : []),
             tool.skill,
             tool.patch,
+            ulm.operation_checkpoint,
+            ulm.operation_governor,
+            ulm.operation_next,
+            ulm.operation_plan,
+            ulm.operation_queue,
+            ulm.operation_queue_next,
+            ulm.operation_recover,
+            ulm.operation_resume,
+            ulm.operation_run,
+            ulm.operation_schedule,
+            ulm.operation_stage_gate,
+            ulm.report_lint,
+            ulm.report_render,
+            ulm.runtime_daemon,
+            ulm.runtime_scheduler,
+            ulm.runtime_summary,
+            ulm.task_restart,
+            ulm.command_supervise,
+            ulm.evidence_normalize,
+            ulm.tool_acquire,
+            ulm.laptop_preflight,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
           ],
@@ -388,8 +482,12 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(AppFileSystem.defaultLayer),
       Layer.provide(Bus.layer),
+      Layer.provide(Database.defaultLayer),
+      Layer.provide(EventV2Bridge.defaultLayer),
       Layer.provide(FetchHttpClient.layer),
       Layer.provide(Format.defaultLayer),
+    )
+    .pipe(
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Ripgrep.defaultLayer),
       Layer.provide(Truncate.defaultLayer),

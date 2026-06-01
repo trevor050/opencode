@@ -5,7 +5,7 @@ import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { BackgroundJob } from "@/background/job"
 import { SessionID, type SessionID as SessionIDT } from "@/session/schema"
-import type { MessageV2 } from "@/session/message-v2"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
 import { taskRestartArgs } from "./task_restart_args"
 import { writeRuntimeSummary, type RuntimeUsageMessage } from "@/ulm/artifact"
 import { relevantBackgroundJobs } from "./background_job_scope"
@@ -81,14 +81,14 @@ type Metadata = {
   finalDir: string
 }
 
-function collectChildMessages(session: Session.Interface, sessionID: SessionIDT): Effect.Effect<MessageV2.WithParts[]> {
+function collectChildMessages(session: Session.Interface, sessionID: SessionIDT): Effect.Effect<SessionLegacy.WithParts[]> {
   return Effect.gen(function* () {
     const children = yield* session.children(sessionID).pipe(Effect.catch(() => Effect.succeed([])))
     const batches = yield* Effect.all(
       children.map((child) =>
         Effect.gen(function* () {
           const messages = yield* session.messages({ sessionID: child.id }).pipe(
-            Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])),
+            Effect.catch(() => Effect.succeed([] as SessionLegacy.WithParts[])),
           )
           const descendants = yield* collectChildMessages(session, child.id)
           return [...messages, ...descendants]
@@ -112,7 +112,7 @@ function jobSessionID(job: BackgroundJob.Info): SessionIDT | undefined {
 function collectBackgroundJobMessages(
   session: Session.Interface,
   jobs: BackgroundJob.Info[],
-): Effect.Effect<MessageV2.WithParts[]> {
+): Effect.Effect<SessionLegacy.WithParts[]> {
   return Effect.gen(function* () {
     const sessionIDs = Array.from(new Set(jobs.map(jobSessionID).filter((id): id is SessionIDT => id !== undefined)))
     const batches = yield* Effect.all(
@@ -121,7 +121,7 @@ function collectBackgroundJobMessages(
           const messages = yield* session.messages({ sessionID })
           const descendants = yield* collectChildMessages(session, sessionID)
           return [...messages, ...descendants]
-        }).pipe(Effect.catchCause(() => Effect.succeed<MessageV2.WithParts[]>([]))),
+        }).pipe(Effect.catchCause(() => Effect.succeed<SessionLegacy.WithParts[]>([]))),
       ),
     )
     return batches.flat()
@@ -147,9 +147,9 @@ function usageBlindSpotNote(job: BackgroundJob.Info, backgroundSessionIDs: Set<S
   return `runtime blind spot: background task ${job.id}${agent ? ` (${agent})` : ""} has no readable session ledger or runtime snapshot; token/cost totals may be undercounted.`
 }
 
-function uniqueMessages(messages: MessageV2.WithParts[]) {
+function uniqueMessages(messages: SessionLegacy.WithParts[]) {
   const seen = new Set<string>()
-  const result: MessageV2.WithParts[] = []
+  const result: SessionLegacy.WithParts[] = []
   for (const message of messages) {
     const key = `${message.info.sessionID}:${message.info.id}`
     if (seen.has(key)) continue

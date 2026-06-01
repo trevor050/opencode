@@ -3,7 +3,7 @@ import { existsSync } from "fs"
 import path from "path"
 import { Bus } from "@/bus"
 import { OperationEvent } from "./event"
-import { ProjectID } from "@/project/schema"
+import { ProjectV2 } from "@opencode-ai/core/project"
 import { Schema } from "effect"
 import { containsRawCredentialSecret, credentialIndexGaps, expectedCredentialServices, missingCredentialServices } from "./credential-safety"
 import { assertOperationArtifactSafe, scanOperationArtifacts } from "./operation-artifact-safety"
@@ -62,7 +62,7 @@ async function publishOperationUpdated(
         directory: worktree,
         worktree,
         project: {
-          id: ProjectID.global,
+          id: ProjectV2.ID.global,
           worktree,
           time: { created: Date.now(), updated: Date.now() },
           sandboxes: [],

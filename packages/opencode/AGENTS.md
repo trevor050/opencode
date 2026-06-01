@@ -17,7 +17,7 @@ This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, 
 - Avoid `any`, unnecessary explicit annotations, unnecessary destructuring, and mutable `let` variables. Use early returns instead of `else`.
 - Prefer functional array methods with type guards when filtering narrows downstream types.
 - Keep small values inline when they are used once; do not create path/string temporaries just to immediately consume them.
-- Drizzle schema files live in `src/**/*.sql.ts`. Use snake_case fields and generate migrations with `bun run db generate --name <slug>`.
+- Drizzle schema and migrations live in `packages/core`; this package uses the core-applied database layer. Keep schema fields snake_case.
 - Do not use `export namespace Foo`. Use flat top-level exports plus `export * as Foo from "./foo"` at the bottom, or `export * as Foo from "."` for a single-module `index.ts`.
 - For multi-sibling directories such as `src/session` or `src/config`, keep sibling modules independent and avoid barrel `index.ts` files that force every sibling to load.
 

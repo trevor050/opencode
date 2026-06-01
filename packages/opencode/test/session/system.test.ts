@@ -9,8 +9,8 @@ import { Permission } from "../../src/permission"
 import { SystemPrompt } from "../../src/session/system"
 import { bindOperationSession, listOperationSessionBindings, sessionForOperation, sessionsForOperation } from "@/ulm/operation-context"
 import type { Provider } from "@/provider/provider"
-import { ModelID, ProviderID } from "@/provider/schema"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { provideInstance, testInstanceStoreLayer, tmpdir } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const skills: Skill.Info[] = [
@@ -47,8 +47,8 @@ const build: Agent.Info = {
 }
 
 const model: Provider.Model = {
-  id: ModelID.make("test-model"),
-  providerID: ProviderID.make("test"),
+  id: ProviderV2.ModelID.make("test-model"),
+  providerID: ProviderV2.ID.make("test"),
   api: {
     id: "test-model",
     url: "https://example.com",
@@ -109,23 +109,26 @@ function withTmpInstance<A, E, R>(self: (dir: string) => Effect.Effect<A, E, R>)
 }
 
 const it = testEffect(
-  SystemPrompt.layer.pipe(
-    Layer.provide(
-      Layer.succeed(
-        Skill.Service,
-        Skill.Service.of({
-          get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
-          require: (name) => {
-            const info = skills.find((skill) => skill.name === name)
-            if (info) return Effect.succeed(info)
-            return Effect.fail(new Skill.NotFoundError({ name, available: skills.map((skill) => skill.name) }))
-          },
-          all: () => Effect.succeed(skills),
-          dirs: () => Effect.succeed([]),
-          available: () => Effect.succeed(skills),
-        }),
+  Layer.mergeAll(
+    SystemPrompt.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          Skill.Service,
+          Skill.Service.of({
+            get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
+            require: (name) => {
+              const info = skills.find((skill) => skill.name === name)
+              if (info) return Effect.succeed(info)
+              return Effect.fail(new Skill.NotFoundError({ name, available: skills.map((skill) => skill.name) }))
+            },
+            all: () => Effect.succeed(skills),
+            dirs: () => Effect.succeed([]),
+            available: () => Effect.succeed(skills),
+          }),
+        ),
       ),
     ),
+    testInstanceStoreLayer,
   ),
 )
 

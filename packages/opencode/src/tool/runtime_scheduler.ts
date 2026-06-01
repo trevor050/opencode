@@ -14,6 +14,8 @@ import DESCRIPTION from "./runtime_scheduler.txt"
 import { TaskTool } from "./task"
 import * as Truncate from "./truncate"
 import { CommandSuperviseTool } from "./command_supervise"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2Bridge } from "@/event-v2-bridge"
 
 export const Parameters = Schema.Struct({
   operationID: Schema.String,
@@ -45,6 +47,8 @@ export const RuntimeSchedulerTool = Tool.define<
   | RuntimeFlags.Service
   | Scope.Scope
   | Truncate.Service
+  | Database.Service
+  | EventV2Bridge.Service
 >(
   "runtime_scheduler",
   Effect.gen(function* () {

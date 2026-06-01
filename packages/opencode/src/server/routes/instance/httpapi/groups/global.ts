@@ -1,6 +1,9 @@
 import { Config } from "@/config/config"
-import { BusEvent } from "@/bus/bus-event"
-import { SyncEvent } from "@/sync"
+import { EventV2 } from "@opencode-ai/core/event"
+import { InstanceDisposed } from "@/server/event"
+import { Question } from "@/question"
+import { OperationEvent } from "@/ulm/event"
+import "@opencode-ai/core/account"
 import "@/server/event"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
@@ -11,11 +14,41 @@ const GlobalHealth = Schema.Struct({
   version: Schema.String,
 })
 
+const SyncEventSchemas = EventV2.registry
+  .values()
+  .flatMap((definition) => {
+    if (!definition.sync) return []
+    return [
+      Schema.Struct({
+        type: Schema.Literal("sync"),
+        name: Schema.Literal(EventV2.versionedType(definition.type, definition.sync.version)),
+        id: Schema.String,
+        seq: Schema.Finite,
+        aggregateID: Schema.Literal(definition.sync.aggregate),
+        data: definition.data,
+      }).annotate({ identifier: `SyncEvent.${definition.type}` }),
+    ]
+  })
+  .toArray()
+
 const GlobalEventSchema = Schema.Struct({
   directory: Schema.String,
   project: Schema.optional(Schema.String),
   workspace: Schema.optional(Schema.String),
-  payload: Schema.Union([...BusEvent.effectPayloads(), ...SyncEvent.effectPayloads()]),
+  payload: Schema.Union([
+    ...EventV2.registry
+      .values()
+      .map((definition) =>
+        Schema.Struct({ id: Schema.String, type: Schema.Literal(definition.type), properties: definition.data }),
+      )
+      .toArray(),
+    Schema.Struct({ id: Schema.String, type: Schema.Literal(Question.Event.Asked.type), properties: Question.Event.Asked.properties }),
+    Schema.Struct({ id: Schema.String, type: Schema.Literal(Question.Event.Replied.type), properties: Question.Event.Replied.properties }),
+    Schema.Struct({ id: Schema.String, type: Schema.Literal(Question.Event.Rejected.type), properties: Question.Event.Rejected.properties }),
+    Schema.Struct({ id: Schema.String, type: Schema.Literal(OperationEvent.Updated.type), properties: OperationEvent.Updated.properties }),
+    InstanceDisposed,
+    ...SyncEventSchemas,
+  ]),
 }).annotate({ identifier: "GlobalEvent" })
 
 export const GlobalUpgradeInput = Schema.Struct({
