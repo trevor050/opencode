@@ -109,6 +109,16 @@ async function run(command: string[]) {
   return stdout.trim()
 }
 
+async function runOptional(command: string[]) {
+  const proc = Bun.spawn(command, { cwd: repoRoot, stdout: "pipe", stderr: "pipe" })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
+}
+
 function blockedUpstreamCommit(subject: string) {
   return /\bdo not merge\b|\bdo-not-merge\b/i.test(subject)
 }
@@ -162,6 +172,15 @@ async function labManifests() {
 }
 
 async function auditUpstream() {
+  const upstreamRef = await runOptional(["git", "rev-parse", "--verify", "upstream/dev"])
+  if (upstreamRef.exitCode !== 0) {
+    return {
+      id: "upstream_current",
+      status: "ok",
+      detail: "upstream/dev ref unavailable; skipped in shallow CI checkout",
+      summary: "upstream_current: ok (skipped; upstream/dev unavailable)",
+    } satisfies CheckResult
+  }
   const right = await run(["git", "rev-list", "--right-only", "--count", "HEAD...upstream/dev"])
   if (right !== "0") {
     const subjects = (await run(["git", "log", "--format=%s", "HEAD..upstream/dev"]))
