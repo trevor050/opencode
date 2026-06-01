@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Layer } from "effect"
+import { Effect, Fiber, Layer, Queue } from "effect"
 import { QuestionTool } from "../../src/tool/question"
 import { Question } from "../../src/question"
 import { SessionID, MessageID } from "../../src/session/schema"
@@ -11,6 +11,8 @@ import { createOperationGoal } from "@/ulm/operation-goal"
 import { bindOperationSession } from "@/ulm/operation-context"
 import { writeOperationDiscoveryCharter } from "@/ulm/artifact"
 import { provideTestInstance, tmpdir } from "../fixture/fixture"
+import { EventV2Bridge } from "../../src/event-v2-bridge"
+import { Bus } from "@/bus"
 
 const ctx = {
   sessionID: SessionID.make("ses_test-session"),
@@ -23,15 +25,28 @@ const ctx = {
   ask: () => Effect.void,
 }
 
-const layer = Layer.mergeAll(Question.defaultLayer, CrossSpawnSpawner.defaultLayer, Truncate.defaultLayer, Agent.defaultLayer)
+const layer = Layer.mergeAll(
+  Question.layer.pipe(Layer.provideMerge(EventV2Bridge.defaultLayer), Layer.provideMerge(Bus.layer)),
+  CrossSpawnSpawner.defaultLayer,
+  Truncate.defaultLayer,
+  Agent.defaultLayer,
+)
 const it = testEffect(layer)
 
 const pending = Effect.fn("QuestionToolTest.pending")(function* (question: Question.Interface) {
+  const events = yield* EventV2Bridge.Service
+  const asked = yield* Queue.unbounded<void>()
+  const off = yield* events.listen((event) => {
+    if (event.type === Question.Event.Asked.type) Queue.offerUnsafe(asked, undefined)
+    return Effect.void
+  })
+  yield* Effect.addFinalizer(() => off)
+
   for (;;) {
     const items = yield* question.list()
     const item = items[0]
     if (item) return item
-    yield* Effect.sleep("10 millis")
+    yield* Queue.take(asked).pipe(Effect.timeout("2 seconds"))
   }
 })
 

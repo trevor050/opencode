@@ -19,7 +19,7 @@ permissions:
 jobs:
   fast:
     name: ulm harness fast
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ github.repository == 'anomalyco/opencode' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash
@@ -55,7 +55,7 @@ jobs:
   nightly-chaos:
     name: ulm harness nightly chaos
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ github.repository == 'anomalyco/opencode' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash

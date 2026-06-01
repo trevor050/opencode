@@ -27,6 +27,7 @@ Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributi
 
 - Use parallel tool reads when useful, especially for repo searches and file inspection.
 - Prefer Bun APIs in TS code, avoid `any`, rely on inference, prefer `const`, early returns, dot notation over unnecessary destructuring, and functional array helpers with type guards.
+- Never alias imports or use star imports. If a namespace-style value is needed, import the module's exported namespace by name, for example `import { Project } from "@opencode-ai/core/project"`.
 - Drizzle tables/columns use `snake_case`; generate migrations from `packages/opencode` with `bun run db generate --name <slug>`.
 - Do not use `export namespace Foo`. Use flat exports plus `export * as Foo from "./foo"` or `export * as Foo from "."` in single-module `index.ts` files. Avoid multi-sibling barrels.
 - Tests do not run from repo root. Run package commands from package dirs, for example `bun run --cwd packages/opencode test:ulm-smoke`.

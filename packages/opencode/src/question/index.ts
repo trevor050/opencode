@@ -74,13 +74,13 @@ export class Reply extends Schema.Class<Reply>("QuestionReply")({
   }),
 }) {}
 
-class Replied extends Schema.Class<Replied>("QuestionReplied")({
+export class Replied extends Schema.Class<Replied>("QuestionReplied")({
   sessionID: SessionID,
   requestID: QuestionID,
   answers: Schema.Array(Answer),
 }) {}
 
-class Rejected extends Schema.Class<Rejected>("QuestionRejected")({
+export class Rejected extends Schema.Class<Rejected>("QuestionRejected")({
   sessionID: SessionID,
   requestID: QuestionID,
 }) {}

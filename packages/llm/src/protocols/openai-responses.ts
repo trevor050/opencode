@@ -8,7 +8,6 @@ import {
   LLMEvent,
   Usage,
   type FinishReason,
-  type LLMError,
   type LLMRequest,
   type ProviderMetadata,
   type ReasoningPart,
@@ -317,14 +316,14 @@ const lowerToolResultContentItem = Effect.fn("OpenAIResponses.lowerToolResultCon
   return yield* invalid(`OpenAI Responses tool-result media content only supports images, got ${item.mediaType}`)
 })
 
-const lowerToolResultOutput = (part: ToolResultPart): Effect.Effect<string | OpenAIResponsesInputContent[], LLMError> =>
-  Effect.gen(function* () {
-    // Text/json/error results are encoded as a plain string for backward
-    // compatibility with existing cassettes and provider expectations.
-    if (part.result.type !== "content") return ProviderShared.toolResultText(part)
-    const value = part.result.value as ReadonlyArray<ToolResultContentPart>
-    return yield* Effect.forEach(value, (item) => lowerToolResultContentItem(item))
-  })
+const lowerToolResultOutput = Effect.fn("OpenAIResponses.lowerToolResultOutput")(function* (part: ToolResultPart) {
+  // Text/json/error results are encoded as a plain string for backward
+  // compatibility with existing cassettes and provider expectations.
+  if (part.result.type !== "content") return ProviderShared.toolResultText(part)
+  // Preserve the narrowed array element type when compiled through a consumer package.
+  const content: ReadonlyArray<ToolResultContentPart> = part.result.value
+  return yield* Effect.forEach(content, lowerToolResultContentItem)
+})
 
 const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (request: LLMRequest) {
   const system: OpenAIResponsesInputItem[] =
@@ -408,42 +407,41 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
     : input
 })
 
-const lowerOptions = (request: LLMRequest): Effect.Effect<Partial<OpenAIResponsesBody>, LLMError> =>
-  Effect.gen(function* () {
-    const store = OpenAIOptions.store(request)
-    const promptCacheKey = OpenAIOptions.promptCacheKey(request)
-    const effort = OpenAIOptions.reasoningEffort(request)
-    if (effort && !OpenAIOptions.isReasoningEffort(effort))
-      return yield* invalid(`OpenAI Responses does not support reasoning effort ${effort}`)
-    const summary = OpenAIOptions.reasoningSummary(request)
-    const include = OpenAIOptions.include(request)
-    const verbosity = OpenAIOptions.textVerbosity(request)
-    const instructions = OpenAIOptions.instructions(request)
-    return {
-      ...(instructions ? { instructions } : {}),
-      ...(store !== undefined ? { store } : {}),
-      ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
-      ...(include ? { include } : {}),
-      ...(effort || summary ? { reasoning: { effort, summary } } : {}),
-      ...(verbosity ? { text: { verbosity } } : {}),
-    }
-  })
+const lowerOptions = Effect.fn("OpenAIResponses.lowerOptions")(function* (request: LLMRequest) {
+  const store = OpenAIOptions.store(request)
+  const promptCacheKey = OpenAIOptions.promptCacheKey(request)
+  const effort = OpenAIOptions.reasoningEffort(request)
+  if (effort && !OpenAIOptions.isReasoningEffort(effort))
+    return yield* invalid(`OpenAI Responses does not support reasoning effort ${effort}`)
+  const summary = OpenAIOptions.reasoningSummary(request)
+  const include = OpenAIOptions.include(request)
+  const verbosity = OpenAIOptions.textVerbosity(request)
+  const instructions = OpenAIOptions.instructions(request)
+  return {
+    ...(instructions ? { instructions } : {}),
+    ...(store !== undefined ? { store } : {}),
+    ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
+    ...(include ? { include } : {}),
+    ...(effort || summary ? { reasoning: { effort, summary } } : {}),
+    ...(verbosity ? { text: { verbosity } } : {}),
+  }
+})
 
-const fromRequest = (request: LLMRequest): Effect.Effect<OpenAIResponsesBody, LLMError> =>
-  Effect.gen(function* () {
-    const generation = request.generation
-    return {
-      model: request.model.id,
-      input: yield* lowerMessages(request),
-      tools: request.tools.length === 0 ? undefined : request.tools.map(lowerTool),
-      tool_choice: request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
-      stream: true as const,
-      max_output_tokens: generation?.maxTokens,
-      temperature: generation?.temperature,
-      top_p: generation?.topP,
-      ...(yield* lowerOptions(request)),
-    }
-  })
+const fromRequest = Effect.fn("OpenAIResponses.fromRequest")(function* (request: LLMRequest) {
+  const generation = request.generation
+  const options = yield* lowerOptions(request)
+  return {
+    model: request.model.id,
+    input: yield* lowerMessages(request),
+    tools: request.tools.length === 0 ? undefined : request.tools.map(lowerTool),
+    tool_choice: request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
+    stream: true as const,
+    max_output_tokens: generation?.maxTokens,
+    temperature: generation?.temperature,
+    top_p: generation?.topP,
+    ...options,
+  }
+})
 
 // =============================================================================
 // Stream Parsing

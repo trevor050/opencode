@@ -1,7 +1,6 @@
 import { Config } from "@/config/config"
-import { GlobalBus } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
-import { Bus } from "@/bus"
+import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -15,6 +14,7 @@ import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
 import { globalEventReplay } from "@/server/global-event-replay"
 import { parseLastEventId, type StoredEvent } from "@/server/sse-replay"
+import { GlobalBus } from "@/bus/global"
 
 const log = Log.create({ service: "server" })
 
@@ -63,10 +63,13 @@ function eventResponse(request: HttpServerRequest.HttpServerRequest) {
         const heartbeat = setInterval(() => {
           Queue.offerUnsafe(
             queue,
-            queueItem({ payload: { id: Bus.createID(), type: "server.heartbeat", properties: {} } }),
+            queueItem({ payload: { id: EventV2.ID.create(), type: "server.heartbeat", properties: {} } }),
           )
         }, 10_000)
-        Queue.offerUnsafe(queue, queueItem({ payload: { id: Bus.createID(), type: "server.connected", properties: {} } }))
+        Queue.offerUnsafe(
+          queue,
+          queueItem({ payload: { id: EventV2.ID.create(), type: "server.connected", properties: {} } }),
+        )
         const missed = globalEventReplay.eventsAfter(replayFrom)
         if (missed.length > 0) log.info("global event replay", { lastEventId: replayFrom, replayed: missed.length })
         for (const event of missed) offerStoredEvent(event)

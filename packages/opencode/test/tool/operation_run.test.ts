@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { Database } from "@opencode-ai/core/database/database"
 import { Effect, Exit, Layer } from "effect"
 import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
@@ -10,6 +11,7 @@ import { Session } from "@/session/session"
 import { MessageID } from "@/session/schema"
 import { SessionStatus } from "@/session/status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { Storage } from "@/storage/storage"
 import { OperationRunTool } from "@/tool/operation_run"
 import { ToolRegistry } from "@/tool/registry"
@@ -28,6 +30,8 @@ const layer = Layer.mergeAll(
   CrossSpawnSpawner.defaultLayer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
+  Database.defaultLayer,
+  EventV2Bridge.defaultLayer,
   RuntimeFlags.layer({ experimentalBackgroundSubagents: true }),
   Storage.defaultLayer,
   ToolRegistry.defaultLayer,

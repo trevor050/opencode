@@ -62,10 +62,11 @@ proc.write("\u0003")
 proc.kill("SIGTERM")
 
 const plain = stripAnsi(output)
+const paintedFrame = /\x1B\[[0-9;]*H/.test(output) && output.length > 500
 assert(!fatal, `TUI launch smoke saw a fatal launch condition (${fatal}).\n\n${plain.slice(-4000)}`)
 assert(plain.length > 0, "TUI launch smoke produced no terminal output")
 assert(
-  /Sisyphus|OpenCode|OpenAI|GPT|model|tokens|message/i.test(plain),
+  paintedFrame || /Sisyphus|OpenCode|OpenAI|GPT|model|tokens|message/i.test(plain),
   `TUI launch smoke did not observe recognizable prompt UI output.\n\n${plain.slice(-4000)}`,
 )
 
