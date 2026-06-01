@@ -203,11 +203,12 @@ async function auditOperationRuntime() {
   const shellPrompt = await read("packages/opencode/src/tool/shell/shell.txt")
   const systemPrompt = await read("packages/opencode/src/session/system.ts")
   const promptPaste = await read("packages/opencode/src/cli/cmd/tui/component/prompt/paste.ts")
-  const projectService = await read("packages/opencode/src/project/project.ts")
+  const coreProjectService = await read("packages/core/src/project.ts")
+  const coreGitService = await read("packages/core/src/git.ts")
   const providerTransform = await read("packages/opencode/src/provider/transform.ts")
   const sseRepair = await read("packages/opencode/src/provider/sse-repair.ts")
   const providerService = await read("packages/opencode/src/provider/provider.ts")
-  const codexPlugin = await read("packages/opencode/src/plugin/codex.ts")
+  const codexPlugin = await read("packages/opencode/src/plugin/openai/codex.ts")
   const codexTests = await read("packages/opencode/test/plugin/codex.test.ts")
   const pluginTypes = await read("packages/plugin/src/index.ts")
   const sessionPrompt = await read("packages/opencode/src/session/prompt.ts")
@@ -769,9 +770,14 @@ async function auditOperationRuntime() {
     "expandPromptTextParts",
     "Bun.stringWidth",
   ])
-  requireText("packages/opencode/src/project/project.ts", projectService, [
-    "isBareRepo ? sandbox",
-    "readCachedProjectId(common)",
+  requireText("packages/core/src/project.ts", coreProjectService, [
+    "cached(repo.store)",
+    "remote(repo)",
+    "root(repo)",
+  ])
+  requireText("packages/core/src/git.ts", coreGitService, [
+    "topLevel.exitCode === 0 ? resolvePath(cwd, topLevel.text) : cwd",
+    "resolvePath(cwd, commonDir.text)",
   ])
   requireText("packages/opencode/src/provider/transform.ts", providerTransform, [
     "providerExecuted",
@@ -786,7 +792,7 @@ async function auditOperationRuntime() {
     "cfg.experimental?.enable_sse_json_repair === true",
     "repairSSE(res)",
   ])
-  requireText("packages/opencode/src/plugin/codex.ts", codexPlugin, [
+  requireText("packages/opencode/src/plugin/openai/codex.ts", codexPlugin, [
     "requireRefreshToken",
     "refreshTokenOrPrevious",
     "currentAuth.refresh = refresh",
@@ -807,12 +813,12 @@ async function auditOperationRuntime() {
   ])
   requireText("packages/opencode/src/server/routes/instance/httpapi/groups/v2/model.ts", v2ModelGroup, [
     "v2.model.list",
-    "InstanceContextMiddleware",
-    "WorkspaceRoutingMiddleware",
+    "V2LocationMiddleware",
+    "LocationQuery",
   ])
   requireText("packages/opencode/src/server/routes/instance/httpapi/handlers/v2/model.ts", v2ModelHandler, [
-    "providerModelToV2Info",
-    "Provider.Service",
+    "Catalog.Service",
+    "catalog.model.available",
   ])
   requireText("packages/sdk/js/src/v2/gen/sdk.gen.ts", sdk, ["class Model", "get model()", 'url: "/api/model"'])
   for (const tool of [

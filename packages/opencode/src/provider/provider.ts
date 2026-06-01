@@ -29,6 +29,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import { repairSSE } from "./sse-repair"
 
 const log = Log.create({ service: "provider" })
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 10_000
@@ -1525,7 +1526,12 @@ export const layer = Layer.effect(
 
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
 
-    async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
+    async function resolveSDK(
+      model: Model,
+      s: State,
+      envs: Record<string, string | undefined>,
+      sdkOpts: { repairSSE: boolean },
+    ) {
       try {
         using _ = log.time("getSDK", {
           providerID: model.providerID,
@@ -1587,6 +1593,7 @@ export const layer = Layer.effect(
             providerID: model.providerID,
             npm: model.api.npm,
             options,
+            repairSSE: sdkOpts.repairSSE,
           }),
         )
         const existing = s.sdk.get(key)
@@ -1639,8 +1646,9 @@ export const layer = Layer.effect(
             timeout: false,
           }).finally(() => headerTimeoutCtl?.clear())
 
-          if (!chunkAbortCtl) return res
-          return wrapSSE(res, chunkTimeout, chunkAbortCtl)
+          const maybeRepaired = sdkOpts.repairSSE ? repairSSE(res) : res
+          if (!chunkAbortCtl) return maybeRepaired
+          return wrapSSE(maybeRepaired, chunkTimeout, chunkAbortCtl)
         }
 
         const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
@@ -1716,13 +1724,15 @@ export const layer = Layer.effect(
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
+      const cfg = yield* config.get()
+      const sdkOpts = { repairSSE: cfg.experimental?.enable_sse_json_repair === true }
       const key = `${model.providerID}/${model.id}`
       if (s.models.has(key)) return s.models.get(key)!
 
       const provider = s.providers[model.providerID]
       return yield* EffectPromise.refineRejection(
         async () => {
-          const sdk = await resolveSDK(model, s, envs)
+          const sdk = await resolveSDK(model, s, envs, sdkOpts)
           const language = s.modelLoaders[model.providerID]
             ? await s.modelLoaders[model.providerID](sdk, model.api.id, {
                 ...provider.options,

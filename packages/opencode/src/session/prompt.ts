@@ -1433,7 +1433,20 @@ export const layer = Layer.effect(
               }
             }
 
-            yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+            const transformInput = {
+              sessionID,
+              agent: agent.name,
+              model,
+              messages: msgs,
+            }
+            const preChat = yield* plugin.trigger("pre_chat.messages.transform", transformInput, {
+              messages: structuredClone(msgs),
+            })
+            msgs = preChat.messages
+            const legacyChat = yield* plugin.trigger("experimental.chat.messages.transform", transformInput, {
+              messages: msgs,
+            })
+            msgs = legacyChat.messages
 
             const [skills, env, instructions, modelMsgs] = yield* Effect.all([
               sys.skills(agent),
