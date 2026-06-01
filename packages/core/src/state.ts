@@ -1,6 +1,7 @@
 export * as State from "./state"
 
 import { Effect, Scope, Semaphore } from "effect"
+import { createDraft, finishDraft } from "immer"
 import type { Draft, Objectish } from "immer"
 
 export type Transform<Editor> = (editor: Editor) => void
@@ -56,9 +57,10 @@ export function create<State extends Objectish, Editor>(options: Options<State, 
       })
     }),
     update: Effect.fn("State.update")(function* (update, reason) {
-      const api = options.editor(state as Draft<State>)
+      const draft = createDraft(state)
+      const api = options.editor(draft as Draft<State>)
       yield* update(api)
-      if (options.finalize) yield* options.finalize(api, reason)
+      yield* commit(finishDraft(draft) as State, reason)
     }, semaphore.withPermit),
   }
 }

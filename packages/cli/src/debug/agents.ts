@@ -16,7 +16,7 @@ export const AgentsCommand = Command.make("agents", {}, () =>
     const agents = yield* svc.agent.all()
     process.stdout.write(
       JSON.stringify(
-        agents.sort((a, b) => a.id.localeCompare(b.id)),
+        agents.slice().sort((a, b) => a.id.localeCompare(b.id)),
         null,
         2,
       ) + EOL,
