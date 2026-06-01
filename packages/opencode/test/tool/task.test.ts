@@ -1,17 +1,20 @@
 import { afterEach, describe, expect } from "bun:test"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
+import { Database } from "@opencode-ai/core/database/database"
 import fs from "fs/promises"
 import path from "path"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect"
 import { Agent } from "../../src/agent/agent"
+import { BackgroundJob } from "@/background/job"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { MessageV2 } from "../../src/session/message-v2"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
-import { ModelID, ProviderID } from "../../src/provider/schema"
+import { SessionRunState } from "@/session/run-state"
 import { OperationRecoverTool } from "@/tool/operation_recover"
 import { OperationResumeTool } from "@/tool/operation_resume"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
@@ -23,34 +26,37 @@ import { ToolRegistry } from "@/tool/registry"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { Bus } from "@/bus"
-import { BackgroundJob } from "@/background/job"
 import { Storage } from "@/storage/storage"
 import { readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 afterEach(async () => {
   await disposeAllInstances()
 })
 
 const ref = {
-  providerID: ProviderID.make("test"),
-  modelID: ModelID.make("test-model"),
+  providerID: ProviderV2.ID.make("test"),
+  modelID: ProviderV2.ModelID.make("test-model"),
 }
 
-const it = testEffect(
+const layer = (flags: Partial<RuntimeFlags.Info> = { experimentalBackgroundSubagents: true }) =>
   Layer.mergeAll(
     Agent.defaultLayer,
+    BackgroundJob.defaultLayer,
+    EventV2Bridge.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Session.defaultLayer,
+    SessionRunState.defaultLayer,
     SessionStatus.defaultLayer,
-    Bus.layer,
-    BackgroundJob.defaultLayer,
     Storage.defaultLayer,
-    RuntimeFlags.layer({ experimentalBackgroundSubagents: true }),
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
-  ),
-)
+    Database.defaultLayer,
+    RuntimeFlags.layer(flags),
+  ).pipe(Layer.provide(Bus.layer))
+
+const it = testEffect(layer())
 
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -71,7 +77,7 @@ const seed = Effect.fn("TaskToolTest.seed")(function* (title = "Pinned") {
     model: ref,
     time: { created: Date.now() },
   })
-  const assistant: MessageV2.Assistant = {
+  const assistant: SessionLegacy.Assistant = {
     id: MessageID.ascending(),
     role: "assistant",
     parentID: user.id,
@@ -102,7 +108,7 @@ function stubOps(opts?: { onPrompt?: (input: SessionPrompt.PromptInput) => void;
   }
 }
 
-function reply(input: SessionPrompt.PromptInput, text: string): MessageV2.WithParts {
+function reply(input: SessionPrompt.PromptInput, text: string): SessionLegacy.WithParts {
   const id = MessageID.ascending()
   return {
     info: {

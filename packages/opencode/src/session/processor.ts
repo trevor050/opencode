@@ -1,17 +1,16 @@
 import { Image } from "@/image/image"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
 import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
-import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 import { Snapshot } from "@/snapshot"
-import * as Session from "./session"
+import { Session } from "./session"
 import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
-import { Token } from "@/util/token"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
@@ -20,10 +19,11 @@ import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
-import * as Log from "@opencode-ai/core/util/log"
+import { Log } from "@opencode-ai/core/util/log"
 import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { SessionEvent } from "@opencode-ai/core/session-event"
+import { Database } from "@opencode-ai/core/database/database"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
@@ -36,25 +36,25 @@ const log = Log.create({ service: "session.processor" })
 export type Result = "compact" | "stop" | "continue"
 
 export interface Handle {
-  readonly message: MessageV2.Assistant
+  readonly message: SessionLegacy.Assistant
   readonly updateToolCall: (
     toolCallID: string,
-    update: (part: MessageV2.ToolPart) => MessageV2.ToolPart,
-  ) => Effect.Effect<MessageV2.ToolPart | undefined>
+    update: (part: SessionLegacy.ToolPart) => SessionLegacy.ToolPart,
+  ) => Effect.Effect<SessionLegacy.ToolPart | undefined>
   readonly completeToolCall: (
     toolCallID: string,
     output: {
       title: string
       metadata: Record<string, any>
       output: string
-      attachments?: MessageV2.FilePart[]
+      attachments?: SessionLegacy.FilePart[]
     },
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
 }
 
 type Input = {
-  assistantMessage: MessageV2.Assistant
+  assistantMessage: SessionLegacy.Assistant
   sessionID: SessionID
   model: Provider.Model
 }
@@ -64,9 +64,9 @@ export interface Interface {
 }
 
 type ToolCall = {
-  partID: MessageV2.ToolPart["id"]
-  messageID: MessageV2.ToolPart["messageID"]
-  sessionID: MessageV2.ToolPart["sessionID"]
+  partID: SessionLegacy.ToolPart["id"]
+  messageID: SessionLegacy.ToolPart["messageID"]
+  sessionID: SessionLegacy.ToolPart["sessionID"]
   done: Deferred.Deferred<void>
   inputEnded: boolean
 }
@@ -77,9 +77,8 @@ interface ProcessorContext extends Input {
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
-  currentText: MessageV2.TextPart | undefined
-  reasoningMap: Record<string, MessageV2.ReasoningPart>
-  pendingToolUpdates: Record<string, ((part: MessageV2.ToolPart) => MessageV2.ToolPart)[]>
+  currentText: SessionLegacy.TextPart | undefined
+  reasoningMap: Record<string, SessionLegacy.ReasoningPart>
 }
 
 type StreamEvent = LLMEvent
@@ -91,7 +90,6 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const session = yield* Session.Service
     const config = yield* Config.Service
-    const bus = yield* Bus.Service
     const snapshot = yield* Snapshot.Service
     const agents = yield* Agent.Service
     const llm = yield* LLM.Service
@@ -103,6 +101,7 @@ export const layer = Layer.effect(
     const image = yield* Image.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const database = yield* Database.Service
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -120,7 +119,6 @@ export const layer = Layer.effect(
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
-        pendingToolUpdates: {},
       }
       let aborted = false
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
@@ -134,7 +132,6 @@ export const layer = Layer.effect(
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
         delete ctx.toolcalls[toolCallID]
-        delete ctx.pendingToolUpdates[toolCallID]
         if (done) yield* Deferred.succeed(done, undefined).pipe(Effect.ignore)
       })
 
@@ -155,13 +152,10 @@ export const layer = Layer.effect(
 
       const updateToolCall = Effect.fn("SessionProcessor.updateToolCall")(function* (
         toolCallID: string,
-        update: (part: MessageV2.ToolPart) => MessageV2.ToolPart,
+        update: (part: SessionLegacy.ToolPart) => SessionLegacy.ToolPart,
       ) {
         const match = yield* readToolCall(toolCallID)
-        if (!match) {
-          ctx.pendingToolUpdates[toolCallID] = [...(ctx.pendingToolUpdates[toolCallID] ?? []), update]
-          return undefined
-        }
+        if (!match) return undefined
         const part = yield* session.updatePart(update(match.part))
         ctx.toolcalls[toolCallID] = {
           ...match.call,
@@ -172,22 +166,13 @@ export const layer = Layer.effect(
         return part
       })
 
-      const applyPendingToolUpdates = Effect.fn("SessionProcessor.applyPendingToolUpdates")(function* (toolCallID: string) {
-        const updates = ctx.pendingToolUpdates[toolCallID]
-        if (!updates?.length) return
-        delete ctx.pendingToolUpdates[toolCallID]
-        for (const update of updates) {
-          yield* updateToolCall(toolCallID, update)
-        }
-      })
-
       const completeToolCall = Effect.fn("SessionProcessor.completeToolCall")(function* (
         toolCallID: string,
         output: {
           title: string
           metadata: Record<string, any>
           output: string
-          attachments?: MessageV2.FilePart[]
+          attachments?: SessionLegacy.FilePart[]
         },
       ) {
         const match = yield* readToolCall(toolCallID)
@@ -282,7 +267,7 @@ export const layer = Layer.effect(
           callID: input.id,
           state: { status: "pending", input: {}, raw: "" },
           metadata: input.providerExecuted ? { providerExecuted: true } : undefined,
-        } satisfies MessageV2.ToolPart)
+        } satisfies SessionLegacy.ToolPart)
         ctx.toolcalls[input.id] = {
           done: yield* Deferred.make<void>(),
           partID: part.id,
@@ -293,11 +278,11 @@ export const layer = Layer.effect(
         return { call: ctx.toolcalls[input.id], part }
       })
 
-      const isFilePart = (value: unknown): value is MessageV2.FilePart => Schema.is(MessageV2.FilePart)(value)
+      const isFilePart = (value: unknown): value is SessionLegacy.FilePart => Schema.is(SessionLegacy.FilePart)(value)
 
       const toolResultOutput = (
         value: Extract<StreamEvent, { type: "tool-result" }>,
-      ): { title: string; metadata: Record<string, any>; output: string; attachments?: MessageV2.FilePart[] } => {
+      ): { title: string; metadata: Record<string, any>; output: string; attachments?: SessionLegacy.FilePart[] } => {
         if (isRecord(value.result.value) && typeof value.result.value.output === "string") {
           return {
             title: typeof value.result.value.title === "string" ? value.result.value.title : value.name,
@@ -315,8 +300,6 @@ export const layer = Layer.effect(
             typeof value.result.value === "string" ? value.result.value : (JSON.stringify(value.result.value) ?? ""),
         }
       }
-
-      const toolInput = (value: unknown): Record<string, any> => (isRecord(value) ? value : { value })
 
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
@@ -368,7 +351,6 @@ export const layer = Layer.effect(
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
             yield* ensureToolCall(value)
-            yield* applyPendingToolUpdates(value.id)
             return
 
           case "tool-input-delta":
@@ -396,7 +378,7 @@ export const layer = Layer.effect(
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
             const toolCall = yield* ensureToolCall(value)
-            const input = toolInput(value.input)
+            const input = isRecord(value.input) ? value.input : { value: value.input }
             if (!toolCall.call.inputEnded) {
               // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
               if (flags.experimentalEventSystem) {
@@ -438,7 +420,9 @@ export const layer = Layer.effect(
                 : value.providerMetadata,
             }))
 
-            const parts = MessageV2.parts(ctx.assistantMessage.id)
+            const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
+              Effect.provideService(Database.Service, database),
+            )
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
 
             if (
@@ -478,7 +462,7 @@ export const layer = Layer.effect(
                     ),
                     Effect.exit,
                   )
-                : Effect.succeed(Exit.succeed<MessageV2.FilePart>(attachment)),
+                : Effect.succeed(Exit.succeed<SessionLegacy.FilePart>(attachment)),
             )
             const omitted = normalized.filter(Exit.isFailure).length
             const attachments = normalized.filter(Exit.isSuccess).map((item) => item.value)
@@ -501,7 +485,7 @@ export const layer = Layer.effect(
                     type: "text",
                     text: output.output,
                   },
-                  ...(output.attachments?.map((item: MessageV2.FilePart) => ({
+                  ...(output.attachments?.map((item: SessionLegacy.FilePart) => ({
                     type: "file" as const,
                     uri: item.url,
                     mime: item.mime,
@@ -737,10 +721,9 @@ export const layer = Layer.effect(
         }
         ctx.reasoningMap = {}
 
-        const toolSettleTimeout = aborted ? "5 seconds" : "250 millis"
         yield* Effect.forEach(
           Object.values(ctx.toolcalls),
-          (call) => Deferred.await(call.done).pipe(Effect.timeout(toolSettleTimeout), Effect.ignore),
+          (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
           { concurrency: "unbounded" },
         )
 
@@ -769,9 +752,9 @@ export const layer = Layer.effect(
       const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown) {
         slog.error("process", { error: errorMessage(e), stack: e instanceof Error ? e.stack : undefined })
         const error = parse(e)
-        if (MessageV2.ContextOverflowError.isInstance(error)) {
+        if (SessionLegacy.ContextOverflowError.isInstance(error)) {
           ctx.needsCompaction = true
-          yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+          yield* events.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
           return
         }
         if (!ctx.assistantMessage.summary) {
@@ -788,7 +771,7 @@ export const layer = Layer.effect(
           }
         }
         ctx.assistantMessage.error = error
-        yield* bus.publish(Session.Event.Error, {
+        yield* events.publish(Session.Event.Error, {
           sessionID: ctx.assistantMessage.sessionID,
           error: ctx.assistantMessage.error,
         })
@@ -798,26 +781,9 @@ export const layer = Layer.effect(
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         slog.info("process")
         ctx.needsCompaction = false
-        const cfg = yield* config.get()
-        ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
+        ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
         return yield* Effect.gen(function* () {
-          const contextLimit = input.model.limit.context
-          if (!ctx.assistantMessage.summary && cfg.compaction?.auto !== false && contextLimit > 0) {
-            const preStreamPayload = JSON.stringify([...(streamInput.system ?? []), ...streamInput.messages])
-            const preStreamTokens = Token.estimate(preStreamPayload)
-            const compactionThreshold = Math.floor(contextLimit * 0.85)
-            if (preStreamTokens >= compactionThreshold) {
-              ctx.needsCompaction = true
-              slog.info("proactive compaction triggered", {
-                estimatedTokens: preStreamTokens,
-                threshold: compactionThreshold,
-                contextLimit,
-              })
-              return "compact"
-            }
-          }
-
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
@@ -844,7 +810,6 @@ export const layer = Layer.effect(
             ),
             Effect.retry(
               SessionRetry.policy({
-                maxRetries: cfg.max_retries,
                 provider: input.model.providerID,
                 parse,
                 set: (info) => {
@@ -909,9 +874,9 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(SessionSummary.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
     Layer.provide(Image.defaultLayer),
-    Layer.provide(Bus.layer),
     Layer.provide(Config.defaultLayer),
     Layer.provide(RuntimeFlags.defaultLayer),
+    Layer.provide(Database.defaultLayer),
     Layer.provide(EventV2Bridge.defaultLayer),
   ),
 )

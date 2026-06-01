@@ -1,13 +1,14 @@
 import { Schema } from "effect"
 import { HttpApi } from "effect/unstable/httpapi"
-import { BusEvent } from "@/bus/bus-event"
-import { SyncEvent } from "@/sync"
+import { EventV2 } from "@opencode-ai/core/event"
+import { InstanceDisposed } from "@/server/event"
+import { Question } from "@/question"
+import { OperationEvent } from "@/ulm/event"
 import { ConfigApi } from "./groups/config"
 import { ControlApi } from "./groups/control"
 import { EventApi } from "./groups/event"
 import { ExperimentalApi } from "./groups/experimental"
 import { FileApi } from "./groups/file"
-import { GlobalApi } from "./groups/global"
 import { InstanceApi } from "./groups/instance"
 import { McpApi } from "./groups/mcp"
 import { PermissionApi } from "./groups/permission"
@@ -21,12 +22,43 @@ import { TuiApi } from "./groups/tui"
 import { UlmApi } from "./groups/ulm"
 import { WorkspaceApi } from "./groups/workspace"
 import { V2Api } from "./groups/v2"
+// GlobalEventSchema snapshots the registry after event-producing groups register their variants.
+import { GlobalApi } from "./groups/global"
 import { Authorization } from "./middleware/authorization"
 import { SchemaErrorMiddleware } from "./middleware/schema-error"
 
-// SSE event schemas built from the BusEvent/SyncEvent registries.
-const EventSchema = Schema.Union(BusEvent.effectPayloads()).annotate({ identifier: "Event" })
-const SyncEventSchemas = SyncEvent.effectPayloads()
+function busEventSchema(definition: { type: string; properties: Schema.Top }) {
+  return Schema.Struct({
+    id: Schema.String,
+    type: Schema.Literal(definition.type),
+    properties: definition.properties,
+  }).annotate({ identifier: `Event.${definition.type}` })
+}
+
+const EventSchema = Schema.Union([
+  ...EventV2.registry
+    .values()
+    .map((definition) =>
+      Schema.Struct({
+        id: Schema.String,
+        type: Schema.Literal(definition.type),
+        properties: definition.data,
+      }).annotate({ identifier: `Event.${definition.type}` }),
+    )
+    .toArray(),
+  busEventSchema(Question.Event.Asked),
+  busEventSchema(Question.Event.Replied),
+  busEventSchema(Question.Event.Rejected),
+  busEventSchema(OperationEvent.Updated),
+  InstanceDisposed,
+]).annotate({ identifier: "Event" })
+
+const AdditionalSchemas: Schema.Top[] = [
+  EventSchema,
+  Question.Replied,
+  Question.Rejected,
+  OperationEvent.Updated.properties,
+]
 
 export const RootHttpApi = HttpApi.make("opencode-root")
   .addHttpApi(ControlApi)
@@ -58,7 +90,7 @@ export const OpenCodeHttpApi = HttpApi.make("opencode")
   .addHttpApi(EventApi)
   .addHttpApi(InstanceHttpApi)
   .addHttpApi(PtyConnectApi)
-  .annotate(HttpApi.AdditionalSchemas, [EventSchema, ...SyncEventSchemas])
+  .annotate(HttpApi.AdditionalSchemas, AdditionalSchemas)
 
 export type RootHttpApiType = typeof RootHttpApi
 export type InstanceHttpApiType = typeof InstanceHttpApi

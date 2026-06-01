@@ -1,11 +1,12 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./task.txt"
 import { ToolJsonSchema } from "./json-schema"
-import { Bus } from "@/bus"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
+import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
 import { SessionStatus } from "@/session/status"
@@ -17,15 +18,17 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceState } from "@/effect/instance-state"
 import { summarizeRuntimeUsage, type RuntimeUsageMessage } from "@/ulm/artifact"
 import { containsRawCredentialSecret, credentialGuessingPolicyGaps } from "@/ulm/credential-safety"
-import { ModelID, ProviderID } from "@/provider/schema"
 import { readULMConfig, type ULMRuntimeConfig } from "@/ulm/config"
 import { assertLaneToolAllowed, LANE_GUARDED_TOOLS } from "@/ulm/lane-tool-guard"
+import { Database } from "@opencode-ai/core/database/database"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { EventV2Bridge } from "@/event-v2-bridge"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
   resolvePromptParts(template: string): Effect.Effect<SessionPrompt.PromptInput["parts"]>
-  prompt(input: SessionPrompt.PromptInput): Effect.Effect<MessageV2.WithParts>
-  loop(input: SessionPrompt.LoopInput): Effect.Effect<MessageV2.WithParts>
+  prompt(input: SessionPrompt.PromptInput): Effect.Effect<SessionLegacy.WithParts>
+  loop(input: SessionPrompt.LoopInput): Effect.Effect<SessionLegacy.WithParts>
 }
 
 const id = "task"
@@ -110,7 +113,7 @@ function modelFromRoute(route: string | undefined) {
   const [providerID, ...modelParts] = route.split("/")
   const modelID = modelParts.join("/")
   if (!providerID || !modelID) return undefined
-  return { providerID: ProviderID.make(providerID), modelID: ModelID.make(modelID) }
+  return { providerID: ProviderV2.ID.make(providerID), modelID: ProviderV2.ModelID.make(modelID) }
 }
 
 function laneChildToolOverrides(allowedTools: readonly string[] | undefined) {
@@ -131,7 +134,7 @@ function operationScopedTaskPrompt(params: Schema.Schema.Type<typeof Parameters>
   ].join("\n")
 }
 
-function runtimeUsageMessage(message: MessageV2.WithParts): RuntimeUsageMessage {
+function runtimeUsageMessage(message: SessionLegacy.WithParts): RuntimeUsageMessage {
   return {
     role: message.info.role,
     agent: message.info.agent,
@@ -148,7 +151,7 @@ function runtimeUsageMessage(message: MessageV2.WithParts): RuntimeUsageMessage 
   }
 }
 
-function latestToolActivity(messages: MessageV2.WithParts[]) {
+function latestToolActivity(messages: SessionLegacy.WithParts[]) {
   const times = messages.flatMap((message) =>
     message.parts.flatMap((part) => {
       if (part.type !== "tool") return []
@@ -182,13 +185,14 @@ export const TaskTool = Tool.define(
   id,
   Effect.gen(function* () {
     const agent = yield* Agent.Service
-    const bus = yield* Bus.Service
+    const events = yield* EventV2Bridge.Service
     const config = yield* Config.Service
     const sessions = yield* Session.Service
     const status = yield* SessionStatus.Service
     const jobs = yield* BackgroundJob.Service
     const scope = yield* Scope.Scope
     const flags = yield* RuntimeFlags.Service
+    const database = yield* Database.Service
 
     const run = Effect.fn("TaskTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -242,33 +246,20 @@ export const TaskTool = Tool.define(
         ? yield* sessions.get(SessionID.make(taskID)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
       const parent = yield* sessions.get(ctx.sessionID)
+      const parentAgent = parent.agent
+        ? yield* agent.get(parent.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        : undefined
       const nextSession =
         session ??
         (yield* sessions.create({
           parentID: ctx.sessionID,
           title: params.description + ` (@${next.name} subagent)`,
           permission: [
-            ...(parent.permission ?? []).filter(
-              (rule) => rule.permission === "external_directory" || rule.action === "deny",
-            ),
-            ...(canTodo
-              ? []
-              : [
-                  {
-                    permission: "todowrite" as const,
-                    pattern: "*" as const,
-                    action: "deny" as const,
-                  },
-                ]),
-            ...(canTask
-              ? []
-              : [
-                  {
-                    permission: id,
-                    pattern: "*" as const,
-                    action: "deny" as const,
-                  },
-                ]),
+            ...deriveSubagentSessionPermission({
+              parentSessionPermission: parent.permission ?? [],
+              parentAgent,
+              subagent: next,
+            }),
             ...(cfg.experimental?.primary_tools?.map((item) => ({
               pattern: "*",
               action: "allow" as const,
@@ -277,7 +268,10 @@ export const TaskTool = Tool.define(
           ],
         }))
 
-      const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+      const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
+        Effect.provideService(Database.Service, database),
+        Effect.orDie,
+      )
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
       const instanceCtx = yield* InstanceState.context.pipe(Effect.catch(() => Effect.succeed(undefined)))
 
@@ -378,7 +372,7 @@ export const TaskTool = Tool.define(
         for (;;) {
           yield* Effect.sleep("10 seconds")
           const messages = yield* sessions.messages({ sessionID: nextSession.id }).pipe(
-            Effect.catch(() => Effect.succeed<MessageV2.WithParts[]>([])),
+            Effect.catch(() => Effect.succeed<SessionLegacy.WithParts[]>([])),
           )
           const lastToolAt = latestToolActivity(messages)
           const reference = lastToolAt || startedAt
@@ -408,9 +402,9 @@ export const TaskTool = Tool.define(
           if ((input.attempts ?? 0) >= 60) return
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const idle = yield* bus.subscribe(SessionStatus.Event.Idle)
+              const idle = events.subscribe(SessionStatus.Event.Idle)
               yield* idle.pipe(
-                Stream.filter((event) => event.properties.sessionID === ctx.sessionID),
+                Stream.filter((event) => event.data.sessionID === ctx.sessionID),
                 Stream.take(1),
                 Stream.runDrain,
                 Effect.timeoutOption("1 second"),
@@ -424,7 +418,7 @@ export const TaskTool = Tool.define(
           .pipe(Effect.catch(() => Effect.succeed(Option.none())))
         if (Option.isNone(latest)) return
         if (latest.value.info.id !== input.userID) return
-        yield* bus.publish(TuiEvent.ToastShow, {
+        yield* events.publish(TuiEvent.ToastShow, {
           title: input.state === "completed" ? "Background task complete" : "Background task failed",
           message:
             input.state === "completed"
@@ -485,7 +479,7 @@ export const TaskTool = Tool.define(
             Effect.flatMap((text) =>
               Effect.gen(function* () {
                 const messages = yield* sessions.messages({ sessionID: nextSession.id }).pipe(
-                  Effect.catch(() => Effect.succeed<MessageV2.WithParts[]>([])),
+                  Effect.catch(() => Effect.succeed<SessionLegacy.WithParts[]>([])),
                 )
                 const runtimeMessages = messages.map((message) => ({
                   ...runtimeUsageMessage(message),

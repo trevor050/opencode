@@ -1126,7 +1126,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
               <Home />
             </Match>
             <Match when={route.data.type === "session"}>
-              <Session />
+              <Show when={route.data.type === "session" ? route.data.sessionID : undefined} keyed>
+                {(_) => <Session />}
+              </Show>
             </Match>
             <Match when={route.data.type === "ulmOperations"}>
               <UlmOperations />

@@ -25,11 +25,12 @@ import { useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { editorSelectionKey, useEditorContext, type EditorSelection } from "@tui/context/editor"
 import { MessageID, PartID } from "@/session/schema"
+import { promptOffsetWidth } from "@/cli/cmd/prompt-display"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { computePromptTraits } from "./traits"
-import { assign, expandPastedTextPlaceholders } from "./part"
-import * as Intercept from "./intercept"
+import { assign, expandPastedTextPlaceholders, expandTrackedPastedText } from "./part"
+import { dispatch } from "./intercept"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -61,7 +62,6 @@ import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { useArgs } from "@tui/context/args"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { type WorkspaceStatus } from "../workspace-label"
-import { expandPromptTextParts } from "./paste"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useLeaderActive, useOpencodeKeymap } from "../../keymap"
 import { useTuiConfig } from "../../context/tui-config"
 
@@ -1111,13 +1111,14 @@ export function Prompt(props: PromptProps) {
     }
 
     const messageID = MessageID.ascending()
-
-    // Expand pasted text inline before submitting
-    const inputText = expandPromptTextParts(
+    const inputText = expandTrackedPastedText(
       store.prompt.input,
-      input.extmarks.getAllForTypeId(promptPartTypeId),
-      store.extmarkToPartIndex,
-      store.prompt.parts,
+      input.extmarks.getAllForTypeId(promptPartTypeId).flatMap((extmark) => {
+        const partIndex = store.extmarkToPartIndex.get(extmark.id)
+        const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
+        if (part?.type !== "text") return []
+        return [{ start: extmark.start, end: extmark.end, text: part.text }]
+      }),
     )
 
     // Filter out text parts (pasted content) since they're now expanded inline
@@ -1235,9 +1236,9 @@ export function Prompt(props: PromptProps) {
   const exit = useExit()
 
   function pasteText(text: string, virtualText: string) {
-    const currentOffset = input.visualCursor.offset
+    const currentOffset = input.cursorOffset
     const extmarkStart = currentOffset
-    const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
+    const extmarkEnd = extmarkStart + promptOffsetWidth(virtualText)
 
     input.insertText(virtualText + " ")
 
@@ -1329,7 +1330,7 @@ export function Prompt(props: PromptProps) {
   }
 
   async function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
-    const currentOffset = input.visualCursor.offset
+    const currentOffset = input.cursorOffset
     const extmarkStart = currentOffset
     const pdf = file.mime === "application/pdf"
     const count = store.prompt.parts.filter((x) => {
@@ -1338,7 +1339,7 @@ export function Prompt(props: PromptProps) {
       return x.mime.startsWith("image/")
     }).length
     const virtualText = pdf ? `[PDF ${count + 1}]` : `[Image ${count + 1}]`
-    const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
+    const extmarkEnd = extmarkStart + virtualText.length
     const textToInsert = virtualText + " "
 
     input.insertText(textToInsert)
@@ -1516,7 +1517,7 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                if (Intercept.dispatch(e as unknown as Parameters<typeof Intercept.dispatch>[0], input)) {
+                if (dispatch(e as unknown as Parameters<typeof dispatch>[0], input)) {
                   e.preventDefault()
                   return
                 }

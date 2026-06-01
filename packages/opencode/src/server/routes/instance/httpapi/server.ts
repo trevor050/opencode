@@ -13,7 +13,6 @@ import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
-import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Command } from "@/command"
 import * as Observability from "@opencode-ai/core/effect/observability"
@@ -46,10 +45,9 @@ import { Todo } from "@/session/todo"
 import { SessionShare } from "@/share/session"
 import { ShareNext } from "@/share/share-next"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { Database } from "@opencode-ai/core/database/database"
 import { Skill } from "@/skill"
 import { Snapshot } from "@/snapshot"
-import { Storage } from "@/storage/storage"
-import { SyncEvent } from "@/sync"
 import { ToolRegistry } from "@/tool/registry"
 import { lazy } from "@/util/lazy"
 import { Vcs } from "@/project/vcs"
@@ -195,8 +193,9 @@ export function createRoutes(
       errorLayer,
       compressionLayer,
       corsVaryFix,
-      fenceLayer,
+      fenceLayer.pipe(Layer.provide(Database.defaultLayer)),
       cors(corsOptions),
+      Database.defaultLayer,
       Account.defaultLayer,
       Agent.defaultLayer,
       Auth.defaultLayer,
@@ -229,8 +228,6 @@ export function createRoutes(
       SessionSummary.defaultLayer,
       ShareNext.defaultLayer,
       Snapshot.defaultLayer,
-      Storage.defaultLayer,
-      SyncEvent.defaultLayer,
       EventV2Bridge.defaultLayer,
       Skill.defaultLayer,
       Todo.defaultLayer,
@@ -238,7 +235,6 @@ export function createRoutes(
       Vcs.defaultLayer,
       Workspace.defaultLayer,
       Worktree.appLayer,
-      Bus.layer,
       AppFileSystem.defaultLayer,
       FetchHttpClient.layer,
       HttpServer.layerServices,
@@ -246,7 +242,7 @@ export function createRoutes(
     Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
     Layer.provide(InstanceLayer.layer),
     Layer.provide(Observability.layer),
-  )
+  ) as Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements>
 }
 
 export const routes = createRoutes()
