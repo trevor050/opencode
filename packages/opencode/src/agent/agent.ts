@@ -1,3 +1,4 @@
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Config } from "@/config/config"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { Provider } from "@/provider/provider"
@@ -19,7 +20,6 @@ import PROMPT_ULM_RECON from "./prompt/recon.txt"
 import PROMPT_ULM_REPORT_REVIEWER from "./prompt/report-reviewer.txt"
 import PROMPT_ULM_REPORT_WRITER from "./prompt/report-writer.txt"
 import PROMPT_ULM_VALIDATOR from "./prompt/validator.txt"
-import PROMPT_SCOUT from "./prompt/scout.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
@@ -30,7 +30,6 @@ import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 import { Effect, Context, Layer, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
-import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { type DeepMutable } from "@opencode-ai/core/schema"
@@ -45,7 +44,7 @@ export const Info = Schema.Struct({
   topP: Schema.optional(Schema.Finite),
   temperature: Schema.optional(Schema.Finite),
   color: Schema.optional(Schema.String),
-  permission: Permission.Ruleset,
+  permission: PermissionV1.Ruleset,
   model: Schema.optional(
     Schema.Struct({
       modelID: ProviderV2.ModelID,
@@ -97,7 +96,6 @@ export const layer = Layer.effect(
     const plugin = yield* Plugin.Service
     const skill = yield* Skill.Service
     const provider = yield* Provider.Service
-    const flags = yield* RuntimeFlags.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Agent.state")(function* (ctx) {
@@ -123,8 +121,6 @@ export const layer = Layer.effect(
           question: "deny",
           plan_enter: "deny",
           plan_exit: "deny",
-          repo_clone: "deny",
-          repo_overview: "deny",
           // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
           read: {
             "*": "allow",
@@ -390,36 +386,6 @@ export const layer = Layer.effect(
             native: true,
             color: "purple",
           },
-          ...(flags.experimentalScout
-            ? {
-                scout: {
-                  name: "scout",
-                  permission: Permission.merge(
-                    defaults,
-                    Permission.fromConfig({
-                      "*": "deny",
-                      grep: "allow",
-                      glob: "allow",
-                      webfetch: "allow",
-                      websearch: "allow",
-                      read: "allow",
-                      repo_clone: "allow",
-                      repo_overview: "allow",
-                      external_directory: {
-                        ...readonlyExternalDirectory,
-                        [path.join(Global.Path.repos, "*")]: "allow",
-                      },
-                    }),
-                    user,
-                  ),
-                  description: `Docs and dependency-source specialist. Use this when you need to inspect external documentation, clone dependency repositories into the managed cache, and research library implementation details without modifying the user's workspace.`,
-                  prompt: PROMPT_SCOUT,
-                  options: {},
-                  mode: "subagent" as const,
-                  native: true,
-                },
-              }
-            : {}),
           compaction: {
             name: "compaction",
             mode: "primary",
@@ -648,7 +614,6 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Auth.defaultLayer),
   Layer.provide(Config.defaultLayer),
   Layer.provide(Skill.defaultLayer),
-  Layer.provide(RuntimeFlags.defaultLayer),
 )
 
 export * as Agent from "./agent"

@@ -5,15 +5,7 @@ import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell } f
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
-import type {
-  InitStep,
-  FatalRendererError,
-  ServerReadyData,
-  SqliteMigrationProgress,
-  TitlebarTheme,
-  WindowConfig,
-  WslConfig,
-} from "../preload/types"
+import type { FatalRendererError, ServerReadyData, TitlebarTheme, WindowConfig, WslConfig } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -65,7 +57,7 @@ async function listArtifactFiles(root: string, dir = root, depth = 0): Promise<s
 
 type Deps = {
   killSidecar: () => Promise<void> | void
-  awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
+  awaitInitialization: () => Promise<ServerReadyData>
   getWindowConfig: () => Promise<WindowConfig> | WindowConfig
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
@@ -79,7 +71,6 @@ type Deps = {
   checkAppExists: (appName: string) => Promise<boolean> | boolean
   wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
-  loadingWindowComplete: () => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void> | void
@@ -90,10 +81,7 @@ type Deps = {
 
 export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
-  ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
-    const send = (step: InitStep) => event.sender.send("init-step", step)
-    return deps.awaitInitialization(send)
-  })
+  ipcMain.handle("await-initialization", () => deps.awaitInitialization())
   ipcMain.handle("get-window-config", () => deps.getWindowConfig())
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
@@ -153,7 +141,6 @@ export function registerIpcHandlers(deps: Deps) {
     deps.wslPath(path, mode),
   )
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
-  ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
   ipcMain.handle("check-update", () => deps.checkUpdate())
   ipcMain.handle("install-update", () => deps.installUpdate())
@@ -298,10 +285,6 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("run-desktop-menu-action", (event: IpcMainInvokeEvent, action: DesktopMenuAction) => {
     runDesktopMenuAction(BrowserWindow.fromWebContents(event.sender), action)
   })
-}
-
-export function sendSqliteMigrationProgress(win: BrowserWindow, progress: SqliteMigrationProgress) {
-  win.webContents.send("sqlite-migration-progress", progress)
 }
 
 export function sendMenuCommand(win: BrowserWindow, id: string) {

@@ -2,7 +2,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./task_status.txt"
 import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
-import { SessionLegacy } from "@opencode-ai/core/session/legacy"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionStatus } from "@/session/status"
 import { PositiveInt } from "@/util/schema"
 import { BackgroundJob } from "@/background/job"
@@ -39,7 +39,7 @@ function format(input: { taskID: SessionID; state: State; text: string }) {
   return [`task_id: ${input.taskID}`, `state: ${input.state}`, "", `<${tag}>`, input.text, `</${tag}>`].join("\n")
 }
 
-function errorText(error: NonNullable<SessionLegacy.Assistant["error"]>) {
+function errorText(error: NonNullable<SessionV1.Assistant["error"]>) {
   const data = Reflect.get(error, "data")
   const message = data && typeof data === "object" ? Reflect.get(data, "message") : undefined
   if (typeof message === "string" && message) return message

@@ -1,7 +1,8 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./task.txt"
 import { ToolJsonSchema } from "./json-schema"
-import { SessionLegacy } from "@opencode-ai/core/session/legacy"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
@@ -11,7 +12,6 @@ import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
 import { SessionStatus } from "@/session/status"
 import { TuiEvent } from "@/cli/cmd/tui/event"
-import { BackgroundJob } from "@/background/job"
 import { Cause, Effect, Exit, Option, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -27,8 +27,8 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
   resolvePromptParts(template: string): Effect.Effect<SessionPrompt.PromptInput["parts"]>
-  prompt(input: SessionPrompt.PromptInput): Effect.Effect<SessionLegacy.WithParts>
-  loop(input: SessionPrompt.LoopInput): Effect.Effect<SessionLegacy.WithParts>
+  prompt(input: SessionPrompt.PromptInput): Effect.Effect<SessionV1.WithParts>
+  loop(input: SessionPrompt.LoopInput): Effect.Effect<SessionV1.WithParts>
 }
 
 const id = "task"
@@ -92,7 +92,23 @@ function backgroundOutput(sessionID: SessionID) {
   ].join("\n")
 }
 
-function backgroundMessage(input: { sessionID: SessionID; description: string; state: "completed" | "error"; text: string }) {
+function backgroundUpdateOutput(sessionID: SessionID) {
+  return [
+    `<task id="${sessionID}" state="running">`,
+    "<summary>Background task updated</summary>",
+    "<task_result>",
+    "Additional context sent to the background task.",
+    "</task_result>",
+    "</task>",
+  ].join("\n")
+}
+
+function backgroundMessage(input: {
+  sessionID: SessionID
+  description: string
+  state: "completed" | "error"
+  text: string
+}) {
   const tag = input.state === "completed" ? "task_result" : "task_error"
   const title =
     input.state === "completed"
@@ -134,7 +150,7 @@ function operationScopedTaskPrompt(params: Schema.Schema.Type<typeof Parameters>
   ].join("\n")
 }
 
-function runtimeUsageMessage(message: SessionLegacy.WithParts): RuntimeUsageMessage {
+function runtimeUsageMessage(message: SessionV1.WithParts): RuntimeUsageMessage {
   return {
     role: message.info.role,
     agent: message.info.agent,
@@ -151,7 +167,7 @@ function runtimeUsageMessage(message: SessionLegacy.WithParts): RuntimeUsageMess
   }
 }
 
-function latestToolActivity(messages: SessionLegacy.WithParts[]) {
+function latestToolActivity(messages: SessionV1.WithParts[]) {
   const times = messages.flatMap((message) =>
     message.parts.flatMap((part) => {
       if (part.type !== "tool") return []
@@ -323,7 +339,7 @@ export const TaskTool = Tool.define(
       const noToolTimeoutMs = ulmConfig.agent_no_tool_timeout_seconds
         ? ulmConfig.agent_no_tool_timeout_seconds * 1000
         : undefined
-      if ((yield* jobs.get(nextSession.id))?.status === "running") {
+      if (!background && (yield* jobs.get(nextSession.id))?.status === "running") {
         return yield* Effect.fail(new Error(`Task ${nextSession.id} is already running`))
       }
       const metadata = {
@@ -372,7 +388,7 @@ export const TaskTool = Tool.define(
         for (;;) {
           yield* Effect.sleep("10 seconds")
           const messages = yield* sessions.messages({ sessionID: nextSession.id }).pipe(
-            Effect.catch(() => Effect.succeed<SessionLegacy.WithParts[]>([])),
+            Effect.catch(() => Effect.succeed<SessionV1.WithParts[]>([])),
           )
           const lastToolAt = latestToolActivity(messages)
           const reference = lastToolAt || startedAt
@@ -453,6 +469,18 @@ export const TaskTool = Tool.define(
           yield* resumeParent({ userID: message.info.id, state }).pipe(Effect.ignore, Effect.forkIn(scope))
         })
 
+        if (yield* jobs.extend({ id: nextSession.id, run: guardedRunTask() })) {
+          return {
+            title: params.description,
+            metadata: {
+              ...metadata,
+              background: true,
+              jobId: nextSession.id,
+            },
+            output: backgroundUpdateOutput(nextSession.id),
+          }
+        }
+
         const worktree = instanceCtx?.worktree
         yield* jobs.start({
           id: nextSession.id,
@@ -479,7 +507,7 @@ export const TaskTool = Tool.define(
             Effect.flatMap((text) =>
               Effect.gen(function* () {
                 const messages = yield* sessions.messages({ sessionID: nextSession.id }).pipe(
-                  Effect.catch(() => Effect.succeed<SessionLegacy.WithParts[]>([])),
+                  Effect.catch(() => Effect.succeed<SessionV1.WithParts[]>([])),
                 )
                 const runtimeMessages = messages.map((message) => ({
                   ...runtimeUsageMessage(message),

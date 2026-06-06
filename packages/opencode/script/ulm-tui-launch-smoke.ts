@@ -2,7 +2,7 @@
 
 import path from "path"
 import { fileURLToPath } from "url"
-import { spawn } from "../src/pty/pty.bun"
+import { spawn } from "@opencode-ai/core/pty/pty.bun"
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
 const timeoutMs = Number.parseInt(Bun.argv.find((arg) => arg.startsWith("--timeout-ms="))?.split("=")[1] ?? "15000", 10)

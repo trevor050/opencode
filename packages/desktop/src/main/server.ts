@@ -7,14 +7,12 @@ import { getSidecarEnvDefaults } from "./branding"
 import { DEFAULT_SERVER_URL_KEY, WSL_ENABLED_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
-import type { SqliteMigrationProgress } from "../preload/types"
 
 export type WslConfig = { enabled: boolean }
 
 export type HealthCheck = { wait: Promise<void> }
 
 type SidecarMessage =
-  | { type: "sqlite"; progress: SqliteMigrationProgress }
   | { type: "ready" }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
@@ -26,9 +24,7 @@ const SIDECAR_START_STALL_TIMEOUT = 60_000
 const SIDECAR_STOP_TIMEOUT = 6_000
 
 type SpawnLocalServerOptions = {
-  needsMigration: boolean
   userDataPath: string
-  onSqliteProgress?: (progress: SqliteMigrationProgress) => void
   onStdout?: (message: string) => void
   onStderr?: (message: string) => void
   onExit?: (code: number) => void
@@ -122,11 +118,6 @@ export async function spawnLocalServer(
     }
 
     const onMessage = (message: SidecarMessage) => {
-      if (message.type === "sqlite") {
-        refreshTimeout()
-        options.onSqliteProgress?.(message.progress)
-        return
-      }
       if (message.type === "ready") {
         if (done) return
         done = true
@@ -156,7 +147,6 @@ export async function spawnLocalServer(
       port,
       password,
       userDataPath: options.userDataPath,
-      needsMigration: options.needsMigration,
     })
   }).catch((error) => {
     if (!exited) child.kill()
