@@ -4,9 +4,10 @@ import { homedir } from "node:os"
 import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
 import { getSidecarEnvDefaults } from "./branding"
-import { DEFAULT_SERVER_URL_KEY } from "./constants"
+import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
+import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -42,16 +43,16 @@ export function setDefaultServerUrl(url: string | null) {
   getStore().delete(DEFAULT_SERVER_URL_KEY)
 }
 
-export function preferAppEnv(userDataPath: string) {
+export function preferAppEnv(_userDataPath: string) {
   const shell = process.platform === "win32" ? null : getUserShell()
-  const shellEnv = shell ? (loadShellEnv(shell) ?? {}) : {}
+  const shellEnv = shell ? (loadShellEnv(shell, getLogger()) ?? {}) : {}
+  const ulmEnv = getSidecarEnvDefaults(homedir(), { ...process.env, ...shellEnv })
   Object.assign(process.env, {
     ...shellEnv,
-    ...getSidecarEnvDefaults(homedir(), { ...process.env, ...shellEnv }),
+    ...ulmEnv,
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_CLIENT: "desktop",
-    XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
   })
 }
 

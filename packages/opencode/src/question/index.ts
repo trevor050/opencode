@@ -1,19 +1,21 @@
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Deferred, Effect, Layer, Schema, Context } from "effect"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID, MessageID } from "@/session/schema"
-import * as Log from "@opencode-ai/core/util/log"
 import { QuestionID } from "./schema"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
 import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
 import { readULMConfig } from "@/ulm/config"
 
-const log = Log.create({ service: "question" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
 export const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
-// Schemas
+// Schemas — these are pure data; nothing checks class identity (see PR
+// description) so they're plain `Schema.Struct` + type alias. That lets
+// `Question.ask` and other internal sites trust the type contract without a
+// re-decode to coerce nested class instances.
 
 export class Option extends Schema.Class<Option>("QuestionOption")({
   label: Schema.String.annotate({
@@ -175,7 +177,7 @@ export const layer = Layer.effect(
     }) {
       const pending = (yield* InstanceState.get(state)).pending
       const id = QuestionID.ascending()
-      log.info("asking", { id, questions: input.questions.length })
+      yield* Effect.logInfo("asking", { id, questions: input.questions.length })
 
       const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
       const ctx = yield* InstanceState.context
@@ -256,11 +258,11 @@ export const layer = Layer.effect(
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
       if (!existing) {
-        log.warn("reply for unknown request", { requestID: input.requestID })
+        yield* Effect.logWarning("reply for unknown request", { requestID: input.requestID })
         return yield* new NotFoundError({ requestID: input.requestID })
       }
       pending.delete(input.requestID)
-      log.info("replied", { requestID: input.requestID, answers: input.answers })
+      yield* Effect.logInfo("replied", { requestID: input.requestID, answers: input.answers })
       yield* bus.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
@@ -273,11 +275,11 @@ export const layer = Layer.effect(
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(requestID)
       if (!existing) {
-        log.warn("reject for unknown request", { requestID })
+        yield* Effect.logWarning("reject for unknown request", { requestID })
         return yield* new NotFoundError({ requestID })
       }
       pending.delete(requestID)
-      log.info("rejected", { requestID })
+      yield* Effect.logInfo("rejected", { requestID })
       yield* bus.publish(Event.Rejected, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
@@ -322,5 +324,9 @@ export const layer = Layer.effect(
 )
 
 export const defaultLayer = layer.pipe(Layer.provide(Bus.layer))
+
+const busNode = LayerNode.make(Bus.layer, [])
+
+export const node = LayerNode.make(layer, [busNode])
 
 export * as Question from "."

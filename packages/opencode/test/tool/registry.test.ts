@@ -27,11 +27,9 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Bus } from "@/bus"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Format } from "@/format"
-import { Ripgrep } from "@opencode-ai/core/filesystem/ripgrep"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import * as Truncate from "@/tool/truncate"
 import { InstanceState } from "@/effect/instance-state"
-import { Reference } from "@/reference/reference"
-import { RepositoryCache } from "@/reference/repository-cache"
 
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { MessageID, SessionID } from "@/session/schema"
@@ -61,8 +59,7 @@ const registryLayer = (opts: RegistryLayerOptions = {}) =>
       Layer.provide(Session.defaultLayer),
       Layer.provide(Layer.mergeAll(SessionStatus.defaultLayer, BackgroundJob.defaultLayer)),
       Layer.provide(Provider.defaultLayer),
-      Layer.provide(Layer.mergeAll(Git.defaultLayer, RepositoryCache.defaultLayer)),
-      Layer.provide(Reference.defaultLayer),
+      Layer.provide(Git.defaultLayer),
       Layer.provide(LSP.defaultLayer),
       Layer.provide(Instruction.defaultLayer),
     )

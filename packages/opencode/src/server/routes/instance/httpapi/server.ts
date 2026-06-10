@@ -16,8 +16,8 @@ import { Auth } from "@/auth"
 import { BackgroundJob } from "@/background/job"
 import { Config } from "@/config/config"
 import { Command } from "@/command"
-import * as Observability from "@opencode-ai/core/effect/observability"
-import { Ripgrep } from "@opencode-ai/core/filesystem/ripgrep"
+import * as Observability from "@opencode-ai/core/observability"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Format } from "@/format"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LSP } from "@/lsp/lsp"
@@ -61,13 +61,13 @@ import { serveUIEffect } from "@/server/shared/ui"
 import { ulmCredentialVaultRoute } from "@/server/shared/ulm-credential-vault"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
-import { V2Api } from "@opencode-ai/server/api"
+import { Api } from "@opencode-ai/server/api"
 import { PublicApi } from "./public"
 import {
   authorizationLayer,
   authorizationRouterMiddleware,
   ptyConnectAuthorizationLayer,
-  v2AuthorizationLayer,
+  serverAuthorizationLayer,
 } from "./middleware/authorization"
 import { EventApi } from "./groups/event"
 import { PtyConnectApi } from "./groups/pty"
@@ -90,7 +90,7 @@ import { sessionHandlers } from "./handlers/session"
 import { syncHandlers } from "./handlers/sync"
 import { tuiHandlers } from "./handlers/tui"
 import { ulmHandlers } from "./handlers/ulm"
-import { v2Handlers } from "@opencode-ai/server/handlers"
+import { handlers } from "@opencode-ai/server/handlers"
 import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/middleware/schema-error"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
@@ -123,7 +123,7 @@ const cors = (corsOptions?: CorsOptions) =>
 const authOnlyRouterLayer = authorizationRouterMiddleware.layer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))
 const httpApiAuthLayer = authorizationLayer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))
 const ptyConnectHttpApiAuthLayer = ptyConnectAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))
-const v2HttpApiAuthLayer = v2AuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))
+const serverHttpApiAuthLayer = serverAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))
 const workspaceRoutingLive = workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal))
 const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
   Layer.provide([controlHandlers, controlPlaneHandlers, globalHandlers]),
@@ -162,9 +162,9 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
 const instanceRoutes = Layer.mergeAll(ulmCredentialVaultRoute, instanceApiRoutes).pipe(
   Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
 )
-const v2Routes = HttpApiBuilder.layer(V2Api).pipe(
-  Layer.provide(v2Handlers),
-  Layer.provide([v2HttpApiAuthLayer, v2SchemaErrorLayer]),
+const serverRoutes = HttpApiBuilder.layer(Api).pipe(
+  Layer.provide(handlers),
+  Layer.provide([serverHttpApiAuthLayer, v2SchemaErrorLayer]),
 )
 
 // `OpenApi.fromApi` is non-trivial; defer until /doc is actually hit so
@@ -204,7 +204,7 @@ export function createRoutes(
     eventApiRoutes,
     ptyConnectApiRoutes,
     instanceRoutes,
-    v2Routes,
+    serverRoutes,
     docRoute,
     uiRoute,
   ).pipe(
@@ -237,7 +237,6 @@ export function createRoutes(
       Provider.defaultLayer,
       PtyTicket.defaultLayer,
       Question.defaultLayer,
-      Ripgrep.defaultLayer,
       RuntimeFlags.defaultLayer,
       Session.defaultLayer,
       SessionCompaction.defaultLayer,
@@ -262,8 +261,9 @@ export function createRoutes(
       HttpServer.layerServices,
     ]),
     Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
+    Layer.provideMerge(Ripgrep.defaultLayer),
     Layer.provide(InstanceLayer.layer),
-    Layer.provide(Observability.layer),
+    Layer.provideMerge(Observability.layer),
   ) as Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements>
 }
 

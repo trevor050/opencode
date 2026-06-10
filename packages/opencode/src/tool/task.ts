@@ -43,14 +43,14 @@ const BACKGROUND_DESCRIPTION = [
 const BACKGROUND_STARTED = [
   "state: running",
   "The task is working in the background. You will be notified automatically when it finishes.",
-  "Do not poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
+  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
   "Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
 ].join("\n")
 const BACKGROUND_UPDATED = [
   "state: running",
   "Additional context sent to the running background task.",
   "The task is still working in the background. You will be notified automatically when it finishes.",
-  "Do not poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
+  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
   "Work on non-overlapping tasks, or briefly tell the user what you sent and end your response.",
 ].join("\n")
 
@@ -80,7 +80,8 @@ const BaseParameters = Schema.Struct({
 export const Parameters = Schema.Struct({
   ...BaseParameters.fields,
   background: Schema.optional(Schema.Boolean).annotate({
-    description: "When true, launch the subagent in the background and return immediately.",
+    description:
+      "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
   }),
 })
 
@@ -244,6 +245,24 @@ export const TaskTool = Tool.define(
       const parentAgent = parent.agent
         ? yield* agent.get(parent.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
+      const childPermission = deriveSubagentSessionPermission({
+        parentSessionPermission: parent.permission ?? [],
+        parentAgent,
+        subagent: next,
+      })
+      const childToolDenies = [
+        ...(next.permission.some((rule) => rule.permission === "todowrite")
+          ? []
+          : [{ permission: "todowrite" as const, pattern: "*" as const, action: "deny" as const }]),
+        ...(next.permission.some((rule) => rule.permission === id)
+          ? []
+          : [{ permission: id, pattern: "*" as const, action: "deny" as const }]),
+        ...(cfg.experimental?.primary_tools?.map((permission) => ({
+          permission,
+          pattern: "*" as const,
+          action: "deny" as const,
+        })) ?? []),
+      ]
       const nextSession =
         session ??
         (yield* sessions.create({
@@ -251,16 +270,14 @@ export const TaskTool = Tool.define(
           title: params.description + ` (@${next.name} subagent)`,
           agent: next.name,
           permission: [
-            ...deriveSubagentSessionPermission({
-              parentSessionPermission: parent.permission ?? [],
-              parentAgent,
-              subagent: next,
-            }),
-            ...(cfg.experimental?.primary_tools?.map((item) => ({
-              pattern: "*",
-              action: "allow" as const,
-              permission: item,
-            })) ?? []),
+            ...childPermission,
+            ...childToolDenies.filter(
+              (deny) =>
+                !childPermission.some(
+                  (rule) =>
+                    rule.permission === deny.permission && rule.pattern === deny.pattern && rule.action === deny.action,
+                ),
+            ),
           ],
         }))
 

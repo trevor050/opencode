@@ -1,429 +1,126 @@
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { BackgroundJob as CoreBackgroundJob } from "@opencode-ai/core/background-job"
 import { InstanceState } from "@/effect/instance-state"
-import { Identifier } from "@/id/id"
-import { Storage } from "@/storage/storage"
-import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, SynchronizedRef } from "effect"
+import { Context, Effect, Layer } from "effect"
+import * as Storage from "@/storage/storage"
 
-export type Status = "running" | "completed" | "error" | "cancelled" | "stale"
+export type Status = CoreBackgroundJob.Status | "stale"
 
-export type Info = {
-  id: string
-  type: string
-  title?: string
+export type Info = Omit<CoreBackgroundJob.Info, "status" | "started_at" | "completed_at"> & {
   status: Status
+  started_at?: number
+  completed_at?: number
   startedAt: number
   completedAt?: number
-  output?: string
-  error?: string
-  metadata?: Record<string, unknown>
 }
 
-type Active = {
-  info: Info
-  done: Deferred.Deferred<Info>
-  scope: Scope.Closeable
-  token: object
-  pending: number
-  next: number
-  output?: { sequence: number; text: string }
-  tail: Deferred.Deferred<void>
-  promoted: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
-}
-
-type State = {
-  jobs: SynchronizedRef.SynchronizedRef<Map<string, Active>>
-  scope: Scope.Scope
-}
-
-type FinishResult = {
-  info?: Info
-  done?: Deferred.Deferred<Info>
-  scope?: Scope.Closeable
-}
-
-type PromoteResult = {
-  info?: Info
-  promoted?: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
-}
-
-type ExtendResult =
-  | { extended: false }
-  | {
-      extended: true
-      previous: Deferred.Deferred<void>
-      scope: Scope.Closeable
-      tail: Deferred.Deferred<void>
-      token: object
-      sequence: number
-    }
-
-export type StartInput = {
-  id?: string
-  type: string
-  title?: string
-  metadata?: Record<string, unknown>
-  onPromote?: Effect.Effect<void>
-  run: Effect.Effect<string, unknown>
-}
-
-export type ExtendInput = {
-  id: string
-  run: Effect.Effect<string, unknown>
-}
-
-export type WaitInput = {
-  id: string
-  timeout?: number
-}
-
-export type WaitResult = {
-  info?: Info
-  timedOut: boolean
-}
+export type StartInput = CoreBackgroundJob.StartInput
+export type ExtendInput = CoreBackgroundJob.ExtendInput
+export type WaitInput = CoreBackgroundJob.WaitInput
+export type WaitResult = Omit<CoreBackgroundJob.WaitResult, "info"> & { info?: Info }
 
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: string) => Effect.Effect<Info | undefined>
-  readonly updateMetadata: (id: string, metadata: Record<string, unknown>) => Effect.Effect<Info | undefined>
   readonly start: (input: StartInput) => Effect.Effect<Info>
   readonly extend: (input: ExtendInput) => Effect.Effect<boolean>
   readonly wait: (input: WaitInput) => Effect.Effect<WaitResult>
   readonly waitForPromotion: (id: string) => Effect.Effect<Info>
   readonly promote: (id: string) => Effect.Effect<Info | undefined>
   readonly cancel: (id: string) => Effect.Effect<Info | undefined>
+  readonly updateMetadata: (id: string, metadata: Record<string, unknown>) => Effect.Effect<Info | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/BackgroundJob") {}
 
-const STORAGE_PREFIX = ["background_job"] as const
-
-function snapshot(job: Active): Info {
-  return {
-    ...job.info,
-    ...(job.info.metadata ? { metadata: { ...job.info.metadata } } : {}),
-  }
-}
-
-function orphaned(info: Info): Info {
-  if (info.status !== "running") return info
+function adapt(info: CoreBackgroundJob.Info, extra?: Record<string, unknown>): Info {
+  const metadata = { ...(info.metadata ?? {}), ...(extra ?? {}) }
   return {
     ...info,
-    status: "stale",
-    error: info.error ?? "Task was persisted as running, but the process lost its running fiber.",
-    ...(info.metadata ? { metadata: { ...info.metadata } } : {}),
+    metadata,
+    startedAt: info.started_at,
+    ...(info.completed_at === undefined ? {} : { completedAt: info.completed_at }),
   }
 }
 
-function errorText(error: unknown) {
-  if (error instanceof Error) return error.message
-  return String(error)
+function storageKey(id: string) {
+  return ["background_job", id]
 }
 
-const live = Layer.effect(
+/** Keeps the legacy service instance-scoped while sharing the core registry engine. */
+export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.effect(
   Service,
-  Effect.gen(function* () {
-    const state = yield* InstanceState.make<State>(
-      Effect.fn("BackgroundJob.state")(function* () {
-        return {
-          jobs: yield* SynchronizedRef.make(new Map<string, Active>()),
-          scope: yield* Scope.Scope,
-        }
-      }),
-    )
+  Effect.scoped(Effect.gen(function* () {
     const storage = yield* Storage.Service
-
-    const persist = Effect.fn("BackgroundJob.persist")(function* (info: Info) {
-      yield* storage.write([...STORAGE_PREFIX, info.id], info).pipe(Effect.ignore)
-    })
-
-    const getPersisted = Effect.fn("BackgroundJob.getPersisted")(function* (id: string) {
-      return yield* storage.read<Info>([...STORAGE_PREFIX, id]).pipe(Effect.catch(() => Effect.succeed(undefined)))
-    })
-
-    const listPersisted = Effect.fn("BackgroundJob.listPersisted")(function* () {
-      const keys = yield* storage.list([...STORAGE_PREFIX]).pipe(Effect.catch(() => Effect.succeed<string[][]>([])))
-      const jobs = yield* Effect.all(
-        keys.map((key) => storage.read<Info>(key).pipe(Effect.catch(() => Effect.succeed(undefined)))),
-      )
-      return jobs.filter((job): job is Info => job !== undefined)
-    })
-
-    const settle = Effect.fn("BackgroundJob.settle")(function* (
-      id: string,
-      token: object,
-      sequence: number,
-      exit: Exit.Exit<string, unknown>,
-    ) {
-      const completedAt = yield* Clock.currentTimeMillis
-      const s = yield* InstanceState.get(state)
-      const result = yield* SynchronizedRef.modify(s.jobs, (jobs): readonly [FinishResult, Map<string, Active>] => {
-        const job = jobs.get(id)
-        if (!job) return [{}, jobs]
-        if (job.token !== token) return [{}, jobs]
-        if (job.info.status !== "running") return [{ info: snapshot(job) }, jobs]
-        const pending = job.pending - 1
-        const output =
-          Exit.isSuccess(exit) && (!job.output || sequence > job.output.sequence)
-            ? { sequence, text: exit.value }
-            : job.output
-        if (Exit.isSuccess(exit) && pending > 0) {
-          return [{}, new Map(jobs).set(id, { ...job, pending, output })]
-        }
-        const status: Exclude<Status, "running" | "stale"> = Exit.isSuccess(exit)
-          ? "completed"
-          : Cause.hasInterruptsOnly(exit.cause)
-            ? "cancelled"
-            : "error"
-        const next = {
-          ...job,
-          onPromote: undefined,
-          pending: 0,
-          output,
-          info: {
-            ...job.info,
-            status,
-            completedAt,
-            ...(output ? { output: output.text } : {}),
-            ...(Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : {}),
-          },
-        }
-        return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+    const state = yield* InstanceState.make(() => CoreBackgroundJob.make)
+    const readStored = (id: string) =>
+      storage.read<Info>(storageKey(id)).pipe(Effect.catch(() => Effect.succeed(undefined)))
+    const writeStored = (info: Info) =>
+      storage.write(storageKey(info.id), info).pipe(Effect.as(info), Effect.catch(() => Effect.succeed(info)))
+    const withStored = (info: CoreBackgroundJob.Info) =>
+      Effect.gen(function* () {
+        const stored = yield* readStored(info.id)
+        return adapt(info, stored?.metadata)
       })
-      if (result.info) yield* persist(result.info)
-      if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
-      if (result.scope) {
-        yield* Scope.close(result.scope, Exit.void).pipe(Effect.forkIn(s.scope, { startImmediately: true }))
-      }
-      return result.info
-    })
+    const saveLive = (info: CoreBackgroundJob.Info) => withStored(info).pipe(Effect.flatMap(writeStored))
 
-    const fork = Effect.fn("BackgroundJob.fork")(function* (
-      scope: Scope.Scope,
-      id: string,
-      token: object,
-      sequence: number,
-      tail: Deferred.Deferred<void>,
-      run: Effect.Effect<string, unknown>,
-    ) {
-      return yield* run.pipe(
-        Effect.matchCauseEffect({
-          onSuccess: (output) => settle(id, token, sequence, Exit.succeed(output)),
-          onFailure: (cause) => settle(id, token, sequence, Exit.failCause(cause)),
-        }),
-        Effect.ensuring(Deferred.succeed(tail, undefined)),
-        Effect.asVoid,
-        Effect.forkIn(scope, { startImmediately: true }),
-      )
-    })
-
-    const list: Interface["list"] = Effect.fn("BackgroundJob.list")(function* () {
-      const items = new Map<string, Info>()
-      const current = yield* SynchronizedRef.get((yield* InstanceState.get(state)).jobs)
-      for (const job of yield* listPersisted()) {
-        items.set(job.id, current.has(job.id) ? job : orphaned(job))
-      }
-      for (const job of current.values()) items.set(job.info.id, snapshot(job))
-      return Array.from(items.values()).toSorted((a, b) => a.startedAt - b.startedAt)
-    })
-
-    const get: Interface["get"] = Effect.fn("BackgroundJob.get")(function* (id) {
-      const job = (yield* SynchronizedRef.get((yield* InstanceState.get(state)).jobs)).get(id)
-      if (job) return snapshot(job)
-      const persisted = yield* getPersisted(id)
-      return persisted ? orphaned(persisted) : undefined
-    })
-
-    const updateMetadata: Interface["updateMetadata"] = Effect.fn("BackgroundJob.updateMetadata")(function* (id, metadata) {
-      const s = yield* InstanceState.get(state)
-      const result = yield* SynchronizedRef.modify(s.jobs, (jobs): readonly [Info | undefined, Map<string, Active>] => {
-        const job = jobs.get(id)
-        if (!job) return [undefined, jobs]
-        const next = {
-          ...job,
-          info: {
-            ...job.info,
-            metadata: {
-              ...(job.info.metadata ?? {}),
-              ...metadata,
-            },
-          },
-        }
-        return [snapshot(next), new Map(jobs).set(id, next)]
-      })
-      if (result) {
-        yield* persist(result)
-        return result
-      }
-      const persisted = yield* getPersisted(id)
-      if (!persisted) return
-      const info = {
-        ...persisted,
-        metadata: {
-          ...(persisted.metadata ?? {}),
-          ...metadata,
-        },
-      }
-      yield* persist(info)
-      return orphaned(info)
-    })
-
-    const start: Interface["start"] = Effect.fn("BackgroundJob.start")(function* (input) {
-      return yield* Effect.uninterruptibleMask((restore) =>
+    return Service.of({
+      list: () =>
         Effect.gen(function* () {
-          const s = yield* InstanceState.get(state)
-          const id = input.id ?? Identifier.ascending("job")
-          const startedAt = yield* Clock.currentTimeMillis
-          const done = yield* Deferred.make<Info>()
-          const promoted = yield* Deferred.make<Info>()
-          const tail = yield* Deferred.make<void>()
-          const result = yield* SynchronizedRef.modifyEffect(
-            s.jobs,
-            Effect.fnUntraced(function* (jobs) {
-              const existing = jobs.get(id)
-              if (existing?.info.status === "running") return [{ info: snapshot(existing) }, jobs] as const
-              const scope = yield* Scope.fork(s.scope, "parallel")
-              const token = {}
-              const job = {
-                info: {
-                  id,
-                  type: input.type,
-                  title: input.title,
-                  status: "running" as const,
-                  startedAt,
-                  metadata: input.metadata,
-                },
-                done,
-                scope,
-                token,
-                pending: 1,
-                next: 1,
-                tail,
-                promoted,
-                onPromote: input.onPromote,
-              }
-              return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as const
+          const live = yield* InstanceState.useEffect(state, (jobs) => jobs.list()).pipe(
+            Effect.flatMap((items) => Effect.all(items.map(saveLive))),
+          )
+          const liveIDs = new Set(live.map((job) => job.id))
+          const keys = yield* storage.list(["background_job"]).pipe(Effect.catch(() => Effect.succeed<string[][]>([])))
+          const stored = yield* Effect.all(
+            keys
+              .map((key) => key.at(-1))
+              .filter((id): id is string => !!id && !liveIDs.has(id))
+              .map(readStored),
+          )
+          return [...live, ...stored.filter((job): job is Info => !!job)].toSorted((a, b) => a.startedAt - b.startedAt)
+        }),
+      get: (id) =>
+        InstanceState.useEffect(state, (jobs) => jobs.get(id)).pipe(
+          Effect.flatMap((info) => (info ? saveLive(info) : readStored(id))),
+        ),
+      start: (input) =>
+        InstanceState.useEffect(state, (jobs) => jobs.start(input)).pipe(Effect.flatMap(saveLive)),
+      extend: (input) => InstanceState.useEffect(state, (jobs) => jobs.extend(input)),
+      wait: (input) =>
+        InstanceState.useEffect(state, (jobs) => jobs.wait(input)).pipe(
+          Effect.flatMap((result) =>
+            Effect.gen(function* () {
+              const info = result.info ? yield* saveLive(result.info) : yield* readStored(input.id)
+              return { timedOut: result.timedOut, info } satisfies WaitResult
             }),
-          )
-          yield* persist(result.info)
-          if ("scope" in result) yield* fork(result.scope, id, result.token, 0, tail, restore(input.run))
-          return result.info
-        }),
-      )
-    })
-
-    const extend: Interface["extend"] = Effect.fn("BackgroundJob.extend")(function* (input) {
-      return yield* Effect.uninterruptibleMask((restore) =>
+          ),
+        ),
+      waitForPromotion: (id) =>
+        InstanceState.useEffect(state, (jobs) => jobs.waitForPromotion(id)).pipe(Effect.flatMap(saveLive)),
+      promote: (id) =>
+        InstanceState.useEffect(state, (jobs) => jobs.promote(id)).pipe(
+          Effect.flatMap((info) => (info ? saveLive(info) : readStored(id))),
+        ),
+      cancel: (id) =>
+        InstanceState.useEffect(state, (jobs) => jobs.cancel(id)).pipe(
+          Effect.flatMap((info) => (info ? saveLive(info) : readStored(id))),
+        ),
+      updateMetadata: (id, next) =>
         Effect.gen(function* () {
-          const s = yield* InstanceState.get(state)
-          const tail = yield* Deferred.make<void>()
-          const result = yield* SynchronizedRef.modify(
-            s.jobs,
-            (jobs): readonly [ExtendResult, Map<string, Active>] => {
-              const job = jobs.get(input.id)
-              if (!job || job.info.status !== "running") return [{ extended: false }, jobs]
-              return [
-                { extended: true, previous: job.tail, scope: job.scope, tail, token: job.token, sequence: job.next },
-                new Map(jobs).set(input.id, {
-                  ...job,
-                  pending: job.pending + 1,
-                  next: job.next + 1,
-                  tail,
-                }),
-              ]
-            },
+          const current = yield* InstanceState.useEffect(state, (jobs) => jobs.get(id)).pipe(
+            Effect.flatMap((info) => (info ? withStored(info) : readStored(id))),
           )
-          if (!result.extended) return false
-          yield* fork(
-            result.scope,
-            input.id,
-            result.token,
-            result.sequence,
-            result.tail,
-            Deferred.await(result.previous).pipe(Effect.andThen(restore(input.run))),
-          )
-          return true
+          if (!current) return undefined
+          const updated = { ...current, metadata: { ...(current.metadata ?? {}), ...next } }
+          return yield* writeStored(updated)
         }),
-      )
     })
-
-    const wait: Interface["wait"] = Effect.fn("BackgroundJob.wait")(function* (input) {
-      const job = (yield* SynchronizedRef.get((yield* InstanceState.get(state)).jobs)).get(input.id)
-      if (!job) {
-        const persisted = yield* getPersisted(input.id)
-        return { info: persisted ? orphaned(persisted) : undefined, timedOut: false }
-      }
-      if (job.info.status !== "running") return { info: snapshot(job), timedOut: false }
-      if (input.timeout === undefined) return { info: yield* Deferred.await(job.done), timedOut: false }
-      if (input.timeout <= 0) return { info: snapshot(job), timedOut: true }
-      const info = yield* Deferred.await(job.done).pipe(Effect.timeoutOption(input.timeout))
-      if (info._tag === "Some") return { info: info.value, timedOut: false }
-      return { info: snapshot(job), timedOut: true }
-    })
-
-    const waitForPromotion: Interface["waitForPromotion"] = Effect.fn("BackgroundJob.waitForPromotion")(function* (id) {
-      const job = (yield* SynchronizedRef.get((yield* InstanceState.get(state)).jobs)).get(id)
-      if (!job || job.info.status !== "running") return yield* Effect.never
-      if (job.info.metadata?.background === true) return snapshot(job)
-      return yield* Deferred.await(job.promoted)
-    })
-
-    const promote: Interface["promote"] = Effect.fn("BackgroundJob.promote")(function* (id) {
-      const s = yield* InstanceState.get(state)
-      const result = yield* SynchronizedRef.modify(s.jobs, (jobs): readonly [PromoteResult, Map<string, Active>] => {
-        const job = jobs.get(id)
-        if (!job || job.info.status !== "running") return [{}, jobs]
-        if (job.info.metadata?.background === true) return [{ info: snapshot(job) }, jobs]
-        const next = {
-          ...job,
-          onPromote: undefined,
-          info: {
-            ...job.info,
-            metadata: { ...job.info.metadata, background: true },
-          },
-        }
-        return [
-          { info: snapshot(next), promoted: job.promoted, onPromote: job.onPromote },
-          new Map(jobs).set(id, next),
-        ]
-      })
-      if (result.info) yield* persist(result.info)
-      if (result.info && result.promoted) yield* Deferred.succeed(result.promoted, result.info).pipe(Effect.ignore)
-      if (result.onPromote) yield* result.onPromote.pipe(Effect.ignore)
-      return result.info
-    })
-
-    const cancel: Interface["cancel"] = Effect.fn("BackgroundJob.cancel")(function* (id) {
-      const completedAt = yield* Clock.currentTimeMillis
-      const result = yield* SynchronizedRef.modify(
-        (yield* InstanceState.get(state)).jobs,
-        (jobs): readonly [FinishResult, Map<string, Active>] => {
-          const job = jobs.get(id)
-          if (!job) return [{}, jobs]
-          if (job.info.status !== "running") return [{ info: snapshot(job) }, jobs]
-          const next = {
-            ...job,
-            onPromote: undefined,
-            pending: 0,
-            info: {
-              ...job.info,
-              status: "cancelled" as const,
-              completedAt,
-            },
-          }
-          return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
-        },
-      )
-      if (result.info) yield* persist(result.info)
-      if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
-      if (result.scope) yield* Scope.close(result.scope, Exit.void)
-      return result.info
-    })
-
-    return Service.of({ list, get, updateMetadata, start, extend, wait, waitForPromotion, promote, cancel })
-  }),
+  })),
 )
 
-export const layer = live.pipe(Layer.provide(Storage.defaultLayer))
+export const defaultLayer: Layer.Layer<Service> = layer.pipe(Layer.provide(Storage.defaultLayer))
 
-export const defaultLayer = layer
+export const node = LayerNode.make(defaultLayer, [])
+
+export * as BackgroundJob from "./job"

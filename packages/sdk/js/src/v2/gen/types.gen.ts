@@ -57,6 +57,7 @@ export type Event =
   | EventAccountSwitched
   | EventPermissionV2Asked
   | EventPermissionV2Replied
+  | EventReferenceUpdated
   | EventFileWatcherUpdated
   | EventPtyCreated
   | EventPtyUpdated
@@ -78,10 +79,13 @@ export type Event =
   | EventCommandExecuted
   | EventProjectDirectoriesUpdated
   | EventProjectUpdated
+  | EventVcsBranchUpdated
+  | EventQuestionAsked
+  | EventQuestionReplied
+  | EventQuestionRejected
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
-  | EventVcsBranchUpdated
   | EventWorktreeReady
   | EventWorktreeFailed
   | EventWorkspaceReady
@@ -89,10 +93,6 @@ export type Event =
   | EventWorkspaceStatus
   | EventServerConnected
   | EventGlobalDisposed
-  | EventQuestionAsked
-  | EventQuestionReplied
-  | EventQuestionRejected
-  | EventOperationUpdated
   | EventServerInstanceDisposed
 
 export type QuestionReplied = {
@@ -634,7 +634,6 @@ export type Prompt = {
   text: string
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
-  references?: Array<PromptReferenceAttachment>
 }
 
 export type Pty = {
@@ -661,28 +660,6 @@ export type Todo = {
    */
   priority: string
 }
-
-export type SessionStatus =
-  | {
-      type: "idle"
-    }
-  | {
-      type: "retry"
-      attempt: number
-      message: string
-      action?: {
-        reason: string
-        provider: string
-        title: string
-        message: string
-        label: string
-        link?: string
-      }
-      next: number
-    }
-  | {
-      type: "busy"
-    }
 
 export type QuestionOption = {
   /**
@@ -717,20 +694,29 @@ export type QuestionTool = {
   callID: string
 }
 
-export type QuestionRequest = {
-  id: string
-  sessionID: string
-  createdAt?: string
-  timeoutAt?: string
-  holdUntil?: string
-  /**
-   * Questions to ask
-   */
-  questions: Array<QuestionInfo>
-  tool?: QuestionTool
-}
-
 export type QuestionAnswer = Array<string>
+
+export type SessionStatus =
+  | {
+      type: "idle"
+    }
+  | {
+      type: "retry"
+      attempt: number
+      message: string
+      action?: {
+        reason: string
+        provider: string
+        title: string
+        message: string
+        label: string
+        link?: string
+      }
+      next: number
+    }
+  | {
+      type: "busy"
+    }
 
 export type GlobalEvent = {
   directory: string
@@ -1312,6 +1298,13 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "reference.updated"
+        properties: {
+          [key: string]: unknown
+        }
+      }
+    | {
+        id: string
         type: "file.watcher.updated"
         properties: {
           file: string
@@ -1398,9 +1391,6 @@ export type GlobalEvent = {
         properties: {
           id: string
           sessionID: string
-          createdAt?: string
-          timeoutAt?: string
-          holdUntil?: string
           permission: string
           patterns: Array<string>
           metadata: {
@@ -1450,7 +1440,6 @@ export type GlobalEvent = {
             | "prompt.clear"
             | "prompt.submit"
             | "agent.cycle"
-            | "ulm.operations"
             | string
         }
       }
@@ -1535,6 +1524,43 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "vcs.branch.updated"
+        properties: {
+          branch?: string
+        }
+      }
+    | {
+        id: string
+        type: "question.asked"
+        properties: {
+          id: string
+          sessionID: string
+          /**
+           * Questions to ask
+           */
+          questions: Array<QuestionInfo>
+          tool?: QuestionTool
+        }
+      }
+    | {
+        id: string
+        type: "question.replied"
+        properties: {
+          sessionID: string
+          requestID: string
+          answers: Array<QuestionAnswer>
+        }
+      }
+    | {
+        id: string
+        type: "question.rejected"
+        properties: {
+          sessionID: string
+          requestID: string
+        }
+      }
+    | {
+        id: string
         type: "session.status"
         properties: {
           sessionID: string
@@ -1553,13 +1579,6 @@ export type GlobalEvent = {
         type: "session.compacted"
         properties: {
           sessionID: string
-        }
-      }
-    | {
-        id: string
-        type: "vcs.branch.updated"
-        properties: {
-          branch?: string
         }
       }
     | {
@@ -1613,59 +1632,6 @@ export type GlobalEvent = {
           [key: string]: unknown
         }
       }
-    | {
-        id: string
-        type: "question.asked"
-        properties: QuestionRequest
-      }
-    | {
-        id: string
-        type: "question.replied"
-        properties: QuestionReplied
-      }
-    | {
-        id: string
-        type: "question.rejected"
-        properties: QuestionRejected
-      }
-    | {
-        id: string
-        type: "operation.updated"
-        properties: {
-          operationID: string
-          artifact:
-            | "checkpoint"
-            | "operation_plan"
-            | "evidence"
-            | "finding"
-            | "report_outline"
-            | "report_render"
-            | "runtime_summary"
-            | "eval_scorecard"
-            | "stage_gate"
-            | "operation_audit"
-          path?: string
-          operation?: {
-            objective?: string
-            stage?: string
-            status?: string
-            summary?: string
-            riskLevel?: string
-            nextActions?: Array<string>
-            blockers?: Array<string>
-          }
-          findings?: {
-            total: number
-          }
-          evidence?: {
-            total: number
-          }
-          reports?: {
-            [key: string]: boolean
-          }
-          runtimeSummary?: boolean
-        }
-      }
     | EventServerInstanceDisposed
     | SyncEventSessionCreated
     | SyncEventSessionUpdated
@@ -1717,26 +1683,6 @@ export type ServerConfig = {
   mdns?: boolean
   mdnsDomain?: string
   cors?: Array<string>
-}
-
-export type ReferenceConfigEntry =
-  | string
-  | {
-      /**
-       * Git repository URL, host/path reference, or GitHub owner/repo shorthand
-       */
-      repository: string
-      branch?: string
-    }
-  | {
-      /**
-       * Absolute path, ~/ path, or workspace-relative path to a local reference directory
-       */
-      path: string
-    }
-
-export type ReferenceConfig = {
-  [key: string]: ReferenceConfigEntry
 }
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
@@ -1855,7 +1801,7 @@ export type ProviderConfig = {
       interleaved?:
         | true
         | {
-            field: "reasoning_content" | "reasoning_details"
+            field: "reasoning" | "reasoning_content" | "reasoning_details"
           }
       cost?: {
         input: number
@@ -1982,7 +1928,12 @@ export type Config = {
     paths?: Array<string>
     urls?: Array<string>
   }
-  reference?: ReferenceConfig
+  references?: {
+    [key: string]: string | ConfigV2ReferenceGit | ConfigV2ReferenceLocal
+  }
+  reference?: {
+    [key: string]: string | ConfigV2ReferenceGit | ConfigV2ReferenceLocal
+  }
   watcher?: {
     ignore?: Array<string>
   }
@@ -2094,7 +2045,6 @@ export type Config = {
   }
   experimental?: {
     disable_paste_summary?: boolean
-    enable_sse_json_repair?: boolean
     batch_tool?: boolean
     openTelemetry?: boolean
     primary_tools?: Array<string>
@@ -2136,7 +2086,7 @@ export type Model = {
     interleaved:
       | boolean
       | {
-          field: "reasoning_content" | "reasoning_details"
+          field: "reasoning" | "reasoning_content" | "reasoning_details"
         }
   }
   cost: {
@@ -2541,6 +2491,16 @@ export type PtyForbiddenError = {
   message: string
 }
 
+export type QuestionRequest = {
+  id: string
+  sessionID: string
+  /**
+   * Questions to ask
+   */
+  questions: Array<QuestionInfo>
+  tool?: QuestionTool
+}
+
 export type QuestionNotFoundError = {
   _tag: "QuestionNotFoundError"
   requestID: string
@@ -2550,9 +2510,6 @@ export type QuestionNotFoundError = {
 export type PermissionRequest = {
   id: string
   sessionID: string
-  createdAt?: string
-  timeoutAt?: string
-  holdUntil?: string
   permission: string
   patterns: Array<string>
   metadata: {
@@ -2713,7 +2670,6 @@ export type EventTuiCommandExecute = {
       | "prompt.clear"
       | "prompt.submit"
       | "agent.cycle"
-      | "ulm.operations"
       | string
   }
 }
@@ -2736,362 +2692,6 @@ export type EventTuiSessionSelect = {
      */
     sessionID: string
   }
-}
-
-export type UlmOperationSessionBinding = {
-  sessionID: string
-  operationID: string
-  boundAt: string
-  source?: string
-}
-
-export type UlmEvidenceRef = {
-  id: string
-  path?: string
-  summary?: string
-  command?: string
-  createdAt?: string
-}
-
-export type UlmOperationTime = {
-  created: string
-  updated: string
-}
-
-export type UlmOperationRecord = {
-  operationID: string
-  objective: string
-  stage: "intake" | "recon" | "mapping" | "validation" | "reporting" | "handoff"
-  status: "planned" | "running" | "blocked" | "paused" | "complete"
-  summary: string
-  nextActions: Array<string>
-  blockers: Array<string>
-  riskLevel: "low" | "medium" | "high" | "critical"
-  activeTasks: Array<string>
-  evidence: Array<UlmEvidenceRef>
-  notes?: string
-  time: UlmOperationTime
-}
-
-export type UlmOperationGoalStatus = {
-  status: string
-  objective: string
-  targetDurationHours?: number
-  updatedAt?: string
-  completedAt?: string
-}
-
-export type UlmSupervisorStatus = {
-  generatedAt?: string
-  action?: string
-  reason?: string
-  requiredNextTool?: string
-  blockers: Array<string>
-  nextTools: Array<string>
-}
-
-export type UlmToolInventoryStatus = {
-  generatedAt?: string
-  total: number
-  installed: number
-  missing: number
-  highValueMissing: number
-  installedHighValue: Array<string>
-  missingHighValue: Array<string>
-}
-
-export type UlmOperationPolicies = {
-  foregroundCommand: string
-}
-
-export type UlmPlanArtifacts = {
-  operation: boolean
-}
-
-export type UlmFindingCounts = {
-  total: number
-  byState: {
-    candidate: number
-    needs_validation: number
-    validated: number
-    report_ready: number
-    rejected: number
-  }
-  bySeverity: {
-    info: number
-    low: number
-    medium: number
-    high: number
-    critical: number
-  }
-}
-
-export type UlmEvidenceCounts = {
-  total: number
-  byKind: {
-    command_output: number
-    http_response: number
-    screenshot: number
-    file: number
-    note: number
-    log: number
-  }
-}
-
-export type UlmReportArtifacts = {
-  outline: boolean
-  markdown: boolean
-  html: boolean
-  pdf: boolean
-  readme: boolean
-  manifest: boolean
-}
-
-export type UlmRuntimeSnapshot = {
-  [key: string]: unknown
-}
-
-export type UlmOperationStatusSummary = {
-  operationID: string
-  root: string
-  sessions?: Array<UlmOperationSessionBinding>
-  operation?: UlmOperationRecord
-  goal?: UlmOperationGoalStatus
-  supervisor?: UlmSupervisorStatus
-  toolInventory?: UlmToolInventoryStatus
-  policies: UlmOperationPolicies
-  plans: UlmPlanArtifacts
-  findings: UlmFindingCounts
-  evidence: UlmEvidenceCounts
-  reports: UlmReportArtifacts
-  runtimeSummary: boolean
-  runtime?: UlmRuntimeSnapshot
-  lastEvents: Array<unknown>
-}
-
-export type UlmTemplateStartResult = {
-  operationID: string
-  template:
-    | "single-url-web"
-    | "external-k12-district"
-    | "authenticated-webapp"
-    | "internal-network"
-    | "cloud-posture"
-    | "code-audit"
-    | "report-only"
-    | "benchmark-suite"
-  files: {
-    goal: string
-    plan: string
-    graph: string
-    outline: string
-    memory: string
-  }
-}
-
-export type UlmCloseOperationsPayload = {
-  operationIDs?: Array<string>
-}
-
-export type UlmCloseOperationsResult = {
-  closed: Array<string>
-  remaining: number
-}
-
-export type UlmOperationCheckpointBrief = {
-  objective: string
-  stage: "intake" | "recon" | "mapping" | "validation" | "reporting" | "handoff"
-  status: "planned" | "running" | "blocked" | "paused" | "complete"
-  summary: string
-  riskLevel: "low" | "medium" | "high" | "critical"
-  nextActions: Array<string>
-  blockers: Array<string>
-  activeTasks: Array<string>
-  time: UlmOperationTime
-}
-
-export type UlmResumeHealth = {
-  ready: boolean
-  status: "ready" | "attention_required"
-  gaps: Array<string>
-}
-
-export type UlmResumeArtifacts = {
-  operation: boolean
-  reports: UlmReportArtifacts
-  runtimeSummary: boolean
-  findings: number
-  evidence: number
-}
-
-export type UlmOperationResumeBrief = {
-  operationID: string
-  root: string
-  generatedAt: string
-  checkpoint?: UlmOperationCheckpointBrief
-  health: UlmResumeHealth
-  artifacts: UlmResumeArtifacts
-  runtime?: UlmRuntimeSnapshot
-  recommendedTools: Array<string>
-  continuationPrompt: string
-  lastEvents: Array<unknown>
-}
-
-export type UlmAuditChecks = {
-  resume: {
-    ok: boolean
-    status: "ready" | "attention_required"
-    gaps: Array<string>
-  }
-  finalHandoff: {
-    ok: boolean
-    status: "ready" | "attention_required"
-    gaps: Array<string>
-    counts: {
-      findings: number
-      reportReady: number
-      validated: number
-      candidates: number
-      rejected: number
-    }
-  }
-}
-
-export type UlmAuditFiles = {
-  json: string
-  markdown: string
-}
-
-export type UlmOperationAuditResult = {
-  operationID: string
-  root: string
-  generatedAt: string
-  ok: boolean
-  checks: UlmAuditChecks
-  blockers: Array<string>
-  recommendedTools: Array<string>
-  files: UlmAuditFiles
-}
-
-export type UlmRecoverResult = {
-  operationID: string
-  action: "recover"
-  mode: "planned"
-  supported: boolean
-  dryRun: boolean
-  command: string
-  reason: string
-  restartableJobs: number
-  skipped: number
-}
-
-export type UlmDaemonMetadata = {
-  running: boolean
-  pid?: number
-  updatedAt?: string
-  stopped?: boolean
-  reason?: string
-  lockPath: string
-  heartbeatPath: string
-  logPath: string
-  heartbeat?: {
-    [key: string]: unknown
-  }
-  lock?: {
-    [key: string]: unknown
-  }
-}
-
-export type UlmDaemonActionResult = {
-  operationID: string
-  action: "start" | "stop" | "status"
-  mode: "planned" | "metadata"
-  supported: boolean
-  command: string
-  reason: string
-  daemon: UlmDaemonMetadata
-}
-
-export type UlmFinalArtifact = {
-  id: string
-  file: string
-  kind: "pdf" | "html" | "json" | "markdown" | "text" | "unknown"
-  exists: boolean
-  path: string
-  size?: number
-  updatedAt?: string
-  fetchPath: string
-  openPath: string
-}
-
-export type UlmFinalArtifactList = {
-  operationID: string
-  finalDir: string
-  artifacts: Array<UlmFinalArtifact>
-}
-
-export type UlmFinalArtifactMetadata = {
-  operationID: string
-  finalDir: string
-  artifact: UlmFinalArtifact
-}
-
-export type UlmFinalArtifactOpenResult = {
-  operationID: string
-  artifactID: string
-  mode: "planned"
-  supported: boolean
-  command: string
-  reason: string
-  artifact: UlmFinalArtifact
-}
-
-export type UlmCredentialRecord = {
-  credentialID: string
-  label: string
-  type?: string
-  username?: string
-  url?: string
-  target?: string
-  tags: Array<string>
-  notes?: string
-  rules?: string
-  password?: string
-  secret?: string
-  createdAt: string
-  updatedAt: string
-}
-
-export type UlmCredentialListResult = {
-  operationID: string
-  index: string
-  expectedServices: Array<string>
-  credentials: Array<UlmCredentialRecord>
-}
-
-export type UlmCredentialReviewSubmitResult = {
-  operationID: string
-  submittedAt: string
-  expectedServices: Array<string>
-  file: string
-  credentials: Array<UlmCredentialRecord>
-}
-
-export type UlmCredentialDeleteResult = {
-  operationID: string
-  credentialID: string
-  index: string
-  deleted: boolean
-}
-
-export type UlmCredentialMaterializeResult = {
-  operationID: string
-  envFile: string
-  credentials: Array<{
-    credentialID: string
-    label: string
-    variables: Array<string>
-  }>
 }
 
 export type Workspace = {
@@ -3124,7 +2724,7 @@ export type UnauthorizedError = {
   message: string
 }
 
-export type V2SessionsResponse = {
+export type SessionsResponse = {
   data: Array<SessionV2Info>
   cursor: {
     previous?: string
@@ -3161,7 +2761,7 @@ export type UnknownError1 = {
   ref?: string
 }
 
-export type V2SessionMessagesResponse = {
+export type SessionMessagesResponse = {
   data: Array<SessionMessage>
   cursor: {
     previous?: string
@@ -3208,7 +2808,6 @@ export type EventTuiCommandExecute2 = {
       | "prompt.clear"
       | "prompt.submit"
       | "agent.cycle"
-      | "ulm.operations"
       | string
   }
 }
@@ -3359,18 +2958,6 @@ export type PromptAgentAttachment = {
   source?: PromptSource
 }
 
-export type PromptReferenceAttachment = {
-  name: string
-  kind: "local" | "git" | "invalid"
-  uri?: string
-  repository?: string
-  branch?: string
-  target?: string
-  targetUri?: string
-  problem?: string
-  source?: PromptSource
-}
-
 export type SessionErrorUnknown = {
   type: "unknown"
   message: string
@@ -3383,19 +2970,7 @@ export type ToolTextContent = {
 
 export type ToolFileContent = {
   type: "file"
-  source:
-    | {
-        type: "data"
-        data: string
-      }
-    | {
-        type: "url"
-        url: string
-      }
-    | {
-        type: "file"
-        uri: string
-      }
+  uri: string
   mime: string
   name?: string
 }
@@ -4133,6 +3708,19 @@ export type SyncEventSessionNextCompactionEnded = {
   }
 }
 
+export type ConfigV2ReferenceGit = {
+  repository: string
+  branch?: string
+  description?: string
+  hidden?: boolean
+}
+
+export type ConfigV2ReferenceLocal = {
+  path: string
+  description?: string
+  hidden?: boolean
+}
+
 export type PolicyEffect = "allow" | "deny"
 
 export type ConfigV2ExperimentalPolicy = {
@@ -4141,7 +3729,10 @@ export type ConfigV2ExperimentalPolicy = {
   resource: string
 }
 
-export type ProjectDirectories = Array<string>
+export type ProjectDirectories = Array<{
+  directory: string
+  type: "main" | "root" | "git_worktree"
+}>
 
 export type ProjectCopyCopy = {
   directory: string
@@ -4269,7 +3860,6 @@ export type SessionMessageUser = {
   text: string
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
-  references?: Array<PromptReferenceAttachment>
   type: "user"
 }
 
@@ -4527,22 +4117,16 @@ export type PermissionSavedInfo = {
   resource: string
 }
 
-export type FileSystemTextContent = {
-  type: "text"
+export type FileSystemContent = {
+  uri: string
+  name?: string
   content: string
-  mime: string
-}
-
-export type FileSystemBinaryContent = {
-  type: "binary"
-  content: string
-  encoding: "base64"
+  encoding: "utf8" | "base64"
   mime: string
 }
 
 export type FileSystemEntry = {
   path: string
-  uri: string
   type: "file" | "directory"
   mime: string
 }
@@ -4583,6 +4167,29 @@ export type QuestionV2Reply = {
    * User answers in order of questions (each answer is an array of selected labels)
    */
   answers: Array<QuestionV2Answer>
+}
+
+export type ReferenceLocalSource = {
+  type: "local"
+  path: string
+  description?: string
+  hidden?: boolean
+}
+
+export type ReferenceGitSource = {
+  type: "git"
+  repository: string
+  branch?: string
+  description?: string
+  hidden?: boolean
+}
+
+export type ReferenceInfo = {
+  name: string
+  path: string
+  description?: string
+  hidden?: boolean
+  source: ReferenceLocalSource | ReferenceGitSource
 }
 
 export type EventModelsDevRefreshed = {
@@ -5306,6 +4913,14 @@ export type EventPermissionV2Replied = {
   }
 }
 
+export type EventReferenceUpdated = {
+  id: string
+  type: "reference.updated"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
 export type EventFileWatcherUpdated = {
   id: string
   type: "file.watcher.updated"
@@ -5404,9 +5019,6 @@ export type EventPermissionAsked = {
   properties: {
     id: string
     sessionID: string
-    createdAt?: string
-    timeoutAt?: string
-    holdUntil?: string
     permission: string
     patterns: Array<string>
     metadata: {
@@ -5494,6 +5106,47 @@ export type EventProjectUpdated = {
   }
 }
 
+export type EventVcsBranchUpdated = {
+  id: string
+  type: "vcs.branch.updated"
+  properties: {
+    branch?: string
+  }
+}
+
+export type EventQuestionAsked = {
+  id: string
+  type: "question.asked"
+  properties: {
+    id: string
+    sessionID: string
+    /**
+     * Questions to ask
+     */
+    questions: Array<QuestionInfo>
+    tool?: QuestionTool
+  }
+}
+
+export type EventQuestionReplied = {
+  id: string
+  type: "question.replied"
+  properties: {
+    sessionID: string
+    requestID: string
+    answers: Array<QuestionAnswer>
+  }
+}
+
+export type EventQuestionRejected = {
+  id: string
+  type: "question.rejected"
+  properties: {
+    sessionID: string
+    requestID: string
+  }
+}
+
 export type EventSessionStatus = {
   id: string
   type: "session.status"
@@ -5516,14 +5169,6 @@ export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
-  }
-}
-
-export type EventVcsBranchUpdated = {
-  id: string
-  type: "vcs.branch.updated"
-  properties: {
-    branch?: string
   }
 }
 
@@ -5582,63 +5227,6 @@ export type EventGlobalDisposed = {
   type: "global.disposed"
   properties: {
     [key: string]: unknown
-  }
-}
-
-export type EventQuestionAsked = {
-  id: string
-  type: "question.asked"
-  properties: QuestionRequest
-}
-
-export type EventQuestionReplied = {
-  id: string
-  type: "question.replied"
-  properties: QuestionReplied
-}
-
-export type EventQuestionRejected = {
-  id: string
-  type: "question.rejected"
-  properties: QuestionRejected
-}
-
-export type EventOperationUpdated = {
-  id: string
-  type: "operation.updated"
-  properties: {
-    operationID: string
-    artifact:
-      | "checkpoint"
-      | "operation_plan"
-      | "evidence"
-      | "finding"
-      | "report_outline"
-      | "report_render"
-      | "runtime_summary"
-      | "eval_scorecard"
-      | "stage_gate"
-      | "operation_audit"
-    path?: string
-    operation?: {
-      objective?: string
-      stage?: string
-      status?: string
-      summary?: string
-      riskLevel?: string
-      nextActions?: Array<string>
-      blockers?: Array<string>
-    }
-    findings?: {
-      total: number
-    }
-    evidence?: {
-      total: number
-    }
-    reports?: {
-      [key: string]: boolean
-    }
-    runtimeSummary?: boolean
   }
 }
 
@@ -7837,40 +7425,6 @@ export type QuestionRejectResponses = {
 
 export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejectResponses]
 
-export type QuestionTouchData = {
-  body?: {
-    holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    answers?: Array<QuestionAnswer>
-  }
-  path: {
-    requestID: string
-  }
-  query?: never
-  url: "/question/{requestID}/touch"
-}
-
-export type QuestionTouchErrors = {
-  /**
-   * BadRequest | InvalidRequestError
-   */
-  400: EffectHttpApiErrorBadRequest | InvalidRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type QuestionTouchError = QuestionTouchErrors[keyof QuestionTouchErrors]
-
-export type QuestionTouchResponses = {
-  /**
-   * Question timeout extended successfully
-   */
-  200: boolean
-}
-
-export type QuestionTouchResponse = QuestionTouchResponses[keyof QuestionTouchResponses]
-
 export type PermissionListData = {
   body?: never
   path?: never
@@ -7935,39 +7489,6 @@ export type PermissionReplyResponses = {
 }
 
 export type PermissionReplyResponse = PermissionReplyResponses[keyof PermissionReplyResponses]
-
-export type PermissionTouchData = {
-  body?: {
-    holdMillis?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path: {
-    requestID: string
-  }
-  query?: never
-  url: "/permission/{requestID}/touch"
-}
-
-export type PermissionTouchErrors = {
-  /**
-   * BadRequest | InvalidRequestError
-   */
-  400: EffectHttpApiErrorBadRequest | InvalidRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type PermissionTouchError = PermissionTouchErrors[keyof PermissionTouchErrors]
-
-export type PermissionTouchResponses = {
-  /**
-   * Permission timeout extended successfully
-   */
-  200: boolean
-}
-
-export type PermissionTouchResponse = PermissionTouchResponses[keyof PermissionTouchResponses]
 
 export type ProviderListData = {
   body?: never
@@ -8460,7 +7981,7 @@ export type SessionMessagesResponses = {
   }>
 }
 
-export type SessionMessagesResponse = SessionMessagesResponses[keyof SessionMessagesResponses]
+export type SessionMessagesResponse2 = SessionMessagesResponses[keyof SessionMessagesResponses]
 
 export type SessionPromptData = {
   body?: {
@@ -9671,607 +9192,6 @@ export type TuiControlResponseResponses = {
 
 export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
 
-export type UlmOperationListData = {
-  body?: never
-  path?: never
-  query?: {
-    eventLimit?: string
-  }
-  url: "/ulm/operation"
-}
-
-export type UlmOperationListErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationListError = UlmOperationListErrors[keyof UlmOperationListErrors]
-
-export type UlmOperationListResponses = {
-  /**
-   * ULMCode operation status list
-   */
-  200: Array<UlmOperationStatusSummary>
-}
-
-export type UlmOperationListResponse = UlmOperationListResponses[keyof UlmOperationListResponses]
-
-export type UlmOperationTemplateStartData = {
-  body?: {
-    operationID?: string
-    template:
-      | "single-url-web"
-      | "external-k12-district"
-      | "authenticated-webapp"
-      | "internal-network"
-      | "cloud-posture"
-      | "code-audit"
-      | "report-only"
-      | "benchmark-suite"
-    objective: string
-    targetDurationHours?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    trustLevel?: "guided" | "moderate" | "unattended" | "lab_full"
-    scanProfile?: "paranoid" | "stealth" | "balanced" | "aggressive" | "lab-insane"
-    budgetUSD?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path?: never
-  query?: never
-  url: "/ulm/operation/template"
-}
-
-export type UlmOperationTemplateStartErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationTemplateStartError = UlmOperationTemplateStartErrors[keyof UlmOperationTemplateStartErrors]
-
-export type UlmOperationTemplateStartResponses = {
-  /**
-   * ULMCode template operation start
-   */
-  200: UlmTemplateStartResult
-}
-
-export type UlmOperationTemplateStartResponse =
-  UlmOperationTemplateStartResponses[keyof UlmOperationTemplateStartResponses]
-
-export type UlmOperationCloseData = {
-  body?: UlmCloseOperationsPayload
-  path?: never
-  query?: never
-  url: "/ulm/operation/close"
-}
-
-export type UlmOperationCloseErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCloseError = UlmOperationCloseErrors[keyof UlmOperationCloseErrors]
-
-export type UlmOperationCloseResponses = {
-  /**
-   * Closed ULM operations
-   */
-  200: UlmCloseOperationsResult
-}
-
-export type UlmOperationCloseResponse = UlmOperationCloseResponses[keyof UlmOperationCloseResponses]
-
-export type UlmOperationStatusData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: {
-    eventLimit?: string
-  }
-  url: "/ulm/operation/{operationID}/status"
-}
-
-export type UlmOperationStatusErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationStatusError = UlmOperationStatusErrors[keyof UlmOperationStatusErrors]
-
-export type UlmOperationStatusResponses = {
-  /**
-   * ULMCode operation status
-   */
-  200: UlmOperationStatusSummary
-}
-
-export type UlmOperationStatusResponse = UlmOperationStatusResponses[keyof UlmOperationStatusResponses]
-
-export type UlmOperationResumeData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: {
-    eventLimit?: string
-    staleAfterMinutes?: string
-  }
-  url: "/ulm/operation/{operationID}/resume"
-}
-
-export type UlmOperationResumeErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationResumeError = UlmOperationResumeErrors[keyof UlmOperationResumeErrors]
-
-export type UlmOperationResumeResponses = {
-  /**
-   * ULMCode operation resume brief
-   */
-  200: UlmOperationResumeBrief
-}
-
-export type UlmOperationResumeResponse = UlmOperationResumeResponses[keyof UlmOperationResumeResponses]
-
-export type UlmOperationAuditData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: {
-    eventLimit?: string
-    staleAfterMinutes?: string
-    minWords?: string
-    requireOutlineBudget?: "true" | "false"
-    minOutlineTargetPages?: string
-    minOutlineWordsPerPage?: string
-    minPdfPages?: string
-    requireFindingSections?: "true" | "false"
-    minFindingWords?: string
-    finalHandoff?: "true" | "false"
-  }
-  url: "/ulm/operation/{operationID}/audit"
-}
-
-export type UlmOperationAuditErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationAuditError = UlmOperationAuditErrors[keyof UlmOperationAuditErrors]
-
-export type UlmOperationAuditResponses = {
-  /**
-   * ULMCode operation audit
-   */
-  200: UlmOperationAuditResult
-}
-
-export type UlmOperationAuditResponse = UlmOperationAuditResponses[keyof UlmOperationAuditResponses]
-
-export type UlmOperationAuditWriteData = {
-  body?: {
-    eventLimit?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    staleAfterMinutes?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    minWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    requireOutlineBudget?: boolean
-    minOutlineWordsPerPage?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    requireFindingSections?: boolean
-    minFindingWords?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    finalHandoff?: boolean
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/audit"
-}
-
-export type UlmOperationAuditWriteErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationAuditWriteError = UlmOperationAuditWriteErrors[keyof UlmOperationAuditWriteErrors]
-
-export type UlmOperationAuditWriteResponses = {
-  /**
-   * ULMCode operation audit
-   */
-  200: UlmOperationAuditResult
-}
-
-export type UlmOperationAuditWriteResponse = UlmOperationAuditWriteResponses[keyof UlmOperationAuditWriteResponses]
-
-export type UlmOperationRecoverData = {
-  body?: {
-    dryRun?: boolean
-    maxTasks?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/recover"
-}
-
-export type UlmOperationRecoverErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationRecoverError = UlmOperationRecoverErrors[keyof UlmOperationRecoverErrors]
-
-export type UlmOperationRecoverResponses = {
-  /**
-   * ULMCode operation recovery metadata
-   */
-  200: UlmRecoverResult
-}
-
-export type UlmOperationRecoverResponse = UlmOperationRecoverResponses[keyof UlmOperationRecoverResponses]
-
-export type UlmOperationDaemonStartData = {
-  body?: {
-    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/daemon/start"
-}
-
-export type UlmOperationDaemonStartErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationDaemonStartError = UlmOperationDaemonStartErrors[keyof UlmOperationDaemonStartErrors]
-
-export type UlmOperationDaemonStartResponses = {
-  /**
-   * ULMCode daemon start metadata
-   */
-  200: UlmDaemonActionResult
-}
-
-export type UlmOperationDaemonStartResponse = UlmOperationDaemonStartResponses[keyof UlmOperationDaemonStartResponses]
-
-export type UlmOperationDaemonStopData = {
-  body?: {
-    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/daemon/stop"
-}
-
-export type UlmOperationDaemonStopErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationDaemonStopError = UlmOperationDaemonStopErrors[keyof UlmOperationDaemonStopErrors]
-
-export type UlmOperationDaemonStopResponses = {
-  /**
-   * ULMCode daemon stop metadata
-   */
-  200: UlmDaemonActionResult
-}
-
-export type UlmOperationDaemonStopResponse = UlmOperationDaemonStopResponses[keyof UlmOperationDaemonStopResponses]
-
-export type UlmOperationDaemonStatusData = {
-  body?: {
-    maxRuntimeSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    cycleIntervalSeconds?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    maxCycles?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-    schedulerCyclesPerTick?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/daemon/status"
-}
-
-export type UlmOperationDaemonStatusErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationDaemonStatusError = UlmOperationDaemonStatusErrors[keyof UlmOperationDaemonStatusErrors]
-
-export type UlmOperationDaemonStatusResponses = {
-  /**
-   * ULMCode daemon status metadata
-   */
-  200: UlmDaemonActionResult
-}
-
-export type UlmOperationDaemonStatusResponse =
-  UlmOperationDaemonStatusResponses[keyof UlmOperationDaemonStatusResponses]
-
-export type UlmOperationFinalArtifactsData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/final-artifacts"
-}
-
-export type UlmOperationFinalArtifactsErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationFinalArtifactsError = UlmOperationFinalArtifactsErrors[keyof UlmOperationFinalArtifactsErrors]
-
-export type UlmOperationFinalArtifactsResponses = {
-  /**
-   * ULMCode final artifact metadata
-   */
-  200: UlmFinalArtifactList
-}
-
-export type UlmOperationFinalArtifactsResponse =
-  UlmOperationFinalArtifactsResponses[keyof UlmOperationFinalArtifactsResponses]
-
-export type UlmOperationFinalArtifactData = {
-  body?: never
-  path: {
-    operationID: string
-    artifactID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}"
-}
-
-export type UlmOperationFinalArtifactErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationFinalArtifactError = UlmOperationFinalArtifactErrors[keyof UlmOperationFinalArtifactErrors]
-
-export type UlmOperationFinalArtifactResponses = {
-  /**
-   * ULMCode final artifact metadata
-   */
-  200: UlmFinalArtifactMetadata
-}
-
-export type UlmOperationFinalArtifactResponse =
-  UlmOperationFinalArtifactResponses[keyof UlmOperationFinalArtifactResponses]
-
-export type UlmOperationFinalArtifactOpenData = {
-  body?: {
-    [key: string]: unknown
-  }
-  path: {
-    operationID: string
-    artifactID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/final-artifacts/{artifactID}/open"
-}
-
-export type UlmOperationFinalArtifactOpenErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationFinalArtifactOpenError =
-  UlmOperationFinalArtifactOpenErrors[keyof UlmOperationFinalArtifactOpenErrors]
-
-export type UlmOperationFinalArtifactOpenResponses = {
-  /**
-   * ULMCode final artifact open metadata
-   */
-  200: UlmFinalArtifactOpenResult
-}
-
-export type UlmOperationFinalArtifactOpenResponse =
-  UlmOperationFinalArtifactOpenResponses[keyof UlmOperationFinalArtifactOpenResponses]
-
-export type UlmOperationCredentialsData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/credentials"
-}
-
-export type UlmOperationCredentialsErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCredentialsError = UlmOperationCredentialsErrors[keyof UlmOperationCredentialsErrors]
-
-export type UlmOperationCredentialsResponses = {
-  /**
-   * ULMCode operation credentials
-   */
-  200: UlmCredentialListResult
-}
-
-export type UlmOperationCredentialsResponse = UlmOperationCredentialsResponses[keyof UlmOperationCredentialsResponses]
-
-export type UlmOperationCredentialCreateData = {
-  body?: {
-    credentialID?: string
-    label: string
-    type?: string
-    username?: string
-    password?: string
-    secret?: string
-    url?: string
-    target?: string
-    tags?: Array<string>
-    notes?: string
-    rules?: string
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/credentials"
-}
-
-export type UlmOperationCredentialCreateErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCredentialCreateError =
-  UlmOperationCredentialCreateErrors[keyof UlmOperationCredentialCreateErrors]
-
-export type UlmOperationCredentialCreateResponses = {
-  /**
-   * ULMCode operation credentials
-   */
-  200: UlmCredentialListResult
-}
-
-export type UlmOperationCredentialCreateResponse =
-  UlmOperationCredentialCreateResponses[keyof UlmOperationCredentialCreateResponses]
-
-export type UlmOperationCredentialReviewSubmitData = {
-  body?: never
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/credentials/submit"
-}
-
-export type UlmOperationCredentialReviewSubmitErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCredentialReviewSubmitError =
-  UlmOperationCredentialReviewSubmitErrors[keyof UlmOperationCredentialReviewSubmitErrors]
-
-export type UlmOperationCredentialReviewSubmitResponses = {
-  /**
-   * ULMCode submitted credential review
-   */
-  200: UlmCredentialReviewSubmitResult
-}
-
-export type UlmOperationCredentialReviewSubmitResponse =
-  UlmOperationCredentialReviewSubmitResponses[keyof UlmOperationCredentialReviewSubmitResponses]
-
-export type UlmOperationCredentialDeleteData = {
-  body?: never
-  path: {
-    operationID: string
-    credentialID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/credentials/{credentialID}"
-}
-
-export type UlmOperationCredentialDeleteErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCredentialDeleteError =
-  UlmOperationCredentialDeleteErrors[keyof UlmOperationCredentialDeleteErrors]
-
-export type UlmOperationCredentialDeleteResponses = {
-  /**
-   * ULMCode credential deletion
-   */
-  200: UlmCredentialDeleteResult
-}
-
-export type UlmOperationCredentialDeleteResponse =
-  UlmOperationCredentialDeleteResponses[keyof UlmOperationCredentialDeleteResponses]
-
-export type UlmOperationCredentialMaterializeEnvData = {
-  body?: {
-    credentialIDs?: Array<string>
-  }
-  path: {
-    operationID: string
-  }
-  query?: never
-  url: "/ulm/operation/{operationID}/credentials/materialize-env"
-}
-
-export type UlmOperationCredentialMaterializeEnvErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type UlmOperationCredentialMaterializeEnvError =
-  UlmOperationCredentialMaterializeEnvErrors[keyof UlmOperationCredentialMaterializeEnvErrors]
-
-export type UlmOperationCredentialMaterializeEnvResponses = {
-  /**
-   * ULMCode credential env file
-   */
-  200: UlmCredentialMaterializeResult
-}
-
-export type UlmOperationCredentialMaterializeEnvResponse =
-  UlmOperationCredentialMaterializeEnvResponses[keyof UlmOperationCredentialMaterializeEnvResponses]
-
 export type ExperimentalWorkspaceAdapterListData = {
   body?: never
   path?: never
@@ -10604,9 +9524,9 @@ export type V2SessionListError = V2SessionListErrors[keyof V2SessionListErrors]
 
 export type V2SessionListResponses = {
   /**
-   * V2SessionsResponse
+   * SessionsResponse
    */
-  200: V2SessionsResponse
+  200: SessionsResponse
 }
 
 export type V2SessionListResponse = V2SessionListResponses[keyof V2SessionListResponses]
@@ -10815,12 +9735,12 @@ export type V2SessionMessagesError = V2SessionMessagesErrors[keyof V2SessionMess
 
 export type V2SessionMessagesResponses = {
   /**
-   * V2SessionMessagesResponse
+   * SessionMessagesResponse
    */
-  200: V2SessionMessagesResponse
+  200: SessionMessagesResponse
 }
 
-export type V2SessionMessagesResponse2 = V2SessionMessagesResponses[keyof V2SessionMessagesResponses]
+export type V2SessionMessagesResponse = V2SessionMessagesResponses[keyof V2SessionMessagesResponses]
 
 export type V2ModelListData = {
   body?: never
@@ -10988,83 +9908,6 @@ export type V2PermissionRequestListResponses = {
 
 export type V2PermissionRequestListResponse = V2PermissionRequestListResponses[keyof V2PermissionRequestListResponses]
 
-export type V2SessionPermissionListData = {
-  body?: never
-  path: {
-    sessionID: string
-  }
-  query?: never
-  url: "/api/session/{sessionID}/permission/request"
-}
-
-export type V2SessionPermissionListErrors = {
-  /**
-   * InvalidRequestError
-   */
-  400: InvalidRequestError
-  /**
-   * UnauthorizedError
-   */
-  401: UnauthorizedError
-  /**
-   * SessionNotFoundError
-   */
-  404: SessionNotFoundError
-}
-
-export type V2SessionPermissionListError = V2SessionPermissionListErrors[keyof V2SessionPermissionListErrors]
-
-export type V2SessionPermissionListResponses = {
-  /**
-   * Success
-   */
-  200: {
-    data: Array<PermissionV2Request>
-  }
-}
-
-export type V2SessionPermissionListResponse = V2SessionPermissionListResponses[keyof V2SessionPermissionListResponses]
-
-export type V2SessionPermissionReplyData = {
-  body: {
-    reply: PermissionV2Reply
-    message?: string
-  }
-  path: {
-    sessionID: string
-    requestID: string
-  }
-  query?: never
-  url: "/api/session/{sessionID}/permission/request/{requestID}/reply"
-}
-
-export type V2SessionPermissionReplyErrors = {
-  /**
-   * InvalidRequestError
-   */
-  400: InvalidRequestError
-  /**
-   * UnauthorizedError
-   */
-  401: UnauthorizedError
-  /**
-   * SessionNotFoundError | PermissionNotFoundError
-   */
-  404: SessionNotFoundError | PermissionNotFoundError
-}
-
-export type V2SessionPermissionReplyError = V2SessionPermissionReplyErrors[keyof V2SessionPermissionReplyErrors]
-
-export type V2SessionPermissionReplyResponses = {
-  /**
-   * <No Content>
-   */
-  204: void
-}
-
-export type V2SessionPermissionReplyResponse =
-  V2SessionPermissionReplyResponses[keyof V2SessionPermissionReplyResponses]
-
 export type V2PermissionSavedListData = {
   body?: never
   path?: never
@@ -11129,6 +9972,83 @@ export type V2PermissionSavedRemoveResponses = {
 
 export type V2PermissionSavedRemoveResponse = V2PermissionSavedRemoveResponses[keyof V2PermissionSavedRemoveResponses]
 
+export type V2SessionPermissionListData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/permission"
+}
+
+export type V2SessionPermissionListErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundError
+}
+
+export type V2SessionPermissionListError = V2SessionPermissionListErrors[keyof V2SessionPermissionListErrors]
+
+export type V2SessionPermissionListResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<PermissionV2Request>
+  }
+}
+
+export type V2SessionPermissionListResponse = V2SessionPermissionListResponses[keyof V2SessionPermissionListResponses]
+
+export type V2SessionPermissionReplyData = {
+  body: {
+    reply: PermissionV2Reply
+    message?: string
+  }
+  path: {
+    sessionID: string
+    requestID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/permission/{requestID}/reply"
+}
+
+export type V2SessionPermissionReplyErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError | PermissionNotFoundError
+   */
+  404: PermissionNotFoundError | SessionNotFoundError
+}
+
+export type V2SessionPermissionReplyError = V2SessionPermissionReplyErrors[keyof V2SessionPermissionReplyErrors]
+
+export type V2SessionPermissionReplyResponses = {
+  /**
+   * <No Content>
+   */
+  204: void
+}
+
+export type V2SessionPermissionReplyResponse =
+  V2SessionPermissionReplyResponses[keyof V2SessionPermissionReplyResponses]
+
 export type V2FsReadData = {
   body?: never
   path?: never
@@ -11138,7 +10058,6 @@ export type V2FsReadData = {
       workspace?: string
     }
     path: string
-    reference?: string
   }
   url: "/api/fs/read"
 }
@@ -11162,7 +10081,7 @@ export type V2FsReadResponses = {
    */
   200: {
     location: LocationInfo
-    data: FileSystemTextContent | FileSystemBinaryContent
+    data: FileSystemContent
   }
 }
 
@@ -11177,7 +10096,6 @@ export type V2FsListData = {
       workspace?: string
     }
     path?: string
-    reference?: string
   }
   url: "/api/fs/list"
 }
@@ -11206,6 +10124,46 @@ export type V2FsListResponses = {
 }
 
 export type V2FsListResponse = V2FsListResponses[keyof V2FsListResponses]
+
+export type V2FsFindData = {
+  body?: never
+  path?: never
+  query: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+    query: string
+    type?: "file" | "directory"
+    limit?: string
+  }
+  url: "/api/fs/find"
+}
+
+export type V2FsFindErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+}
+
+export type V2FsFindError = V2FsFindErrors[keyof V2FsFindErrors]
+
+export type V2FsFindResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: Array<FileSystemEntry>
+  }
+}
+
+export type V2FsFindResponse = V2FsFindResponses[keyof V2FsFindResponses]
 
 export type V2CommandListData = {
   body?: never
@@ -11359,7 +10317,7 @@ export type V2SessionQuestionReplyData = {
     requestID: string
   }
   query?: never
-  url: "/api/session/{sessionID}/question/request/{requestID}/reply"
+  url: "/api/session/{sessionID}/question/{requestID}/reply"
 }
 
 export type V2SessionQuestionReplyErrors = {
@@ -11374,7 +10332,7 @@ export type V2SessionQuestionReplyErrors = {
   /**
    * SessionNotFoundError | QuestionNotFoundError
    */
-  404: SessionNotFoundError | QuestionNotFoundError
+  404: QuestionNotFoundError | SessionNotFoundError
 }
 
 export type V2SessionQuestionReplyError = V2SessionQuestionReplyErrors[keyof V2SessionQuestionReplyErrors]
@@ -11395,7 +10353,7 @@ export type V2SessionQuestionRejectData = {
     requestID: string
   }
   query?: never
-  url: "/api/session/{sessionID}/question/request/{requestID}/reject"
+  url: "/api/session/{sessionID}/question/{requestID}/reject"
 }
 
 export type V2SessionQuestionRejectErrors = {
@@ -11410,7 +10368,7 @@ export type V2SessionQuestionRejectErrors = {
   /**
    * SessionNotFoundError | QuestionNotFoundError
    */
-  404: SessionNotFoundError | QuestionNotFoundError
+  404: QuestionNotFoundError | SessionNotFoundError
 }
 
 export type V2SessionQuestionRejectError = V2SessionQuestionRejectErrors[keyof V2SessionQuestionRejectErrors]
@@ -11423,6 +10381,43 @@ export type V2SessionQuestionRejectResponses = {
 }
 
 export type V2SessionQuestionRejectResponse = V2SessionQuestionRejectResponses[keyof V2SessionQuestionRejectResponses]
+
+export type V2ReferenceListData = {
+  body?: never
+  path?: never
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
+  url: "/api/reference"
+}
+
+export type V2ReferenceListErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+}
+
+export type V2ReferenceListError = V2ReferenceListErrors[keyof V2ReferenceListErrors]
+
+export type V2ReferenceListResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: Array<ReferenceInfo>
+  }
+}
+
+export type V2ReferenceListResponse = V2ReferenceListResponses[keyof V2ReferenceListResponses]
 
 export type PtyConnectData = {
   body?: never

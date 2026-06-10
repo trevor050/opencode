@@ -1,3 +1,6 @@
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { httpClient } from "@opencode-ai/core/effect/layer-node-platform"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { PlanExitTool } from "./plan"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
@@ -23,7 +26,6 @@ import { Plugin } from "../plugin"
 import { Provider } from "@/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { WebSearchTool } from "./websearch"
-import * as Log from "@opencode-ai/core/util/log"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
@@ -34,7 +36,6 @@ import { Effect, Layer, Context } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Ripgrep } from "@opencode-ai/core/filesystem/ripgrep"
 import { Format } from "../format"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectBridge } from "@/effect/bridge"
@@ -48,7 +49,6 @@ import { Bus } from "@/bus"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
-import { Reference } from "@/reference/reference"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
 import { SessionStatus } from "@/session/status"
@@ -74,8 +74,6 @@ import { CommandSuperviseTool } from "./command_supervise"
 import { EvidenceNormalizeTool } from "./evidence_normalize"
 import { ToolAcquireTool } from "./tool_acquire"
 import { LaptopPreflightTool } from "./laptop_preflight"
-
-const log = Log.create({ service: "tool.registry" })
 
 export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
   return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
@@ -104,39 +102,12 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ToolRegistry") {}
 
-export const layer: Layer.Layer<
-  Service,
-  never,
-  | Config.Service
-  | Plugin.Service
-  | Question.Service
-  | Todo.Service
-  | Agent.Service
-  | Skill.Service
-  | Session.Service
-  | SessionStatus.Service
-  | BackgroundJob.Service
-  | Provider.Service
-  | Reference.Service
-  | LSP.Service
-  | Instruction.Service
-  | FSUtil.Service
-  | Bus.Service
-  | EventV2Bridge.Service
-  | HttpClient.HttpClient
-  | ChildProcessSpawner
-  | Ripgrep.Service
-  | Format.Service
-  | Truncate.Service
-  | RuntimeFlags.Service
-  | Database.Service
-> = Layer.effect(
+export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
     const plugin = yield* Plugin.Service
     const agents = yield* Agent.Service
-    const skill = yield* Skill.Service
     const truncate = yield* Truncate.Service
     const flags = yield* RuntimeFlags.Service
 
@@ -364,25 +335,6 @@ export const layer: Layer.Layer<
       return (yield* all()).map((tool) => tool.id)
     })
 
-    const describeSkill = Effect.fn("ToolRegistry.describeSkill")(function* (agent: Agent.Info) {
-      const list = yield* skill.available(agent)
-      if (list.length === 0) return "No skills are currently available."
-      return [
-        "Load a specialized skill that provides domain-specific instructions and workflows.",
-        "",
-        "When you recognize that a task matches one of the available skills listed below, use this tool to load the full skill instructions.",
-        "",
-        "The skill will inject detailed instructions, workflows, and access to bundled resources (scripts, references, templates) into the conversation context.",
-        "",
-        'Tool output includes a `<skill_content name="...">` block with the loaded content.',
-        "",
-        "The following skills provide specialized sets of instructions for particular tasks",
-        "Invoke this tool to load a skill when a task matches one of the available skills listed below:",
-        "",
-        Skill.fmt(list, { verbose: false }),
-      ].join("\n")
-    })
-
     const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (agent: Agent.Info) {
       const items = (yield* agents.list()).filter((item) => item.mode !== "primary")
       const filtered = items.filter(
@@ -415,7 +367,6 @@ export const layer: Layer.Layer<
       return yield* Effect.forEach(
         filtered,
         Effect.fnUntraced(function* (tool: Tool.Def) {
-          using _ = log.time(tool.id)
           const output = {
             description: tool.description,
             parameters: tool.parameters,
@@ -428,11 +379,7 @@ export const layer: Layer.Layer<
               : undefined
           return {
             id: tool.id,
-            description: [
-              output.description,
-              tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
-              tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,
-            ]
+            description: [output.description, tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined]
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,
@@ -454,7 +401,7 @@ export const layer: Layer.Layer<
   }),
 )
 
-export const defaultLayer = Layer.suspend(() =>
+export const defaultLayer: Layer.Layer<Service> = Layer.suspend(() =>
   layer
     .pipe(
       Layer.provide(Config.defaultLayer),
@@ -466,7 +413,6 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Session.defaultLayer),
       Layer.provide(Layer.mergeAll(SessionStatus.defaultLayer, BackgroundJob.defaultLayer)),
       Layer.provide(Provider.defaultLayer),
-      Layer.provide(Reference.defaultLayer),
       Layer.provide(LSP.defaultLayer),
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(FSUtil.defaultLayer),
@@ -475,10 +421,10 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(EventV2Bridge.defaultLayer),
       Layer.provide(FetchHttpClient.layer),
       Layer.provide(Format.defaultLayer),
+      Layer.provide(Ripgrep.defaultLayer),
     )
     .pipe(
       Layer.provide(CrossSpawnSpawner.defaultLayer),
-      Layer.provide(Ripgrep.defaultLayer),
       Layer.provide(Truncate.defaultLayer),
     )
     .pipe(Layer.provide(RuntimeFlags.defaultLayer)),
@@ -529,5 +475,29 @@ function normalizeZodJsonSchema(value: unknown): unknown {
 function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
+
+export const node = LayerNode.make(layer.pipe(Layer.provide(Ripgrep.defaultLayer)), [
+  Config.node,
+  Plugin.node,
+  Question.node,
+  Todo.node,
+  Agent.node,
+  Skill.node,
+  Session.node,
+  SessionStatus.node,
+  BackgroundJob.node,
+  Provider.node,
+  LSP.node,
+  Instruction.node,
+  FSUtil.node,
+  Bus.node,
+  EventV2Bridge.node,
+  httpClient,
+  CrossSpawnSpawner.node,
+  Format.node,
+  Truncate.node,
+  RuntimeFlags.node,
+  Database.node,
+])
 
 export * as ToolRegistry from "./registry"

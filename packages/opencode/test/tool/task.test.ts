@@ -9,6 +9,7 @@ import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -55,7 +56,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = { experimentalBackgroundSubag
     ToolRegistry.defaultLayer,
     Database.defaultLayer,
     RuntimeFlags.layer(flags),
-  ).pipe(Layer.provide(Bus.layer))
+  ).pipe(Layer.provide(Layer.mergeAll(Bus.layer, Ripgrep.defaultLayer)))
 
 const it = testEffect(layer())
 
@@ -429,19 +430,15 @@ describe("tool.task", () => {
           {
             permission: "bash",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
           {
             permission: "read",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
         ])
-        expect(seen?.tools).toEqual({
-          todowrite: false,
-          bash: false,
-          read: false,
-        })
+        expect(seen?.tools).toBeUndefined()
       }),
     {
       config: {

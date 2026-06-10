@@ -23,7 +23,7 @@ import { SyncApi } from "./groups/sync"
 import { TuiApi } from "./groups/tui"
 import { UlmApi } from "./groups/ulm"
 import { WorkspaceApi } from "./groups/workspace"
-import { V2Api } from "@opencode-ai/server/api"
+import { Api } from "@opencode-ai/server/api"
 // GlobalEventSchema snapshots the registry after event-producing groups register their variants.
 import { GlobalApi } from "./groups/global"
 import { Authorization } from "./middleware/authorization"
@@ -92,7 +92,7 @@ export const OpenCodeHttpApi = HttpApi.make("opencode")
   .addHttpApi(RootHttpApi)
   .addHttpApi(EventApi)
   .addHttpApi(InstanceHttpApi)
-  .addHttpApi(V2Api)
+  .addHttpApi(Api)
   .addHttpApi(PtyConnectApi)
   .annotate(HttpApi.AdditionalSchemas, AdditionalSchemas)
 

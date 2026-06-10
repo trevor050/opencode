@@ -97,6 +97,10 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
     async connect(transport: { start: () => Promise<void> }) {
       await transport.start()
     }
+
+    getServerCapabilities() {
+      return { tools: {} }
+    }
   },
 }))
 

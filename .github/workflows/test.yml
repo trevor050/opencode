@@ -23,7 +23,6 @@ env:
 jobs:
   unit:
     name: unit (${{ matrix.settings.name }})
-    if: (github.repository == 'anomalyco/opencode' || github.event_name != 'push') && (github.repository == 'anomalyco/opencode' || matrix.settings.name == 'linux')
     strategy:
       fail-fast: false
       matrix:
@@ -32,18 +31,18 @@ jobs:
             host: blacksmith-4vcpu-ubuntu-2404
           - name: windows
             host: blacksmith-4vcpu-windows-2025
-    runs-on: ${{ github.repository == 'anomalyco/opencode' && matrix.settings.host || (matrix.settings.name == 'windows' && 'windows-latest' || 'ubuntu-latest') }}
+    runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
         shell: bash
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
 
@@ -56,7 +55,7 @@ jobs:
           git config --global user.name "opencode"
 
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: node_modules/.cache/turbo
           key: turbo-${{ runner.os }}-${{ hashFiles('turbo.json', '**/package.json') }}-${{ github.sha }}
@@ -65,43 +64,18 @@ jobs:
             turbo-${{ runner.os }}-
 
       - name: Run unit tests
-        if: github.repository == 'anomalyco/opencode'
         timeout-minutes: 20
-        run: bun turbo test:ci --log-order=stream --log-prefix=task
+        run: bun turbo test --output-logs=errors-only --log-order=grouped --log-prefix=task
         env:
           OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
 
-      - name: Skip unit tests on forks
-        if: github.repository != 'anomalyco/opencode'
-        run: echo "Skipping heavy unit matrix on fork repository"
       - name: Run HttpApi exerciser gates
-        if: github.repository == 'anomalyco/opencode' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         working-directory: packages/opencode
         run: bun run test:httpapi
 
-      - name: Publish unit reports
-        if: always() && github.repository == 'anomalyco/opencode'
-        uses: mikepenz/action-junit-report@v6
-        with:
-          report_paths: packages/*/.artifacts/unit/junit.xml
-          check_name: "unit results (${{ matrix.settings.name }})"
-          detailed_summary: true
-          include_time_in_summary: true
-          fail_on_failure: false
-
-      - name: Upload unit artifacts
-        if: always() && github.repository == 'anomalyco/opencode'
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-${{ matrix.settings.name }}-${{ github.run_attempt }}
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
-          path: packages/*/.artifacts/unit/junit.xml
-
   e2e:
     name: e2e (${{ matrix.settings.name }})
-    if: (github.repository == 'anomalyco/opencode' || github.event_name != 'push') && (github.repository == 'anomalyco/opencode' || matrix.settings.name == 'linux')
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +84,7 @@ jobs:
             host: blacksmith-4vcpu-ubuntu-2404
           - name: windows
             host: blacksmith-4vcpu-windows-2025
-    runs-on: ${{ github.repository == 'anomalyco/opencode' && matrix.settings.host || (matrix.settings.name == 'windows' && 'windows-latest' || 'ubuntu-latest') }}
+    runs-on: ${{ matrix.settings.host }}
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
     defaults:
@@ -118,12 +92,12 @@ jobs:
         shell: bash
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
 
@@ -131,50 +105,41 @@ jobs:
         uses: ./.github/actions/setup-bun
 
       - name: Read Playwright version
-        if: github.repository == 'anomalyco/opencode'
         id: playwright-version
         run: |
           version=$(node -e 'console.log(require("./package.json").workspaces.catalog["@playwright/test"])')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        if: github.repository == 'anomalyco/opencode'
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.playwright-browsers
           key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
 
       - name: Install Playwright system dependencies
-        if: github.repository == 'anomalyco/opencode' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         working-directory: packages/app
         run: bunx playwright install-deps chromium
 
       - name: Install Playwright browsers
-        if: github.repository == 'anomalyco/opencode' && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: packages/app
         run: bunx playwright install chromium
 
       - name: Run app e2e tests
-        if: github.repository == 'anomalyco/opencode'
         run: bun --cwd packages/app test:e2e:local
         env:
           CI: true
-          PLAYWRIGHT_JUNIT_OUTPUT: e2e/junit-${{ matrix.settings.name }}.xml
         timeout-minutes: 30
 
-      - name: Skip e2e tests on forks
-        if: github.repository != 'anomalyco/opencode'
-        run: echo "Skipping heavy e2e matrix on fork repository"
-
       - name: Upload Playwright artifacts
-        if: always() && github.repository == 'anomalyco/opencode'
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-${{ matrix.settings.name }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 7
           path: |
-            packages/app/e2e/junit-*.xml
             packages/app/e2e/test-results
             packages/app/e2e/playwright-report
