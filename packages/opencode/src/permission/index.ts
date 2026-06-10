@@ -1,150 +1,60 @@
-import { ConfigPermission } from "@/config/permission"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { InstanceState } from "@/effect/instance-state"
-import { ProjectV2 } from "@opencode-ai/core/project"
-import { MessageID, SessionID } from "@/session/schema"
-import { PermissionTable } from "@opencode-ai/core/session/sql"
-import { Database } from "@opencode-ai/core/database/database"
-import { eq } from "drizzle-orm"
-import * as Log from "@opencode-ai/core/util/log"
 import { Wildcard } from "@opencode-ai/core/util/wildcard"
-import { Deferred, Effect, Layer, Schema, Context } from "effect"
+import { Deferred, Effect, Layer, Context } from "effect"
 import os from "os"
-import { evaluate as evalRule } from "./evaluate"
-import { PermissionID } from "./schema"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { activeOperationForContext, operationAllowsUnattendedFallback } from "@/ulm/operation-context"
 import { isSensitiveOperatorPrompt, operatorFallbackWaitMillis, recordOperatorTimeout } from "@/ulm/operator-timeout"
 import { readULMConfig } from "@/ulm/config"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 
-const log = Log.create({ service: "permission" })
 const OPERATOR_ACTIVITY_HOLD_MILLIS = 30_000
 const OPERATOR_ACTIVITY_RESET_MILLIS = 300_000
 
-export const Action = Schema.Literals(["allow", "deny", "ask"]).annotate({ identifier: "PermissionAction" })
-export type Action = Schema.Schema.Type<typeof Action>
-
-export const Rule = Schema.Struct({
-  permission: Schema.String,
-  pattern: Schema.String,
-  action: Action,
-}).annotate({ identifier: "PermissionRule" })
-export type Rule = Schema.Schema.Type<typeof Rule>
-
-export const Ruleset = Schema.mutable(Schema.Array(Rule)).annotate({ identifier: "PermissionRuleset" })
-export type Ruleset = Schema.Schema.Type<typeof Ruleset>
-
-export class Request extends Schema.Class<Request>("PermissionRequest")({
-  id: PermissionID,
-  sessionID: SessionID,
-  createdAt: Schema.optional(Schema.String),
-  timeoutAt: Schema.optional(Schema.String),
-  holdUntil: Schema.optional(Schema.String),
-  permission: Schema.String,
-  patterns: Schema.Array(Schema.String),
-  metadata: Schema.Record(Schema.String, Schema.Unknown),
-  always: Schema.Array(Schema.String),
-  tool: Schema.optional(
-    Schema.Struct({
-      messageID: MessageID,
-      callID: Schema.String,
-    }),
-  ),
-}) {}
-
-export const Reply = Schema.Literals(["once", "always", "reject"])
-export type Reply = Schema.Schema.Type<typeof Reply>
-
-const reply = {
-  reply: Reply,
-  message: Schema.optional(Schema.String),
-}
-
-export const ReplyBody = Schema.Struct(reply).annotate({ identifier: "PermissionReplyBody" })
-export type ReplyBody = Schema.Schema.Type<typeof ReplyBody>
-
-export class Approval extends Schema.Class<Approval>("PermissionApproval")({
-  projectID: ProjectV2.ID,
-  patterns: Schema.Array(Schema.String),
-}) {}
-
 export const Event = {
-  Asked: EventV2.define({ type: "permission.asked", schema: Request.fields }),
+  Asked: EventV2.define({ type: "permission.asked", schema: PermissionV1.Request.fields }),
   Replied: EventV2.define({
     type: "permission.replied",
     schema: {
-      sessionID: SessionID,
-      requestID: PermissionID,
-      reply: Reply,
+      sessionID: PermissionV1.Request.fields.sessionID,
+      requestID: PermissionV1.ID,
+      reply: PermissionV1.Reply,
     },
   }),
 }
 
-export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("PermissionRejectedError", {}) {
-  override get message() {
-    return "The user rejected permission to use this specific tool call."
-  }
-}
-
-export class CorrectedError extends Schema.TaggedErrorClass<CorrectedError>()("PermissionCorrectedError", {
-  feedback: Schema.String,
-}) {
-  override get message() {
-    return `The user rejected permission to use this specific tool call with the following feedback: ${this.feedback}`
-  }
-}
-
-export class DeniedError extends Schema.TaggedErrorClass<DeniedError>()("PermissionDeniedError", {
-  ruleset: Schema.Any,
-}) {
-  override get message() {
-    return `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${JSON.stringify(this.ruleset)}`
-  }
-}
-
-export type Error = DeniedError | RejectedError | CorrectedError
-
-export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Permission.NotFoundError", {
-  requestID: PermissionID,
-}) {}
-
-export const AskInput = Schema.Struct({
-  ...Request.fields,
-  id: Schema.optional(PermissionID),
-  createdAt: Schema.optional(Schema.String),
-  timeoutAt: Schema.optional(Schema.String),
-  holdUntil: Schema.optional(Schema.String),
-  ruleset: Ruleset,
-}).annotate({ identifier: "PermissionAskInput" })
-export type AskInput = Schema.Schema.Type<typeof AskInput>
-
-export const ReplyInput = Schema.Struct({
-  requestID: PermissionID,
-  ...reply,
-}).annotate({ identifier: "PermissionReplyInput" })
-export type ReplyInput = Schema.Schema.Type<typeof ReplyInput>
-
 export interface Interface {
-  readonly ask: (input: AskInput) => Effect.Effect<void, Error>
-  readonly touch: (input: { requestID: PermissionID; holdMillis?: number }) => Effect.Effect<boolean>
-  readonly reply: (input: ReplyInput) => Effect.Effect<void, NotFoundError>
-  readonly list: () => Effect.Effect<ReadonlyArray<Request>>
+  readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<void, PermissionV1.Error>
+  readonly touch: (input: { requestID: PermissionV1.ID; holdMillis?: number }) => Effect.Effect<boolean>
+  readonly reply: (input: PermissionV1.ReplyInput) => Effect.Effect<void, PermissionV1.NotFoundError>
+  readonly list: () => Effect.Effect<ReadonlyArray<PermissionV1.Request>>
 }
 
 interface PendingEntry {
-  info: Request
-  deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+  info: PermissionV1.Request
+  deferred: Deferred.Deferred<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>
   timeoutExpiresAt?: number
   timeoutWindowMillis?: number
 }
 
 interface State {
-  pending: Map<PermissionID, PendingEntry>
-  approved: Ruleset
+  pending: Map<PermissionV1.ID, PendingEntry>
+  approved: PermissionV1.Rule[]
 }
 
-export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
-  return evalRule(permission, pattern, ...rulesets)
+export function evaluate(permission: string, pattern: string, ...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule {
+  return (
+    rulesets
+      .flat()
+      .findLast((rule) => Wildcard.match(permission, rule.permission) && Wildcard.match(pattern, rule.pattern)) ?? {
+      action: "ask",
+      permission,
+      pattern: "*",
+    }
+  )
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
@@ -153,24 +63,18 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const events = yield* EventV2Bridge.Service
-    const { db } = yield* Database.Service
     const state = yield* InstanceState.make<State>(
       Effect.fn("Permission.state")(function* (ctx) {
-        const row = yield* db
-          .select()
-          .from(PermissionTable)
-          .where(eq(PermissionTable.project_id, ctx.project.id))
-          .get()
-          .pipe(Effect.orDie)
+        void ctx
         const state = {
-          pending: new Map<PermissionID, PendingEntry>(),
-          approved: [...(row?.data ?? [])],
+          pending: new Map<PermissionV1.ID, PendingEntry>(),
+          approved: [],
         }
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
             for (const item of state.pending.values()) {
-              yield* Deferred.fail(item.deferred, new RejectedError())
+              yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
             }
             state.pending.clear()
           }),
@@ -180,16 +84,16 @@ export const layer = Layer.effect(
       }),
     )
 
-    const ask = Effect.fn("Permission.ask")(function* (input: AskInput) {
+    const ask = Effect.fn("Permission.ask")(function* (input: PermissionV1.AskInput) {
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
 
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
-        log.info("evaluated", { permission: request.permission, pattern, action: rule })
+        yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
-          return yield* new DeniedError({
+          return yield* new PermissionV1.DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
@@ -199,14 +103,15 @@ export const layer = Layer.effect(
 
       if (!needsAsk) return
 
-      const id = request.id ?? PermissionID.ascending()
+      const id = request.id ?? PermissionV1.ID.ascending()
       const ctx = yield* InstanceState.context
       const operation = yield* Effect.promise(() => activeOperationForContext({ ...ctx, sessionID: request.sessionID }))
       const ulmConfig = yield* Effect.promise(() => readULMConfig(ctx))
       const activeOperation = operation && operationAllowsUnattendedFallback(operation.goal, ulmConfig) ? operation : undefined
       const timeoutMillis =
-        activeOperation !== undefined
-          ? yield* Effect.promise(() =>
+        activeOperation === undefined
+          ? undefined
+          : yield* Effect.promise(() =>
               operatorFallbackWaitMillis(activeOperation.worktree, {
                 operationID: activeOperation.operationID,
                 kind: "permission",
@@ -214,18 +119,22 @@ export const layer = Layer.effect(
                 config: ulmConfig,
               }),
             )
-          : undefined
       const now = Date.now()
       const timeoutExpiresAt = timeoutMillis === undefined ? undefined : now + timeoutMillis
-      const info = Schema.decodeUnknownSync(Request)({
+      const info: PermissionV1.Request = {
         id,
-        ...request,
         createdAt: new Date(now).toISOString(),
         timeoutAt: timeoutExpiresAt === undefined ? undefined : new Date(timeoutExpiresAt).toISOString(),
-      })
-      log.info("asking", { id, permission: info.permission, patterns: info.patterns })
+        sessionID: request.sessionID,
+        permission: request.permission,
+        patterns: request.patterns,
+        metadata: request.metadata,
+        always: request.always,
+        tool: request.tool,
+      }
+      yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
 
-      const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
+      const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
       pending.set(id, { info, deferred, timeoutExpiresAt, timeoutWindowMillis: timeoutMillis })
       yield* events.publish(Event.Asked, info)
       const timeout =
@@ -239,39 +148,30 @@ export const layer = Layer.effect(
                 if (remaining <= 0) break
                 yield* Effect.sleep(`${remaining} millis`)
               }
-              return yield* Effect.gen(function* () {
-                if (!pending.has(id)) return
-                pending.delete(id)
-                const sensitive = isSensitiveOperatorPrompt(
-                  [info.permission, ...info.patterns, JSON.stringify(info.metadata)].join(" "),
-                )
-                yield* Effect.promise(() =>
-                  recordOperatorTimeout(activeOperation.worktree, {
-                    operationID: activeOperation.operationID,
-                    kind: "permission",
-                    requestID: String(id),
-                    sessionID: info.sessionID,
-                    fallback: "reject",
-                    prompt: `${info.permission}: ${info.patterns.join(", ")}`,
-                    sensitive,
-                  }),
-                )
-                yield* events.publish(Event.Replied, {
+              if (!pending.has(id)) return
+              pending.delete(id)
+              const sensitive = isSensitiveOperatorPrompt(
+                [info.permission, ...info.patterns, JSON.stringify(info.metadata)].join(" "),
+              )
+              yield* Effect.promise(() =>
+                recordOperatorTimeout(activeOperation.worktree, {
+                  operationID: activeOperation.operationID,
+                  kind: "permission",
+                  requestID: String(id),
                   sessionID: info.sessionID,
-                  requestID: info.id,
-                  reply: "reject",
-                })
-                yield* Deferred.fail(
-                  deferred,
-                  new CorrectedError({
-                    feedback:
-                      "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
-                  }),
-                )
-                return yield* new CorrectedError({
-                  feedback:
-                    "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
-                })
+                  fallback: "reject",
+                  prompt: `${info.permission}: ${info.patterns.join(", ")}`,
+                  sensitive,
+                }),
+              )
+              yield* events.publish(Event.Replied, {
+                sessionID: info.sessionID,
+                requestID: info.id,
+                reply: "reject",
+              })
+              return yield* new PermissionV1.CorrectedError({
+                feedback:
+                  "The operator is absent. Permission timed out and was rejected by unattended ULM policy; continue within existing authorized scope without retrying this same request.",
               })
             })
       return yield* Effect.ensuring(
@@ -282,7 +182,7 @@ export const layer = Layer.effect(
       )
     })
 
-    const touch = Effect.fn("Permission.touch")(function* (input: { requestID: PermissionID; holdMillis?: number }) {
+    const touch = Effect.fn("Permission.touch")(function* (input: { requestID: PermissionV1.ID; holdMillis?: number }) {
       const entry = (yield* InstanceState.get(state)).pending.get(input.requestID)
       if (!entry?.timeoutExpiresAt) return false
       const holdUntil =
@@ -293,19 +193,19 @@ export const layer = Layer.effect(
           OPERATOR_ACTIVITY_RESET_MILLIS,
         )
       entry.timeoutExpiresAt = Math.max(entry.timeoutExpiresAt, holdUntil)
-      entry.info = Schema.decodeUnknownSync(Request)({
+      entry.info = {
         ...entry.info,
         timeoutAt: new Date(entry.timeoutExpiresAt).toISOString(),
         holdUntil: new Date(holdUntil).toISOString(),
-      })
+      }
       yield* events.publish(Event.Asked, entry.info)
       return true
     })
 
-    const reply = Effect.fn("Permission.reply")(function* (input: ReplyInput) {
+    const reply = Effect.fn("Permission.reply")(function* (input: PermissionV1.ReplyInput) {
       const { approved, pending } = yield* InstanceState.get(state)
       const existing = pending.get(input.requestID)
-      if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+      if (!existing) return yield* new PermissionV1.NotFoundError({ requestID: input.requestID })
 
       pending.delete(input.requestID)
       yield* events.publish(Event.Replied, {
@@ -317,7 +217,9 @@ export const layer = Layer.effect(
       if (input.reply === "reject") {
         yield* Deferred.fail(
           existing.deferred,
-          input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
+          input.message
+            ? new PermissionV1.CorrectedError({ feedback: input.message })
+            : new PermissionV1.RejectedError(),
         )
 
         for (const [id, item] of pending.entries()) {
@@ -328,7 +230,7 @@ export const layer = Layer.effect(
             requestID: item.info.id,
             reply: "reject",
           })
-          yield* Deferred.fail(item.deferred, new RejectedError())
+          yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
         }
         return
       }
@@ -377,8 +279,8 @@ function expand(pattern: string): string {
   return pattern
 }
 
-export function fromConfig(permission: ConfigPermission.Info) {
-  const ruleset: Ruleset = []
+export function fromConfig(permission: ConfigPermissionV1.Info) {
+  const ruleset: PermissionV1.Rule[] = []
   for (const [key, value] of Object.entries(permission)) {
     if (typeof value === "string") {
       ruleset.push({ permission: key, action: value, pattern: "*" })
@@ -391,23 +293,23 @@ export function fromConfig(permission: ConfigPermission.Info) {
   return ruleset
 }
 
-export function merge(...rulesets: Ruleset[]): Ruleset {
+export function merge(...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule[] {
   return rulesets.flat()
 }
 
-const EDIT_TOOLS = ["edit", "write", "apply_patch"]
-
-export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
-  const result = new Set<string>()
-  for (const tool of tools) {
-    const permission = EDIT_TOOLS.includes(tool) ? "edit" : tool
-    const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
-    if (!rule) continue
-    if (rule.pattern === "*" && rule.action === "deny") result.add(tool)
-  }
-  return result
+export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<string> {
+  const edits = ["edit", "write", "apply_patch"]
+  return new Set(
+    tools.filter((tool) => {
+      const permission = edits.includes(tool) ? "edit" : tool
+      const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
+      return rule?.pattern === "*" && rule.action === "deny"
+    }),
+  )
 }
 
-export const defaultLayer = layer.pipe(Layer.provide(Database.defaultLayer), Layer.provide(EventV2Bridge.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(EventV2Bridge.defaultLayer))
+
+export const node = LayerNode.make(layer, [EventV2Bridge.node])
 
 export * as Permission from "."

@@ -4,7 +4,6 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import * as Log from "@opencode-ai/core/util/log"
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -15,8 +14,6 @@ import { GlobalUpgradeInput } from "../groups/global"
 import { globalEventReplay } from "@/server/global-event-replay"
 import { parseLastEventId, type StoredEvent } from "@/server/sse-replay"
 import { GlobalBus } from "@/bus/global"
-
-const log = Log.create({ service: "server" })
 
 type QueueItem = { id?: number; data: string }
 
@@ -42,64 +39,65 @@ function queueItem(data: unknown): QueueItem {
 }
 
 function eventResponse(request: HttpServerRequest.HttpServerRequest) {
-  log.info("global event connected")
-  const replayFrom = parseLastEventId(request.headers["last-event-id"] ?? request.headers["Last-Event-ID"])
-  const events = Stream.callback<QueueItem>((queue) => {
-    let replaying = true
-    const pending: StoredEvent[] = []
-    let lastQueuedId = 0
-    const offerStoredEvent = (event: StoredEvent) => {
-      if (event.id <= lastQueuedId) return
-      lastQueuedId = event.id
-      Queue.offerUnsafe(queue, event)
-    }
-    const handler = (event: StoredEvent) => {
-      if (replaying) pending.push(event)
-      else offerStoredEvent(event)
-    }
-    return Effect.acquireRelease(
-      Effect.sync(() => {
-        const unsubscribe = globalEventReplay.subscribe(handler)
-        const heartbeat = setInterval(() => {
+  return Effect.gen(function* () {
+    yield* Effect.logInfo("global event connected")
+    const replayFrom = parseLastEventId(request.headers["last-event-id"] ?? request.headers["Last-Event-ID"])
+    const events = Stream.callback<QueueItem>((queue) => {
+      let replaying = true
+      const pending: StoredEvent[] = []
+      let lastQueuedId = 0
+      const offerStoredEvent = (event: StoredEvent) => {
+        if (event.id <= lastQueuedId) return
+        lastQueuedId = event.id
+        Queue.offerUnsafe(queue, event)
+      }
+      const handler = (event: StoredEvent) => {
+        if (replaying) pending.push(event)
+        else offerStoredEvent(event)
+      }
+      return Effect.acquireRelease(
+        Effect.sync(() => {
+          const unsubscribe = globalEventReplay.subscribe(handler)
+          const heartbeat = setInterval(() => {
+            Queue.offerUnsafe(
+              queue,
+              queueItem({ payload: { id: EventV2.ID.create(), type: "server.heartbeat", properties: {} } }),
+            )
+          }, 10_000)
           Queue.offerUnsafe(
             queue,
-            queueItem({ payload: { id: EventV2.ID.create(), type: "server.heartbeat", properties: {} } }),
+            queueItem({ payload: { id: EventV2.ID.create(), type: "server.connected", properties: {} } }),
           )
-        }, 10_000)
-        Queue.offerUnsafe(
-          queue,
-          queueItem({ payload: { id: EventV2.ID.create(), type: "server.connected", properties: {} } }),
-        )
-        const missed = globalEventReplay.eventsAfter(replayFrom)
-        if (missed.length > 0) log.info("global event replay", { lastEventId: replayFrom, replayed: missed.length })
-        for (const event of missed) offerStoredEvent(event)
-        replaying = false
-        for (const event of pending) offerStoredEvent(event)
-        return () => {
-          clearInterval(heartbeat)
-          unsubscribe()
-        }
-      }),
-      (unsubscribe) => Effect.sync(unsubscribe),
+          const missed = globalEventReplay.eventsAfter(replayFrom)
+          for (const event of missed) offerStoredEvent(event)
+          replaying = false
+          for (const event of pending) offerStoredEvent(event)
+          return () => {
+            clearInterval(heartbeat)
+            unsubscribe()
+          }
+        }),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      )
+    })
+
+    return HttpServerResponse.stream(
+      events.pipe(
+        Stream.map(eventData),
+        Stream.pipeThroughChannel(Sse.encode()),
+        Stream.encodeText,
+        Stream.ensuring(Effect.logInfo("global event disconnected")),
+      ),
+      {
+        contentType: "text/event-stream",
+        headers: {
+          "Cache-Control": "no-cache, no-transform",
+          "X-Accel-Buffering": "no",
+          "X-Content-Type-Options": "nosniff",
+        },
+      },
     )
   })
-
-  return HttpServerResponse.stream(
-    events.pipe(
-      Stream.map(eventData),
-      Stream.pipeThroughChannel(Sse.encode()),
-      Stream.encodeText,
-      Stream.ensuring(Effect.sync(() => log.info("global event disconnected"))),
-    ),
-    {
-      contentType: "text/event-stream",
-      headers: {
-        "Cache-Control": "no-cache, no-transform",
-        "X-Accel-Buffering": "no",
-        "X-Content-Type-Options": "nosniff",
-      },
-    },
-  )
 }
 
 export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handlers) =>
@@ -115,7 +113,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
     const event = Effect.fn("GlobalHttpApi.event")(function* (ctx: {
       request: HttpServerRequest.HttpServerRequest
     }) {
-      return eventResponse(ctx.request)
+      return yield* eventResponse(ctx.request)
     })
 
     const configGet = Effect.fn("GlobalHttpApi.configGet")(function* () {

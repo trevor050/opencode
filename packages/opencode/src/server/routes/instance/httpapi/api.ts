@@ -6,6 +6,7 @@ import { Question } from "@/question"
 import { OperationEvent } from "@/ulm/event"
 import { ConfigApi } from "./groups/config"
 import { ControlApi } from "./groups/control"
+import { ControlPlaneApi } from "./groups/control-plane"
 import { EventApi } from "./groups/event"
 import { ExperimentalApi } from "./groups/experimental"
 import { FileApi } from "./groups/file"
@@ -13,6 +14,7 @@ import { InstanceApi } from "./groups/instance"
 import { McpApi } from "./groups/mcp"
 import { PermissionApi } from "./groups/permission"
 import { ProjectApi } from "./groups/project"
+import { ProjectCopyApi } from "./groups/project-copy"
 import { ProviderApi } from "./groups/provider"
 import { PtyApi, PtyConnectApi } from "./groups/pty"
 import { QuestionApi } from "./groups/question"
@@ -21,7 +23,7 @@ import { SyncApi } from "./groups/sync"
 import { TuiApi } from "./groups/tui"
 import { UlmApi } from "./groups/ulm"
 import { WorkspaceApi } from "./groups/workspace"
-import { V2Api } from "./groups/v2"
+import { Api } from "@opencode-ai/server/api"
 // GlobalEventSchema snapshots the registry after event-producing groups register their variants.
 import { GlobalApi } from "./groups/global"
 import { Authorization } from "./middleware/authorization"
@@ -40,7 +42,7 @@ const EventSchema = Schema.Union([
     .values()
     .map((definition) =>
       Schema.Struct({
-        id: Schema.String,
+        id: EventV2.ID,
         type: Schema.Literal(definition.type),
         properties: definition.data,
       }).annotate({ identifier: `Event.${definition.type}` }),
@@ -62,6 +64,7 @@ const AdditionalSchemas: Schema.Top[] = [
 
 export const RootHttpApi = HttpApi.make("opencode-root")
   .addHttpApi(ControlApi)
+  .addHttpApi(ControlPlaneApi)
   .addHttpApi(GlobalApi)
   .middleware(SchemaErrorMiddleware)
   .middleware(Authorization)
@@ -73,13 +76,13 @@ export const InstanceHttpApi = HttpApi.make("opencode-instance")
   .addHttpApi(InstanceApi)
   .addHttpApi(McpApi)
   .addHttpApi(ProjectApi)
+  .addHttpApi(ProjectCopyApi)
   .addHttpApi(PtyApi)
   .addHttpApi(QuestionApi)
   .addHttpApi(PermissionApi)
   .addHttpApi(ProviderApi)
   .addHttpApi(SessionApi)
   .addHttpApi(SyncApi)
-  .addHttpApi(V2Api)
   .addHttpApi(TuiApi)
   .addHttpApi(UlmApi)
   .addHttpApi(WorkspaceApi)
@@ -89,6 +92,7 @@ export const OpenCodeHttpApi = HttpApi.make("opencode")
   .addHttpApi(RootHttpApi)
   .addHttpApi(EventApi)
   .addHttpApi(InstanceHttpApi)
+  .addHttpApi(Api)
   .addHttpApi(PtyConnectApi)
   .annotate(HttpApi.AdditionalSchemas, AdditionalSchemas)
 

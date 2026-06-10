@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { SessionLegacy } from "@opencode-ai/core/session/legacy"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
 import fs from "fs/promises"
 import path from "path"
@@ -9,6 +9,7 @@ import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -29,6 +30,7 @@ import { Bus } from "@/bus"
 import { Storage } from "@/storage/storage"
 import { readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -36,7 +38,7 @@ afterEach(async () => {
 
 const ref = {
   providerID: ProviderV2.ID.make("test"),
-  modelID: ProviderV2.ModelID.make("test-model"),
+  modelID: ModelV2.ID.make("test-model"),
 }
 
 const layer = (flags: Partial<RuntimeFlags.Info> = { experimentalBackgroundSubagents: true }) =>
@@ -54,7 +56,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = { experimentalBackgroundSubag
     ToolRegistry.defaultLayer,
     Database.defaultLayer,
     RuntimeFlags.layer(flags),
-  ).pipe(Layer.provide(Bus.layer))
+  ).pipe(Layer.provide(Layer.mergeAll(Bus.layer, Ripgrep.defaultLayer)))
 
 const it = testEffect(layer())
 
@@ -77,7 +79,7 @@ const seed = Effect.fn("TaskToolTest.seed")(function* (title = "Pinned") {
     model: ref,
     time: { created: Date.now() },
   })
-  const assistant: SessionLegacy.Assistant = {
+  const assistant: SessionV1.Assistant = {
     id: MessageID.ascending(),
     role: "assistant",
     parentID: user.id,
@@ -108,7 +110,7 @@ function stubOps(opts?: { onPrompt?: (input: SessionPrompt.PromptInput) => void;
   }
 }
 
-function reply(input: SessionPrompt.PromptInput, text: string): SessionLegacy.WithParts {
+function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithParts {
   const id = MessageID.ascending()
   return {
     info: {
@@ -428,19 +430,15 @@ describe("tool.task", () => {
           {
             permission: "bash",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
           {
             permission: "read",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
         ])
-        expect(seen?.tools).toEqual({
-          todowrite: false,
-          bash: false,
-          read: false,
-        })
+        expect(seen?.tools).toBeUndefined()
       }),
     {
       config: {
@@ -1237,7 +1235,7 @@ describe("tool.task", () => {
             ask: () => Effect.void,
           },
         )
-        const launchedID = result.output.match(/^job_id: (tool_[A-Za-z0-9]+)/m)?.[1]
+        const launchedID = result.output.match(/^job_id: (\S+)/m)?.[1]
         const launched = launchedID ? yield* jobsAfterReload.wait({ id: launchedID }) : undefined
         return { result, launched }
       }).pipe(Effect.provide(Layer.fresh(BackgroundJob.layer)))

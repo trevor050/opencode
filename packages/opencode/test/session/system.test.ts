@@ -10,7 +10,9 @@ import { SystemPrompt } from "../../src/session/system"
 import { bindOperationSession, listOperationSessionBindings, sessionForOperation, sessionsForOperation } from "@/ulm/operation-context"
 import type { Provider } from "@/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { provideInstance, testInstanceStoreLayer, tmpdir } from "../fixture/fixture"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { testEffect } from "../lib/effect"
 
 const skills: Skill.Info[] = [
@@ -47,7 +49,7 @@ const build: Agent.Info = {
 }
 
 const model: Provider.Model = {
-  id: ProviderV2.ModelID.make("test-model"),
+  id: ModelV2.ID.make("test-model"),
   providerID: ProviderV2.ID.make("test"),
   api: {
     id: "test-model",
@@ -111,6 +113,7 @@ function withTmpInstance<A, E, R>(self: (dir: string) => Effect.Effect<A, E, R>)
 const it = testEffect(
   Layer.mergeAll(
     SystemPrompt.layer.pipe(
+      Layer.provide(LocationServiceMap.layer),
       Layer.provide(
         Layer.succeed(
           Skill.Service,

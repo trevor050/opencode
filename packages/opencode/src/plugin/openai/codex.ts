@@ -1,27 +1,17 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
-import * as Log from "@opencode-ai/core/util/log"
-import { Installation } from "@/installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { OAUTH_DUMMY_KEY } from "@/auth"
 import os from "os"
 import { setTimeout as sleep } from "node:timers/promises"
 import { createServer } from "http"
-
-const log = Log.create({ service: "plugin.codex" })
+import { OpenAIWebSocketPool } from "./ws-pool"
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const ISSUER = "https://auth.openai.com"
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
-const ALLOWED_MODELS = new Set([
-  "gpt-5.5",
-  "gpt-5.2",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-])
+const ALLOWED_MODELS = new Set(["gpt-5.5", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini"])
 
 interface PkceCodes {
   verifier: string
@@ -95,7 +85,13 @@ export function extractAccountId(tokens: TokenResponse): string | undefined {
   return undefined
 }
 
-function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string): string {
+interface CodexAuthPluginOptions {
+  issuer?: string
+  codexApiEndpoint?: string
+  experimentalWebSockets?: boolean
+}
+
+function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string, issuer = ISSUER): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: CLIENT_ID,
@@ -108,7 +104,7 @@ function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string):
     state,
     originator: "opencode",
   })
-  return `${ISSUER}/oauth/authorize?${params.toString()}`
+  return `${issuer}/oauth/authorize?${params.toString()}`
 }
 
 export interface TokenResponse {
@@ -127,8 +123,13 @@ export function refreshTokenOrPrevious(tokens: TokenResponse, previous: string):
   return tokens.refresh_token ?? previous
 }
 
-async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: PkceCodes): Promise<TokenResponse> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
+async function exchangeCodeForTokens(
+  code: string,
+  redirectUri: string,
+  pkce: PkceCodes,
+  issuer = ISSUER,
+): Promise<TokenResponse> {
+  const response = await fetch(`${issuer}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -145,8 +146,8 @@ async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: Pk
   return response.json()
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
+async function refreshAccessToken(refreshToken: string, issuer = ISSUER): Promise<TokenResponse> {
+  const response = await fetch(`${issuer}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -254,6 +255,7 @@ const HTML_ERROR = (error: string) => `<!doctype html>
 interface PendingOAuth {
   pkce: PkceCodes
   state: string
+  issuer: string
   resolve: (tokens: TokenResponse) => void
   reject: (error: Error) => void
 }
@@ -305,7 +307,7 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
       const current = pendingOAuth
       pendingOAuth = undefined
 
-      exchangeCodeForTokens(code, `http://localhost:${OAUTH_PORT}/auth/callback`, current.pkce)
+      exchangeCodeForTokens(code, `http://localhost:${OAUTH_PORT}/auth/callback`, current.pkce, current.issuer)
         .then((tokens) => current.resolve(tokens))
         .catch((err) => current.reject(err))
 
@@ -328,7 +330,6 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
 
   await new Promise<void>((resolve, reject) => {
     oauthServer!.listen(OAUTH_PORT, () => {
-      log.info("codex oauth server started", { port: OAUTH_PORT })
       resolve()
     })
     oauthServer!.on("error", reject)
@@ -339,14 +340,12 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
 
 function stopOAuthServer() {
   if (oauthServer) {
-    oauthServer.close(() => {
-      log.info("codex oauth server stopped")
-    })
+    oauthServer.close(() => {})
     oauthServer = undefined
   }
 }
 
-function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResponse> {
+function waitForOAuthCallback(pkce: PkceCodes, state: string, issuer = ISSUER): Promise<TokenResponse> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => {
@@ -361,6 +360,7 @@ function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResp
     pendingOAuth = {
       pkce,
       state,
+      issuer,
       resolve: (tokens) => {
         clearTimeout(timeout)
         resolve(tokens)
@@ -373,11 +373,21 @@ function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResp
   })
 }
 
-export async function CodexAuthPlugin(
-  input: PluginInput,
-  _options?: { experimentalWebSockets?: boolean },
-): Promise<Hooks> {
+export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPluginOptions = {}): Promise<Hooks> {
+  const issuer = options.issuer ?? ISSUER
+  const codexApiEndpoint = options.codexApiEndpoint ?? CODEX_API_ENDPOINT
+  let websocketFetchInstalled = false
+  const websocketFetches: Array<ReturnType<typeof OpenAIWebSocketPool.createWebSocketFetch>> = []
+
   return {
+    async dispose() {
+      for (const websocketFetch of websocketFetches) websocketFetch.close()
+      websocketFetches.length = 0
+    },
+    async event(input) {
+      if (input.event.type !== "session.deleted") return
+      for (const websocketFetch of websocketFetches) websocketFetch.remove(input.event.properties.info.id)
+    },
     provider: {
       id: "openai",
       async models(provider, ctx) {
@@ -415,7 +425,23 @@ export async function CodexAuthPlugin(
       provider: "openai",
       async loader(getAuth) {
         const auth = await getAuth()
-        if (auth.type !== "oauth") return {}
+        const websocketFetch = options.experimentalWebSockets
+          ? OpenAIWebSocketPool.createWebSocketFetch({ httpFetch: fetch })
+          : undefined
+        if (websocketFetch) {
+          websocketFetches.push(websocketFetch)
+          websocketFetchInstalled = true
+        }
+        if (auth.type !== "oauth") return websocketFetch ? { fetch: websocketFetch } : {}
+
+        let refreshPromise:
+          | Promise<{
+              access: string
+              refresh: string
+              expires: number
+              accountId: string | undefined
+            }>
+          | undefined
 
         return {
           apiKey: OAUTH_DUMMY_KEY,
@@ -434,32 +460,47 @@ export async function CodexAuthPlugin(
             }
 
             const currentAuth = await getAuth()
-            if (currentAuth.type !== "oauth") return fetch(requestInput, init)
+            if (currentAuth.type !== "oauth")
+              return websocketFetch ? websocketFetch(requestInput, init) : fetch(requestInput, init)
 
             // Cast to include accountId field
             const authWithAccount = currentAuth as typeof currentAuth & { accountId?: string }
 
             // Check if token needs refresh
             if (!currentAuth.access || currentAuth.expires < Date.now()) {
-              log.info("refreshing codex access token")
-              const tokens = await refreshAccessToken(currentAuth.refresh)
-              const newAccountId = extractAccountId(tokens) || authWithAccount.accountId
-              const refresh = refreshTokenOrPrevious(tokens, currentAuth.refresh)
-              const expires = Date.now() + (tokens.expires_in ?? 3600) * 1000
-              await input.client.auth.set({
-                path: { id: "openai" },
-                body: {
-                  type: "oauth",
-                  refresh,
-                  access: tokens.access_token,
-                  expires,
-                  ...(newAccountId && { accountId: newAccountId }),
-                },
-              })
-              currentAuth.access = tokens.access_token
-              currentAuth.refresh = refresh
-              currentAuth.expires = expires
-              authWithAccount.accountId = newAccountId
+              if (!refreshPromise) {
+                refreshPromise = refreshAccessToken(currentAuth.refresh, issuer)
+                  .then(async (tokens) => {
+                    const accountId = extractAccountId(tokens) || authWithAccount.accountId
+                    const refresh = refreshTokenOrPrevious(tokens, currentAuth.refresh)
+                    const expires = Date.now() + (tokens.expires_in ?? 3600) * 1000
+                    await input.client.auth.set({
+                      path: { id: "openai" },
+                      body: {
+                        type: "oauth",
+                        refresh,
+                        access: tokens.access_token,
+                        expires,
+                        ...(accountId && { accountId }),
+                      },
+                    })
+                    return {
+                      access: tokens.access_token,
+                      refresh,
+                      expires,
+                      accountId,
+                    }
+                  })
+                  .finally(() => {
+                    refreshPromise = undefined
+                  })
+              }
+
+              const refreshed = await refreshPromise
+              currentAuth.access = refreshed.access
+              currentAuth.refresh = refreshed.refresh
+              currentAuth.expires = refreshed.expires
+              authWithAccount.accountId = refreshed.accountId
             }
 
             // Build headers
@@ -493,13 +534,15 @@ export async function CodexAuthPlugin(
                 : new URL(typeof requestInput === "string" ? requestInput : requestInput.url)
             const url =
               parsed.pathname.includes("/v1/responses") || parsed.pathname.includes("/chat/completions")
-                ? new URL(CODEX_API_ENDPOINT)
+                ? new URL(codexApiEndpoint)
                 : parsed
 
-            return fetch(url, {
+            const requestInit = {
               ...init,
               headers,
-            })
+            }
+            if (websocketFetch && parsed.pathname.endsWith("/responses")) return websocketFetch(url, requestInit)
+            return fetch(url, OpenAIWebSocketPool.withoutInternalHeaders(requestInit))
           },
         }
       },
@@ -511,9 +554,9 @@ export async function CodexAuthPlugin(
             const { redirectUri } = await startOAuthServer()
             const pkce = await generatePKCE()
             const state = generateState()
-            const authUrl = buildAuthorizeUrl(redirectUri, pkce, state)
+            const authUrl = buildAuthorizeUrl(redirectUri, pkce, state, issuer)
 
-            const callbackPromise = waitForOAuthCallback(pkce, state)
+            const callbackPromise = waitForOAuthCallback(pkce, state, issuer)
 
             return {
               url: authUrl,
@@ -538,7 +581,7 @@ export async function CodexAuthPlugin(
           label: "ChatGPT Pro/Plus (headless)",
           type: "oauth",
           authorize: async () => {
-            const deviceResponse = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
+            const deviceResponse = await fetch(`${issuer}/api/accounts/deviceauth/usercode`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -557,12 +600,12 @@ export async function CodexAuthPlugin(
             const interval = Math.max(parseInt(deviceData.interval) || 5, 1) * 1000
 
             return {
-              url: `${ISSUER}/codex/device`,
+              url: `${issuer}/codex/device`,
               instructions: `Enter code: ${deviceData.user_code}`,
               method: "auto" as const,
               async callback() {
                 while (true) {
-                  const response = await fetch(`${ISSUER}/api/accounts/deviceauth/token`, {
+                  const response = await fetch(`${issuer}/api/accounts/deviceauth/token`, {
                     method: "POST",
                     headers: {
                       "Content-Type": "application/json",
@@ -580,13 +623,13 @@ export async function CodexAuthPlugin(
                       code_verifier: string
                     }
 
-                    const tokenResponse = await fetch(`${ISSUER}/oauth/token`, {
+                    const tokenResponse = await fetch(`${issuer}/oauth/token`, {
                       method: "POST",
                       headers: { "Content-Type": "application/x-www-form-urlencoded" },
                       body: new URLSearchParams({
                         grant_type: "authorization_code",
                         code: data.authorization_code,
-                        redirect_uri: `${ISSUER}/deviceauth/callback`,
+                        redirect_uri: `${issuer}/deviceauth/callback`,
                         client_id: CLIENT_ID,
                         code_verifier: data.code_verifier,
                       }).toString(),
@@ -627,7 +670,8 @@ export async function CodexAuthPlugin(
       if (input.model.providerID !== "openai") return
       output.headers.originator = "opencode"
       output.headers["User-Agent"] = `opencode/${InstallationVersion} (${os.platform()} ${os.release()}; ${os.arch()})`
-      output.headers.session_id = input.sessionID
+      output.headers["session-id"] = input.sessionID
+      if (websocketFetchInstalled && input.agent === "title") output.headers[OpenAIWebSocketPool.TITLE_HEADER] = "true"
     },
     "chat.params": async (input, output) => {
       if (input.model.providerID !== "openai") return

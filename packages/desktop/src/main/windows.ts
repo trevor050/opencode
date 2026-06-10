@@ -7,9 +7,9 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
 import { WINDOW_TITLE } from "./branding"
-import { PINCH_ZOOM_ENABLED_KEY } from "./constants"
 import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
+import { PINCH_ZOOM_ENABLED_KEY } from "./store-keys"
 import { createUnresponsiveSampler } from "./unresponsive"
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -178,41 +178,6 @@ export function createMainWindow() {
   win.once("ready-to-show", () => {
     win.show()
   })
-
-  return win
-}
-
-export function createLoadingWindow() {
-  const mode = tone()
-  const win = new BrowserWindow({
-    width: 640,
-    height: 480,
-    resizable: false,
-    center: true,
-    show: true,
-    autoHideMenuBar: true,
-    icon: iconPath(),
-    backgroundColor: backgroundColor ?? defaultBackgroundColor(),
-    ...(process.platform === "darwin" ? { titleBarStyle: "hidden" as const } : {}),
-    ...(process.platform === "win32"
-      ? {
-          frame: false,
-          titleBarStyle: "hidden" as const,
-          titleBarOverlay: overlay({ mode }),
-        }
-      : {}),
-    webPreferences: {
-      preload: join(root, "../preload/index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-
-  allowRendererPermissions(win)
-  wireWindowRecovery(win, "loading")
-
-  loadWindow(win, "loading.html")
 
   return win
 }

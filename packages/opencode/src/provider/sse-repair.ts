@@ -1,7 +1,4 @@
 import { jsonrepair } from "jsonrepair"
-import * as Log from "@opencode-ai/core/util/log"
-
-const log = Log.create({ service: "provider/sse-repair" })
 
 export function repairSSEEvent(event: string): string {
   const lines = event.split("\n")
@@ -25,7 +22,6 @@ export function repairSSEEvent(event: string): string {
       JSON.parse(repaired)
       lines[i] = "data:" + leading + repaired
       changed = true
-      log.warn("sse chunk repaired", { preview: payload.slice(0, 200) })
     } catch {
       // Forward the original payload so the downstream parser reports the real provider error.
     }

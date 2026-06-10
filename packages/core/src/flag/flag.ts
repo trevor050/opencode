@@ -1,22 +1,14 @@
 import { Config } from "effect"
 
-function truthy(key: string) {
+export function truthy(key: string) {
   const value = process.env[key]?.toLowerCase()
   return value === "true" || value === "1"
 }
 
-function number(key: string) {
-  const value = process.env[key]
-  if (value === undefined) return undefined
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
-const OPENCODE_EXPERIMENTAL = truthy("OPENCODE_EXPERIMENTAL")
 const copy = process.env["OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"]
 
 function enabledByExperimental(key: string) {
-  return process.env[key] === undefined ? OPENCODE_EXPERIMENTAL : truthy(key)
+  return process.env[key] === undefined ? truthy("OPENCODE_EXPERIMENTAL") : truthy(key)
 }
 
 export const Flag = {
@@ -54,16 +46,14 @@ export const Flag = {
 
   OPENCODE_WORKSPACE_ID: process.env["OPENCODE_WORKSPACE_ID"],
   OPENCODE_EXPERIMENTAL_WORKSPACES: enabledByExperimental("OPENCODE_EXPERIMENTAL_WORKSPACES"),
-  OPENCODE_EXPERIMENTAL_EVENT_SYSTEM: enabledByExperimental("OPENCODE_EXPERIMENTAL_EVENT_SYSTEM"),
-  OPENCODE_EXPERIMENTAL_HTTPAPI: enabledByExperimental("OPENCODE_EXPERIMENTAL_HTTPAPI"),
-  OPENCODE_EXPERIMENTAL_SESSION_SWITCHING: enabledByExperimental("OPENCODE_EXPERIMENTAL_SESSION_SWITCHING"),
-  OPENCODE_EXPERIMENTAL_SESSION_SWITCHER: enabledByExperimental("OPENCODE_EXPERIMENTAL_SESSION_SWITCHER"),
-  OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: number("OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS"),
 
   // Evaluated at access time (not module load) because tests, the CLI, and
   // external tooling set these env vars at runtime.
   get OPENCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("OPENCODE_DISABLE_PROJECT_CONFIG")
+  },
+  get OPENCODE_EXPERIMENTAL_REFERENCES() {
+    return enabledByExperimental("OPENCODE_EXPERIMENTAL_REFERENCES")
   },
   get OPENCODE_TUI_CONFIG() {
     return process.env["OPENCODE_TUI_CONFIG"]

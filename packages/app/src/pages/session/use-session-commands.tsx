@@ -13,15 +13,12 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
-import { useUlm } from "@/context/ulm"
-import { showToast } from "@opencode-ai/ui/toast"
+import { showToast } from "@/utils/toast"
 import { findLast } from "@opencode-ai/core/util/array"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { isUlmDirectory } from "@/utils/ulm-workspace"
-import { operationFilesOpenPathForSession } from "@/utils/ulm-operation-ui"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -51,10 +48,8 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sync = useSync()
   const terminal = useTerminal()
   const layout = useLayout()
-  const ulm = useUlm()
   const navigate = useNavigate()
   const { params, tabs, view } = useSessionLayout()
-  const ulmWorkspace = () => isUlmDirectory(sdk.directory)
 
   const info = () => {
     const id = params.id
@@ -225,19 +220,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     void import("@/components/dialog-select-file").then((x) => {
       dialog.show(() => <x.DialogSelectFile onOpenFile={showAllFiles} />)
     })
-  }
-
-  const openOperationFiles = () => {
-    const target = operationFilesOpenPathForSession(ulm.store.operations, params.id, sdk.directory)
-    if (!target || !platform.openPath) {
-      showToast({
-        title: "Operation files unavailable",
-        description: "No operation file store is available for this workspace.",
-        variant: "error",
-      })
-      return
-    }
-    void platform.openPath(target)
   }
 
   const closeTab = () => {
@@ -436,35 +418,26 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     }),
   ]
 
-  const fileCmds = () => [
-    fileCommand({
-      id: "file.open",
-      title: language.t("command.file.open"),
-      description: language.t("palette.search.placeholder"),
-      keybind: "mod+k,mod+p",
-      slash: "open",
-      onSelect: openFile,
-    }),
-    ...(ulmWorkspace()
-      ? [
-          fileCommand({
-            id: "operation.openFiles",
-            title: "Open operation files",
-            description: "Open the current operation artifact folder",
-            slash: "open-operation",
-            disabled: !platform.openPath,
-            onSelect: openOperationFiles,
-          }),
-        ]
-      : []),
-    fileCommand({
-      id: "tab.close",
-      title: language.t("command.tab.close"),
-      keybind: "mod+w",
-      disabled: !closableTab(),
-      onSelect: closeTab,
-    }),
-  ]
+  const fileCmds = () => {
+    const tab = closableTab()
+    return [
+      fileCommand({
+        id: "file.open",
+        title: language.t("command.file.open"),
+        description: language.t("palette.search.placeholder"),
+        keybind: "mod+k,mod+p",
+        slash: "open",
+        onSelect: openFile,
+      }),
+      tab &&
+        fileCommand({
+          id: "tab.close",
+          title: language.t("command.tab.close"),
+          keybind: "mod+w",
+          onSelect: closeTab,
+        }),
+    ].filter((v) => !!v)
+  }
 
   const contextCmds = () => [
     contextCommand({
@@ -485,21 +458,17 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       slash: "terminal",
       onSelect: () => view().terminal.toggle(),
     }),
-    ...(!ulmWorkspace()
-      ? [
-          viewCommand({
-            id: "review.toggle",
-            title: language.t("command.review.toggle"),
-            keybind: "mod+shift+r",
-            onSelect: () => view().reviewPanel.toggle(),
-          }),
-        ]
-      : []),
+    viewCommand({
+      id: "review.toggle",
+      title: language.t("command.review.toggle"),
+      keybind: "mod+shift+r",
+      onSelect: () => view().reviewPanel.toggle(),
+    }),
     ...(shown()
       ? [
           viewCommand({
             id: "fileTree.toggle",
-            title: ulmWorkspace() ? "Toggle engagement workspace" : language.t("command.fileTree.toggle"),
+            title: language.t("command.fileTree.toggle"),
             keybind: "mod+\\",
             onSelect: () => layout.fileTree.toggle(),
           }),
@@ -578,6 +547,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       description: language.t("command.agent.cycle.description"),
       keybind: "mod+.",
       slash: "agent",
+      disabled: desktopV2() && !settings.general.showCustomAgents(),
       onSelect: () => local.agent.move(1),
     }),
     agentCommand({
@@ -585,6 +555,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       title: language.t("command.agent.cycle.reverse"),
       description: language.t("command.agent.cycle.reverse.description"),
       keybind: "shift+mod+.",
+      disabled: desktopV2() && !settings.general.showCustomAgents(),
       onSelect: () => local.agent.move(-1),
     }),
   ]
