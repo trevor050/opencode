@@ -34,6 +34,7 @@ import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { type DeepMutable } from "@opencode-ai/core/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -47,7 +48,7 @@ export const Info = Schema.Struct({
   permission: PermissionV1.Ruleset,
   model: Schema.optional(
     Schema.Struct({
-      modelID: ProviderV2.ModelID,
+      modelID: ModelV2.ID,
       providerID: ProviderV2.ID,
     }),
   ),
@@ -71,7 +72,7 @@ export interface Interface {
   readonly defaultAgent: () => Effect.Effect<string>
   readonly generate: (input: {
     description: string
-    model?: { providerID: ProviderV2.ID; modelID: ProviderV2.ModelID }
+    model?: { providerID: ProviderV2.ID; modelID: ModelV2.ID }
   }) => Effect.Effect<
     {
       identifier: string
@@ -537,7 +538,7 @@ export const layer = Layer.effect(
       }),
       generate: Effect.fn("Agent.generate")(function* (input: {
         description: string
-        model?: { providerID: ProviderV2.ID; modelID: ProviderV2.ModelID }
+        model?: { providerID: ProviderV2.ID; modelID: ModelV2.ID }
       }) {
         const cfg = yield* config.get()
         const model = input.model ?? (yield* provider.defaultModel())

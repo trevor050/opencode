@@ -53,6 +53,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { BackgroundJob } from "@/background/job"
 import { SessionStatus } from "@/session/status"
 import { Database } from "@opencode-ai/core/database/database"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { OperationCheckpointTool } from "./operation_checkpoint"
 import { OperationGovernorTool } from "./operation_governor"
 import { OperationNextTool } from "./operation_next"
@@ -96,7 +97,7 @@ export interface Interface {
   readonly named: () => Effect.Effect<{ task: TaskDef; read: ReadDef }>
   readonly tools: (model: {
     providerID: ProviderV2.ID
-    modelID: ProviderV2.ModelID
+    modelID: ModelV2.ID
     agent: Agent.Info
   }) => Effect.Effect<Tool.Def[]>
 }

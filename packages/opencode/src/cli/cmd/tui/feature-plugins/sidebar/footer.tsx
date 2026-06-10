@@ -2,13 +2,14 @@ import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { InternalTuiPlugin } from "../../plugin/internal"
 import nodePath from "path"
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { Global } from "@opencode-ai/core/global"
 import { operationForSession } from "@/ulm/operation-context"
 import { operationPath } from "@/ulm/artifact"
 import type { SessionID } from "@/session/schema"
 
 const id = "internal:sidebar-footer"
 
-function View(props: { api: TuiPluginApi; session_id?: string }) {
+function View(props: { api: TuiPluginApi; sessionID: string }) {
   const theme = () => props.api.theme.current
   const has = createMemo(() =>
     props.api.state.provider.some(
@@ -18,14 +19,26 @@ function View(props: { api: TuiPluginApi; session_id?: string }) {
   const done = createMemo(() => props.api.kv.get("dismissed_getting_started", false))
   const show = createMemo(() => !has() && !done())
   const [operationFile, setOperationFile] = createSignal<string | undefined>()
+  const path = createMemo(() => {
+    const session = props.api.state.session.get(props.sessionID)
+    const dir = session?.directory || props.api.state.path.directory || process.cwd()
+    const out = dir.replace(Global.Path.home, "~")
+    const branch = session?.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined
+    const text = branch ? `${out}:${branch}` : out
+    const list = text.split("/")
+    return {
+      parent: list.slice(0, -1).join("/"),
+      name: list.at(-1) ?? "",
+    }
+  })
 
   async function refreshOperationFile() {
-    if (!props.session_id) {
+    if (!props.sessionID) {
       setOperationFile(undefined)
       return
     }
     const root = props.api.state.path.worktree || props.api.state.path.directory || process.cwd()
-    const operation = await operationForSession(root, props.session_id as SessionID)
+    const operation = await operationForSession(root, props.sessionID as SessionID)
     setOperationFile(
       operation
         ? nodePath.join(operationPath(operation.worktree, operation.operationID), "goals", "operation-goal.json")
@@ -78,6 +91,10 @@ function View(props: { api: TuiPluginApi; session_id?: string }) {
           </box>
         </box>
       </Show>
+      <text>
+        <span style={{ fg: theme().textMuted }}>{path().parent}/</span>
+        <span style={{ fg: theme().text }}>{path().name}</span>
+      </text>
       <Show
         when={operationFile()}
         fallback={
@@ -109,7 +126,7 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       sidebar_footer(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
+        return <View api={api} sessionID={props.session_id} />
       },
     },
   })

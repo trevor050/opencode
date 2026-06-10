@@ -25,6 +25,9 @@ type Active = {
   pending: number
   next: number
   output?: { sequence: number; text: string }
+  tail: Deferred.Deferred<void>
+  promoted: Deferred.Deferred<Info>
+  onPromote?: Effect.Effect<void>
 }
 
 type State = {
@@ -38,11 +41,29 @@ type FinishResult = {
   scope?: Scope.Closeable
 }
 
+type PromoteResult = {
+  info?: Info
+  promoted?: Deferred.Deferred<Info>
+  onPromote?: Effect.Effect<void>
+}
+
+type ExtendResult =
+  | { extended: false }
+  | {
+      extended: true
+      previous: Deferred.Deferred<void>
+      scope: Scope.Closeable
+      tail: Deferred.Deferred<void>
+      token: object
+      sequence: number
+    }
+
 export type StartInput = {
   id?: string
   type: string
   title?: string
   metadata?: Record<string, unknown>
+  onPromote?: Effect.Effect<void>
   run: Effect.Effect<string, unknown>
 }
 
@@ -68,6 +89,8 @@ export interface Interface {
   readonly start: (input: StartInput) => Effect.Effect<Info>
   readonly extend: (input: ExtendInput) => Effect.Effect<boolean>
   readonly wait: (input: WaitInput) => Effect.Effect<WaitResult>
+  readonly waitForPromotion: (id: string) => Effect.Effect<Info>
+  readonly promote: (id: string) => Effect.Effect<Info | undefined>
   readonly cancel: (id: string) => Effect.Effect<Info | undefined>
 }
 
@@ -97,7 +120,7 @@ function errorText(error: unknown) {
   return String(error)
 }
 
-export const layer = Layer.effect(
+const live = Layer.effect(
   Service,
   Effect.gen(function* () {
     const state = yield* InstanceState.make<State>(
@@ -154,6 +177,7 @@ export const layer = Layer.effect(
             : "error"
         const next = {
           ...job,
+          onPromote: undefined,
           pending: 0,
           output,
           info: {
@@ -179,6 +203,7 @@ export const layer = Layer.effect(
       id: string,
       token: object,
       sequence: number,
+      tail: Deferred.Deferred<void>,
       run: Effect.Effect<string, unknown>,
     ) {
       return yield* run.pipe(
@@ -186,6 +211,7 @@ export const layer = Layer.effect(
           onSuccess: (output) => settle(id, token, sequence, Exit.succeed(output)),
           onFailure: (cause) => settle(id, token, sequence, Exit.failCause(cause)),
         }),
+        Effect.ensuring(Deferred.succeed(tail, undefined)),
         Effect.asVoid,
         Effect.forkIn(scope, { startImmediately: true }),
       )
@@ -249,14 +275,15 @@ export const layer = Layer.effect(
           const id = input.id ?? Identifier.ascending("job")
           const startedAt = yield* Clock.currentTimeMillis
           const done = yield* Deferred.make<Info>()
-          const info = yield* SynchronizedRef.modifyEffect(
+          const promoted = yield* Deferred.make<Info>()
+          const tail = yield* Deferred.make<void>()
+          const result = yield* SynchronizedRef.modifyEffect(
             s.jobs,
             Effect.fnUntraced(function* (jobs) {
               const existing = jobs.get(id)
-              if (existing?.info.status === "running") return [snapshot(existing), jobs] as const
+              if (existing?.info.status === "running") return [{ info: snapshot(existing) }, jobs] as const
               const scope = yield* Scope.fork(s.scope, "parallel")
               const token = {}
-              yield* fork(scope, id, token, 0, restore(input.run))
               const job = {
                 info: {
                   id,
@@ -271,12 +298,16 @@ export const layer = Layer.effect(
                 token,
                 pending: 1,
                 next: 1,
+                tail,
+                promoted,
+                onPromote: input.onPromote,
               }
-              return [snapshot(job), new Map(jobs).set(id, job)] as const
+              return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as const
             }),
           )
-          yield* persist(info)
-          return info
+          yield* persist(result.info)
+          if ("scope" in result) yield* fork(result.scope, id, result.token, 0, tail, restore(input.run))
+          return result.info
         }),
       )
     })
@@ -285,22 +316,33 @@ export const layer = Layer.effect(
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const s = yield* InstanceState.get(state)
-          return yield* SynchronizedRef.modifyEffect(
+          const tail = yield* Deferred.make<void>()
+          const result = yield* SynchronizedRef.modify(
             s.jobs,
-            Effect.fnUntraced(function* (jobs) {
+            (jobs): readonly [ExtendResult, Map<string, Active>] => {
               const job = jobs.get(input.id)
-              if (!job || job.info.status !== "running") return [false, jobs] as const
-              yield* fork(job.scope, input.id, job.token, job.next, restore(input.run))
+              if (!job || job.info.status !== "running") return [{ extended: false }, jobs]
               return [
-                true,
+                { extended: true, previous: job.tail, scope: job.scope, tail, token: job.token, sequence: job.next },
                 new Map(jobs).set(input.id, {
                   ...job,
                   pending: job.pending + 1,
                   next: job.next + 1,
+                  tail,
                 }),
-              ] as const
-            }),
+              ]
+            },
           )
+          if (!result.extended) return false
+          yield* fork(
+            result.scope,
+            input.id,
+            result.token,
+            result.sequence,
+            result.tail,
+            Deferred.await(result.previous).pipe(Effect.andThen(restore(input.run))),
+          )
+          return true
         }),
       )
     })
@@ -319,6 +361,38 @@ export const layer = Layer.effect(
       return { info: snapshot(job), timedOut: true }
     })
 
+    const waitForPromotion: Interface["waitForPromotion"] = Effect.fn("BackgroundJob.waitForPromotion")(function* (id) {
+      const job = (yield* SynchronizedRef.get((yield* InstanceState.get(state)).jobs)).get(id)
+      if (!job || job.info.status !== "running") return yield* Effect.never
+      if (job.info.metadata?.background === true) return snapshot(job)
+      return yield* Deferred.await(job.promoted)
+    })
+
+    const promote: Interface["promote"] = Effect.fn("BackgroundJob.promote")(function* (id) {
+      const s = yield* InstanceState.get(state)
+      const result = yield* SynchronizedRef.modify(s.jobs, (jobs): readonly [PromoteResult, Map<string, Active>] => {
+        const job = jobs.get(id)
+        if (!job || job.info.status !== "running") return [{}, jobs]
+        if (job.info.metadata?.background === true) return [{ info: snapshot(job) }, jobs]
+        const next = {
+          ...job,
+          onPromote: undefined,
+          info: {
+            ...job.info,
+            metadata: { ...job.info.metadata, background: true },
+          },
+        }
+        return [
+          { info: snapshot(next), promoted: job.promoted, onPromote: job.onPromote },
+          new Map(jobs).set(id, next),
+        ]
+      })
+      if (result.info) yield* persist(result.info)
+      if (result.info && result.promoted) yield* Deferred.succeed(result.promoted, result.info).pipe(Effect.ignore)
+      if (result.onPromote) yield* result.onPromote.pipe(Effect.ignore)
+      return result.info
+    })
+
     const cancel: Interface["cancel"] = Effect.fn("BackgroundJob.cancel")(function* (id) {
       const completedAt = yield* Clock.currentTimeMillis
       const result = yield* SynchronizedRef.modify(
@@ -329,6 +403,7 @@ export const layer = Layer.effect(
           if (job.info.status !== "running") return [{ info: snapshot(job) }, jobs]
           const next = {
             ...job,
+            onPromote: undefined,
             pending: 0,
             info: {
               ...job.info,
@@ -345,10 +420,10 @@ export const layer = Layer.effect(
       return result.info
     })
 
-    return Service.of({ list, get, updateMetadata, start, extend, wait, cancel })
+    return Service.of({ list, get, updateMetadata, start, extend, wait, waitForPromotion, promote, cancel })
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Storage.defaultLayer))
+export const layer = live.pipe(Layer.provide(Storage.defaultLayer))
 
-export * as BackgroundJob from "./job"
+export const defaultLayer = layer

@@ -146,3 +146,50 @@ Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributi
 
 - Do not paste full changelogs, old branch archaeology, exact historical run counts, or "current selected run" state. Put those in operation artifacts, memory summaries, or PR notes.
 - Do not duplicate package-specific guides unless the fact applies repo-wide. Keep detailed package guidance in the nearest `AGENTS.md`.
+- Keep helpers close to the code they support, below the main export when that improves readability.
+- Do not over-abstract simple expressions into many single-use helpers; extract only when it names a real concept like `requireConfig` or `readMetadata`.
+- Do not return `Effect` from helpers unless they actually perform effectful work. Synchronous parsing, validation, and option building should stay synchronous.
+- Prefer Effect schema helpers such as `Schema.UnknownFromJsonString` and `Schema.decodeUnknownOption` over manual `JSON.parse` wrapped in `Effect.try` when parsing untrusted JSON strings.
+- Add comments for non-obvious constraints and surprising behavior, not for obvious assignments or control flow.
+
+### Schema Definitions (Drizzle)
+
+Use snake_case for field names so column names don't need to be redefined as strings.
+
+```ts
+// Good
+const table = sqliteTable("session", {
+  id: text().primaryKey(),
+  project_id: text().notNull(),
+  created_at: integer().notNull(),
+})
+
+// Bad
+const table = sqliteTable("session", {
+  id: text("id").primaryKey(),
+  projectID: text("project_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+})
+```
+
+## Testing
+
+- Avoid mocks as much as possible
+- Test actual implementation, do not duplicate logic into tests
+- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+
+## Type Checking
+
+- Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+
+## V2 Session Core
+
+- Keep durable prompt admission separate from model execution. `SessionV2.prompt(...)` admits one durable `session_input` row before scheduling advisory `SessionExecution.wake(sessionID)` unless `resume: false` requests admit-only behavior. The serialized runner promotes admitted inputs into visible user messages at safe boundaries.
+- Reusing a Session ID adopts the existing Session. Reusing a prompt message ID reconciles an exact retry only when Session, prompt, and delivery mode match; conflicting reuse fails. Historical projected prompts lazily synthesize promoted inbox records during exact retry.
+- Keep `SessionExecution` process-global and Session-ID based. Its local implementation owns the process-local Session coordinator and discovers placement through `SessionStore` plus `LocationServiceMap.get(session.location)` only when a drain starts; no layer should take a Session ID. V2 interruption targets the active process-local ownership chain for that Session; idle or missing interruption is a no-op.
+- Keep `SessionRunner`, model resolution, tool registry, permissions, and filesystem Location-scoped. Omitted `Location.workspaceID` means implicit-local placement; explicit workspace identity remains reserved for future placement semantics.
+- Preserve one explicit `llm.stream(request)` call per provider turn and reload projected history before durable continuation. Do not bridge through legacy `SessionPrompt.loop(...)` or delegate orchestration to an in-memory tool loop.
+- Keep local Session drains process-local until clustering is implemented. `SessionRunCoordinator` joins explicit same-Session resumes, coalesces prompt wakeups, and allows different Sessions to run concurrently. Advisory wakes drain eligible durable inbox rows only; post-crash activity recovery requires a separate explicit design before it may retry provider work.
+- Keep delivery vocabulary explicit. Prompts steer by default and coalesce into the active activity at the next safe provider-turn boundary. Explicit `queue` inputs open FIFO future activities one at a time after the active activity settles.
+- Keep EventV2 replay owner claims separate from clustered Session execution ownership.
+- Keep the System Context algebra, registry, and built-ins in `src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.

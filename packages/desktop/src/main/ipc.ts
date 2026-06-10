@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
 import { readdir, readFile, stat } from "node:fs/promises"
 import nodePath from "node:path"
-import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell } from "electron"
+import { BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
-import type { FatalRendererError, ServerReadyData, TitlebarTheme, WindowConfig, WslConfig } from "../preload/types"
+import type { FatalRendererError, ServerReadyData, TitlebarTheme, WindowConfig } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -57,19 +57,17 @@ async function listArtifactFiles(root: string, dir = root, depth = 0): Promise<s
 
 type Deps = {
   killSidecar: () => Promise<void> | void
+  relaunch: () => void
   awaitInitialization: () => Promise<ServerReadyData>
   getWindowConfig: () => Promise<WindowConfig> | WindowConfig
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
   getUlmOperationsDirectory: () => Promise<string> | string
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
   checkAppExists: (appName: string) => Promise<boolean> | boolean
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
@@ -129,17 +127,12 @@ export function registerIpcHandlers(deps: Deps) {
     if (info.size > 5 * 1024 * 1024) throw new Error("Artifact is too large to preview")
     return readFile(resolved, "utf8")
   })
-  ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
-  ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
   )
   ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
   ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  ipcMain.handle("wsl-path", (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null) =>
-    deps.wslPath(path, mode),
-  )
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
   ipcMain.handle("check-update", () => deps.checkUpdate())
@@ -262,8 +255,7 @@ export function registerIpcHandlers(deps: Deps) {
   })
 
   ipcMain.on("relaunch", () => {
-    app.relaunch()
-    app.exit(0)
+    deps.relaunch()
   })
 
   ipcMain.handle("get-zoom-factor", (event: IpcMainInvokeEvent) => event.sender.getZoomFactor())

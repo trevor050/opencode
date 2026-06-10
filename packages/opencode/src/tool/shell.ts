@@ -310,9 +310,14 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
   return tree
 })
 
-const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan) {
+const ask = Effect.fn("ShellTool.ask")(function* (
+  ctx: Tool.Context,
+  scan: Scan,
+  input: { command: string; description: string },
+) {
   if (scan.dirs.size > 0) {
-    const globs = Array.from(scan.dirs).map((dir) => {
+    const directories = Array.from(scan.dirs)
+    const globs = directories.map((dir) => {
       if (process.platform === "win32") return FSUtil.normalizePathPattern(path.join(dir, "*"))
       return path.join(dir, "*")
     })
@@ -320,7 +325,12 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan)
       permission: "external_directory",
       patterns: globs,
       always: globs,
-      metadata: {},
+      metadata: {
+        command: input.command,
+        description: input.description,
+        directories,
+        patterns: globs,
+      },
     })
   }
 
@@ -329,7 +339,10 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan)
     permission: ShellID.ToolID,
     patterns: Array.from(scan.patterns),
     always: Array.from(scan.always),
-    metadata: {},
+    metadata: {
+      command: input.command,
+      description: input.description,
+    },
   })
 })
 
@@ -675,9 +688,9 @@ export const ShellTool = Tool.define(
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
                     Effect.sync(() => tree.delete()),
                   )
-                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, executeInstance)
-                  if (!containsPath(cwd, executeInstance)) scan.dirs.add(cwd)
-                  yield* ask(ctx, scan)
+                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
+                  if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
+                  yield* ask(ctx, scan, params)
                 }),
               )
 

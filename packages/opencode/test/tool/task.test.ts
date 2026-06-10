@@ -29,6 +29,7 @@ import { Bus } from "@/bus"
 import { Storage } from "@/storage/storage"
 import { readOperationStatus, writeOperationCheckpoint } from "@/ulm/artifact"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -36,7 +37,7 @@ afterEach(async () => {
 
 const ref = {
   providerID: ProviderV2.ID.make("test"),
-  modelID: ProviderV2.ModelID.make("test-model"),
+  modelID: ModelV2.ID.make("test-model"),
 }
 
 const layer = (flags: Partial<RuntimeFlags.Info> = { experimentalBackgroundSubagents: true }) =>
@@ -1237,7 +1238,7 @@ describe("tool.task", () => {
             ask: () => Effect.void,
           },
         )
-        const launchedID = result.output.match(/^job_id: (tool_[A-Za-z0-9]+)/m)?.[1]
+        const launchedID = result.output.match(/^job_id: (\S+)/m)?.[1]
         const launched = launchedID ? yield* jobsAfterReload.wait({ id: launchedID }) : undefined
         return { result, launched }
       }).pipe(Effect.provide(Layer.fresh(BackgroundJob.layer)))
