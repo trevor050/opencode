@@ -79,7 +79,7 @@ import {
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
 import { resolveOpenOperationPath } from "./routes/session/open-operation"
-import type { SessionID } from "@/session/schema"
+import type { SessionID } from "./ulm/operation"
 import { createTuiAttention } from "./attention"
 import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"

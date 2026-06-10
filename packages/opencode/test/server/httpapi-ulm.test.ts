@@ -1,19 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Server } from "../../src/server/server"
 import { writeOperationCheckpoint } from "../../src/ulm/artifact"
-import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 
-void Log.init({ print: false })
-
-const original = Flag.OPENCODE_EXPERIMENTAL_HTTPAPI
-
 function app() {
-  Flag.OPENCODE_EXPERIMENTAL_HTTPAPI = true
   return Server.Default().app
 }
 
@@ -33,7 +26,6 @@ async function writeJson(file: string, value: unknown) {
 }
 
 afterEach(async () => {
-  Flag.OPENCODE_EXPERIMENTAL_HTTPAPI = original
   await disposeAllInstances()
   await resetDatabase()
 })

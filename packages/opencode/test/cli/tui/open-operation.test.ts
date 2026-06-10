@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { bindOperationSession } from "@/ulm/operation-context"
+import { bindOperationSession } from "@opencode-ai/tui/ulm/operation"
 import { tmpdir } from "../../fixture/fixture"
-import { resolveOpenOperationPath } from "@/cli/cmd/tui/routes/session/open-operation"
+import { resolveOpenOperationPath } from "@opencode-ai/tui/routes/session/open-operation"
 
 async function writeJson(file: string, value: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true })

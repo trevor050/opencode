@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { Effect, Exit, Layer } from "effect"
 import fs from "fs/promises"
 import path from "path"
@@ -7,6 +8,7 @@ import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { MessageID } from "@/session/schema"
@@ -25,6 +27,7 @@ const layer = Layer.mergeAll(
   Bus.layer,
   Config.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
+  LocationServiceMap.layer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
   Storage.defaultLayer,
@@ -47,7 +50,7 @@ describe("tool.operation_schedule", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             yield* Effect.promise(() => writeOperationGraph(Instance.worktree, { operationID: "school", budgetUSD: 10 }))
@@ -85,7 +88,7 @@ describe("tool.operation_schedule", () => {
             if (exit._tag === "Failure") {
               expect(String(exit.cause)).toContain("forceReschedule cannot be used after operation execution has started")
             }
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })
@@ -94,7 +97,7 @@ describe("tool.operation_schedule", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             yield* Effect.promise(() => writeOperationGraph(Instance.worktree, { operationID: "school", budgetUSD: 10 }))
@@ -112,7 +115,7 @@ describe("tool.operation_schedule", () => {
 
             expect(result.metadata.operationID).toBe("school")
             expect(result.output).toContain("archived_stale_lane_proofs: 0")
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })

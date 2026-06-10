@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { ParsedKey, TextareaRenderable } from "@opentui/core"
-import * as Intercept from "../../../../src/cli/cmd/tui/component/prompt/intercept"
+import * as Intercept from "@opencode-ai/tui/prompt/intercept"
 
 const event = { name: "x" } as ParsedKey
 const input = {} as TextareaRenderable

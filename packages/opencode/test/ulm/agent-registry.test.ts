@@ -4,9 +4,17 @@ import { ToolRegistry } from "@/tool/registry"
 import { testEffect } from "../lib/effect"
 import { Effect, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { Permission } from "@/permission"
 
-const it = testEffect(Layer.mergeAll(Agent.defaultLayer, ToolRegistry.defaultLayer, CrossSpawnSpawner.defaultLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    Agent.defaultLayer,
+    ToolRegistry.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
+    LocationServiceMap.layer,
+  ) as Layer.Layer<Agent.Service | ToolRegistry.Service, never, never>,
+)
 
 describe("ULM native surface", () => {
   it.instance("registers rebuilt ULM agents", () =>

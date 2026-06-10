@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { agentDialogDescription } from "../../../../src/cli/cmd/tui/component/dialog-agent"
+import { agentDialogDescription } from "@opencode-ai/tui/component/dialog-agent"
 
 describe("agentDialogDescription", () => {
   test("labels native and custom agents without leaking long descriptions", () => {

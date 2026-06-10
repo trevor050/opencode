@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { displayOffsetToStringIndex, expandPromptTextParts } from "../../../../src/cli/cmd/tui/component/prompt/paste"
-import type { PromptInfo } from "../../../../src/cli/cmd/tui/component/prompt/history"
+import { displayOffsetToStringIndex, expandPromptTextParts } from "@opencode-ai/tui/prompt/paste"
+import type { PromptInfo } from "@opencode-ai/tui/prompt/history"
 
 describe("displayOffsetToStringIndex", () => {
   test("maps display offsets across wide characters and newlines", () => {

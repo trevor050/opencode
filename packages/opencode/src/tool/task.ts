@@ -11,7 +11,7 @@ import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
 import { SessionStatus } from "@/session/status"
-import { TuiEvent } from "@/cli/cmd/tui/event"
+import { TuiEvent } from "@/server/tui-event"
 import { Effect, Exit, Option, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -563,11 +563,11 @@ export const TaskTool = Tool.define(
 
       if (background) {
         yield* notify(info.id)
-        return backgroundResult(info.id)
+        return backgroundResult(SessionID.make(info.id))
       }
 
       if ((yield* jobs.get(nextSession.id))?.status === "running" && info.metadata?.background === true) {
-        return backgroundResult(info.id)
+        return backgroundResult(SessionID.make(info.id))
       }
 
       const runCancel = yield* EffectBridge.make()
@@ -588,7 +588,7 @@ export const TaskTool = Tool.define(
               jobs.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
               jobs.waitForPromotion(nextSession.id),
             )
-            if (result?.metadata?.background === true) return backgroundResult(result.id)
+            if (result?.metadata?.background === true) return backgroundResult(SessionID.make(result.id))
             if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
             if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
             return {

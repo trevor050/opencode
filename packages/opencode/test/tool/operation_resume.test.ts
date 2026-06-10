@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { Database } from "@opencode-ai/core/database/database"
 import { Effect, Layer } from "effect"
 import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { MessageID } from "@/session/schema"
@@ -29,6 +31,7 @@ const layer = Layer.mergeAll(
   Bus.layer,
   Config.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
+  LocationServiceMap.layer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
   Database.defaultLayer,
@@ -44,7 +47,7 @@ describe("tool.operation_resume", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const root = path.join(Instance.worktree, ".ulmcode", "operations", "school")
@@ -80,7 +83,7 @@ describe("tool.operation_resume", () => {
             expect(result.output).toContain("operation plan is missing")
             expect(result.output).toContain("\"stage\": \"intake\"")
             expect(result.output).toContain("\"status\": \"running\"")
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })
@@ -89,7 +92,7 @@ describe("tool.operation_resume", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             yield* Effect.promise(() =>
@@ -132,7 +135,7 @@ describe("tool.operation_resume", () => {
             expect(result.output).toContain("\"operationID\": \"school\"")
             expect(result.metadata.health.ready).toBe(false)
             expect((yield* Effect.promise(() => operationForSession(dir.path, "session-1" as any)))?.operationID).toBe("school")
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })
@@ -141,7 +144,7 @@ describe("tool.operation_resume", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             yield* Effect.promise(() =>
@@ -200,7 +203,7 @@ describe("tool.operation_resume", () => {
               "runtime usage blind spot recorded: runtime blind spot: background task task-validator-1 (validator) has no readable session ledger or runtime snapshot; token/cost totals may be undercounted.",
             )
             expect(result.output).toContain("runtime_summary")
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })

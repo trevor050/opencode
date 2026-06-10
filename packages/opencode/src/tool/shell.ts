@@ -11,7 +11,6 @@ import { Language, type Node } from "web-tree-sitter"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { fileURLToPath } from "url"
 import { Config } from "@/config/config"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Shell } from "@/shell/shell"
 import { ShellID } from "./shell/id"
 
@@ -26,7 +25,7 @@ import { assertLaneToolAllowed } from "@/ulm/lane-tool-guard"
 export { Parameters } from "./shell/prompt"
 
 const MAX_METADATA_LENGTH = 30_000
-const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const DEFAULT_TIMEOUT = Number(process.env["OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS"] ?? "") || 2 * 60 * 1000
 const CWD = new Set(["cd", "chdir", "popd", "pushd", "push-location", "set-location"])
 const DANGEROUS_PROCESS_KILL_PATTERNS = [
   /\btaskkill\b(?=[\s\S]*\/im\s+node(?:\.exe)?\b)/i,
@@ -685,8 +684,8 @@ export const ShellTool = Tool.define(
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
                     Effect.sync(() => tree.delete()),
                   )
-                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
-                  if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
+                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, executeInstance)
+                  if (!containsPath(cwd, executeInstance)) scan.dirs.add(cwd)
                   yield* ask(ctx, scan, params)
                 }),
               )

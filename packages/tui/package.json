@@ -44,7 +44,15 @@
     "./ui/dialog": "./src/ui/dialog.tsx",
     "./ui/spinner": "./src/ui/spinner.ts",
     "./ui/toast": "./src/ui/toast.tsx",
-    "./component/spinner": "./src/component/spinner.tsx"
+    "./component/spinner": "./src/component/spinner.tsx",
+    "./component/dialog-agent": "./src/component/dialog-agent.tsx",
+    "./prompt/history": "./src/component/prompt/history.tsx",
+    "./prompt/intercept": "./src/component/prompt/intercept.ts",
+    "./prompt/paste": "./src/component/prompt/paste.ts",
+    "./routes/session/open-operation": "./src/routes/session/open-operation.ts",
+    "./routes/session/operator-auto-resume": "./src/routes/session/operator-auto-resume.tsx",
+    "./routes/session/ulm-tool-view": "./src/routes/session/ulm-tool-view.ts",
+    "./ulm/operation": "./src/ulm/operation.ts"
   },
   "dependencies": {
     "@opencode-ai/core": "workspace:*",

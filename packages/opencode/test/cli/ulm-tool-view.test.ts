@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildULMToolView } from "@/cli/cmd/tui/routes/session/ulm-tool-view"
+import { buildULMToolView } from "@opencode-ai/tui/routes/session/ulm-tool-view"
 
 describe("ulm tool view model", () => {
   test("formats discovery charter approval output with a plan preview", () => {

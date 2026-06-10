@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { resolveOperatorAutoResumeDeadline } from "@/cli/cmd/tui/routes/session/operator-auto-resume"
+import { resolveOperatorAutoResumeDeadline } from "@opencode-ai/tui/routes/session/operator-auto-resume"
 
 describe("operator auto-resume countdown", () => {
   test("uses the optimistic keypress reset when it is later than the server timeout", () => {

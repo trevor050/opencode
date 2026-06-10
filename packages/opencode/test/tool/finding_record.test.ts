@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { Effect, Layer } from "effect"
 import fs from "fs/promises"
 import path from "path"
@@ -7,6 +8,7 @@ import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { MessageID } from "@/session/schema"
@@ -24,6 +26,7 @@ const layer = Layer.mergeAll(
   Bus.layer,
   Config.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
+  LocationServiceMap.layer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
   Storage.defaultLayer,
@@ -46,7 +49,7 @@ describe("tool.finding_record", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* FindingRecordTool
@@ -78,7 +81,7 @@ describe("tool.finding_record", () => {
               ),
             )
             expect(record.confidence).toBe(1)
-          }).pipe(Effect.scoped, Effect.provide(layer)),
+          }).pipe(Effect.scoped, Effect.provide(layer), Effect.provideService(InstanceRef, ctx)) as Effect.Effect<void, never, never>,
         ),
     })
   })
