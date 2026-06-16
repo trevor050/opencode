@@ -48,9 +48,8 @@ function storageKey(id: string) {
 }
 
 /** Keeps the legacy service instance-scoped while sharing the core registry engine. */
-export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.effect(
-  Service,
-  Effect.scoped(Effect.gen(function* () {
+export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.unwrap(
+  Effect.gen(function* () {
     const storage = yield* Storage.Service
     const state = yield* InstanceState.make(() => CoreBackgroundJob.make)
     const readStored = (id: string) =>
@@ -64,7 +63,7 @@ export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.effect(
       })
     const saveLive = (info: CoreBackgroundJob.Info) => withStored(info).pipe(Effect.flatMap(writeStored))
 
-    return Service.of({
+    const service = Service.of({
       list: () =>
         Effect.gen(function* () {
           const live = yield* InstanceState.useEffect(state, (jobs) => jobs.list()).pipe(
@@ -116,7 +115,8 @@ export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.effect(
           return yield* writeStored(updated)
         }),
     })
-  })),
+    return Layer.succeed(Service, service)
+  }),
 )
 
 export const defaultLayer: Layer.Layer<Service> = layer.pipe(Layer.provide(Storage.defaultLayer))

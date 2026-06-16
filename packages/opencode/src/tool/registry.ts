@@ -55,6 +55,8 @@ import { SessionStatus } from "@/session/status"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { OperationCheckpointTool } from "./operation_checkpoint"
+import { OperationAuditTool } from "./operation_audit"
+import { OperationCredentialsTool } from "./operation_credentials"
 import { OperationGovernorTool } from "./operation_governor"
 import { OperationNextTool } from "./operation_next"
 import { OperationPlanTool } from "./operation_plan"
@@ -65,7 +67,9 @@ import { OperationResumeTool } from "./operation_resume"
 import { OperationRunTool } from "./operation_run"
 import { OperationScheduleTool } from "./operation_schedule"
 import { OperationStageGateTool } from "./operation_stage_gate"
+import { OperationStatusTool } from "./operation_status"
 import { ReportLintTool } from "./report_lint"
+import { ReportOutlineTool } from "./report_outline"
 import { ReportRenderTool } from "./report_render"
 import { RuntimeDaemonTool } from "./runtime_daemon"
 import { RuntimeSchedulerTool } from "./runtime_scheduler"
@@ -74,6 +78,12 @@ import { CommandSuperviseTool } from "./command_supervise"
 import { EvidenceNormalizeTool } from "./evidence_normalize"
 import { ToolAcquireTool } from "./tool_acquire"
 import { LaptopPreflightTool } from "./laptop_preflight"
+import { DistrictProfileTool } from "./district_profile"
+import { EvidenceRecordTool } from "./evidence_record"
+import { FindingRecordTool } from "./finding_record"
+import { IdentityGraphTool } from "./identity_graph"
+import { PersonProfileTool } from "./person_profile"
+import { TaskStatusTool } from "./task_status"
 
 export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
   return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
@@ -256,7 +266,13 @@ export const layer = Layer.effect(
           plan: Tool.init(plan),
         })
         const ulm = yield* Effect.all({
+          district_profile: Tool.init(DistrictProfileTool),
+          evidence_record: Tool.init(EvidenceRecordTool),
+          finding_record: Tool.init(FindingRecordTool),
+          identity_graph: Tool.init(IdentityGraphTool),
+          operation_audit: Tool.init(OperationAuditTool),
           operation_checkpoint: Tool.init(operationCheckpoint),
+          operation_credentials: Tool.init(OperationCredentialsTool),
           operation_governor: Tool.init(operationGovernor),
           operation_next: Tool.init(operationNext),
           operation_plan: Tool.init(operationPlan),
@@ -267,12 +283,16 @@ export const layer = Layer.effect(
           operation_run: Tool.init(operationRun),
           operation_schedule: Tool.init(operationSchedule),
           operation_stage_gate: Tool.init(operationStageGate),
+          operation_status: Tool.init(OperationStatusTool),
+          person_profile: Tool.init(PersonProfileTool),
           report_lint: Tool.init(reportLint),
+          report_outline: Tool.init(ReportOutlineTool),
           report_render: Tool.init(reportRender),
           runtime_daemon: Tool.init(runtimeDaemon),
           runtime_scheduler: Tool.init(runtimeScheduler),
           runtime_summary: Tool.init(runtimeSummary),
           task_restart: Tool.init(taskRestart),
+          task_status: Tool.init(TaskStatusTool),
           command_supervise: Tool.init(commandSupervise),
           evidence_normalize: Tool.init(evidenceNormalize),
           tool_acquire: Tool.init(toolAcquire),
@@ -296,7 +316,13 @@ export const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.patch,
+            ulm.district_profile,
+            ulm.evidence_record,
+            ulm.finding_record,
+            ulm.identity_graph,
+            ulm.operation_audit,
             ulm.operation_checkpoint,
+            ulm.operation_credentials,
             ulm.operation_governor,
             ulm.operation_next,
             ulm.operation_plan,
@@ -307,12 +333,16 @@ export const layer = Layer.effect(
             ulm.operation_run,
             ulm.operation_schedule,
             ulm.operation_stage_gate,
+            ulm.operation_status,
+            ulm.person_profile,
             ulm.report_lint,
+            ulm.report_outline,
             ulm.report_render,
             ulm.runtime_daemon,
             ulm.runtime_scheduler,
             ulm.runtime_summary,
             ulm.task_restart,
+            ulm.task_status,
             ulm.command_supervise,
             ulm.evidence_normalize,
             ulm.tool_acquire,
