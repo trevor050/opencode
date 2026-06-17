@@ -13,9 +13,9 @@ import {
 } from "./src/main/branding"
 
 const execFileAsync = promisify(execFile)
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const packageDir = path.dirname(fileURLToPath(import.meta.url))
+const rootDir = path.resolve(packageDir, "../..")
 const signScript = path.join(rootDir, "script", "sign-windows.ps1")
-
 async function signWindows(configuration: { path: string }) {
   if (process.platform !== "win32") return
   if (process.env.GITHUB_ACTIONS !== "true") return
@@ -31,11 +31,19 @@ const channel = (() => {
   return resolveDesktopChannel(process.env.OPENCODE_CHANNEL)
 })()
 
-const getBase = (): Configuration => ({
+const getBase = (appId: string): Configuration => ({
   artifactName: "ulmcode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
+  },
+  // Linux launchers are .desktop files, so this is the desktop file name,
+  // not just the app id. For prod, app id "ai.opencode.desktop" becomes
+  // "ai.opencode.desktop.desktop".
+  // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
+  // https://www.electron.build/docs/linux/
+  extraMetadata: {
+    desktopName: `${appId}.desktop`,
   },
   files: ["out/**/*", "resources/**/*"],
   extraResources: [
@@ -79,19 +87,27 @@ const getBase = (): Configuration => ({
   linux: {
     icon: `resources/icons`,
     category: "Development",
-    executableName: "opencode-desktop",
+    executableName: appId,
+    desktop: {
+      entry: {
+        // Match the installed .desktop file and hicolor icon basename so
+        // Linux shells can associate the running Electron window with its launcher.
+        StartupWMClass: appId,
+      },
+    },
     target: ["AppImage", "deb", "rpm"],
   },
 })
 
 function getConfig() {
-  const base = getBase()
+  const appId = APP_IDS[channel]
+  const base = getBase(appId)
 
   switch (channel) {
     case "dev": {
       return {
         ...base,
-        appId: APP_IDS.dev,
+        appId,
         productName: APP_NAMES.dev,
         rpm: { packageName: "ulmcode-dev" },
       }
@@ -99,7 +115,7 @@ function getConfig() {
     case "beta": {
       return {
         ...base,
-        appId: APP_IDS.beta,
+        appId,
         productName: APP_NAMES.beta,
         protocols: { name: APP_NAMES.beta, schemes: DESKTOP_PROTOCOLS },
         publish: getDesktopPublishConfig(channel),
@@ -109,7 +125,7 @@ function getConfig() {
     case "prod": {
       return {
         ...base,
-        appId: APP_IDS.prod,
+        appId,
         productName: APP_NAMES.prod,
         protocols: { name: APP_NAMES.prod, schemes: DESKTOP_PROTOCOLS },
         publish: getDesktopPublishConfig(channel),
