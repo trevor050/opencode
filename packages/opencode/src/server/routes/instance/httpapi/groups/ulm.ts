@@ -572,7 +572,7 @@ export const UlmApi = HttpApi.make("ulm")
           success: described(CredentialListResult, "ULMCode operation credentials"),
         }).annotateMerge(
           OpenApi.annotations({
-            identifier: "ulm.operation.credential.create",
+            identifier: "ulm.operation.operationCredential.create",
             summary: "Create ULM operation credential",
             description: "Store one operation-scoped credential and return the redacted credential list.",
           }),
@@ -582,7 +582,7 @@ export const UlmApi = HttpApi.make("ulm")
           success: described(CredentialReviewSubmitResult, "ULMCode submitted credential review"),
         }).annotateMerge(
           OpenApi.annotations({
-            identifier: "ulm.operation.credential.review.submit",
+            identifier: "ulm.operation.operationCredential.review.submit",
             summary: "Submit ULM credential review",
             description: "Mark the current redacted credential records as reviewed and ready for the agent.",
           }),
@@ -592,7 +592,7 @@ export const UlmApi = HttpApi.make("ulm")
           success: described(CredentialDeleteResult, "ULMCode credential deletion"),
         }).annotateMerge(
           OpenApi.annotations({
-            identifier: "ulm.operation.credential.delete",
+            identifier: "ulm.operation.operationCredential.delete",
             summary: "Delete ULM operation credential",
             description: "Delete one operation-scoped credential from the redacted index and backing secret store.",
           }),
@@ -603,7 +603,7 @@ export const UlmApi = HttpApi.make("ulm")
           success: described(CredentialMaterializeResult, "ULMCode credential env file"),
         }).annotateMerge(
           OpenApi.annotations({
-            identifier: "ulm.operation.credential.materializeEnv",
+            identifier: "ulm.operation.operationCredential.materializeEnv",
             summary: "Materialize ULM credential environment",
             description: "Write selected credential secrets to a chmod 0600 env file for scoped command use.",
           }),

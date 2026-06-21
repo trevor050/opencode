@@ -25,7 +25,7 @@ export function SessionPermissionDock(props: {
     setPausedUntil(now + 30_000)
     if (now - lastTouch < 5_000) return
     lastTouch = now
-    void sdk.client.permission.touch({
+    void sdk().client.permission.touch({
       requestID: props.request.id,
       holdMillis: 30_000,
     })

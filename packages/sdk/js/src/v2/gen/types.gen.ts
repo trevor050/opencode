@@ -9994,7 +9994,7 @@ export type UlmOperationCredentialsResponses = {
 
 export type UlmOperationCredentialsResponse = UlmOperationCredentialsResponses[keyof UlmOperationCredentialsResponses]
 
-export type UlmOperationCredentialCreateData = {
+export type UlmOperationOperationCredentialCreateData = {
   body?: {
     credentialID?: string
     label: string
@@ -10015,27 +10015,27 @@ export type UlmOperationCredentialCreateData = {
   url: "/ulm/operation/{operationID}/credentials"
 }
 
-export type UlmOperationCredentialCreateErrors = {
+export type UlmOperationOperationCredentialCreateErrors = {
   /**
    * Bad request
    */
   400: BadRequestError
 }
 
-export type UlmOperationCredentialCreateError =
-  UlmOperationCredentialCreateErrors[keyof UlmOperationCredentialCreateErrors]
+export type UlmOperationOperationCredentialCreateError =
+  UlmOperationOperationCredentialCreateErrors[keyof UlmOperationOperationCredentialCreateErrors]
 
-export type UlmOperationCredentialCreateResponses = {
+export type UlmOperationOperationCredentialCreateResponses = {
   /**
    * ULMCode operation credentials
    */
   200: UlmCredentialListResult
 }
 
-export type UlmOperationCredentialCreateResponse =
-  UlmOperationCredentialCreateResponses[keyof UlmOperationCredentialCreateResponses]
+export type UlmOperationOperationCredentialCreateResponse =
+  UlmOperationOperationCredentialCreateResponses[keyof UlmOperationOperationCredentialCreateResponses]
 
-export type UlmOperationCredentialReviewSubmitData = {
+export type UlmOperationOperationCredentialReviewSubmitData = {
   body?: never
   path: {
     operationID: string
@@ -10044,27 +10044,27 @@ export type UlmOperationCredentialReviewSubmitData = {
   url: "/ulm/operation/{operationID}/credentials/submit"
 }
 
-export type UlmOperationCredentialReviewSubmitErrors = {
+export type UlmOperationOperationCredentialReviewSubmitErrors = {
   /**
    * Bad request
    */
   400: BadRequestError
 }
 
-export type UlmOperationCredentialReviewSubmitError =
-  UlmOperationCredentialReviewSubmitErrors[keyof UlmOperationCredentialReviewSubmitErrors]
+export type UlmOperationOperationCredentialReviewSubmitError =
+  UlmOperationOperationCredentialReviewSubmitErrors[keyof UlmOperationOperationCredentialReviewSubmitErrors]
 
-export type UlmOperationCredentialReviewSubmitResponses = {
+export type UlmOperationOperationCredentialReviewSubmitResponses = {
   /**
    * ULMCode submitted credential review
    */
   200: UlmCredentialReviewSubmitResult
 }
 
-export type UlmOperationCredentialReviewSubmitResponse =
-  UlmOperationCredentialReviewSubmitResponses[keyof UlmOperationCredentialReviewSubmitResponses]
+export type UlmOperationOperationCredentialReviewSubmitResponse =
+  UlmOperationOperationCredentialReviewSubmitResponses[keyof UlmOperationOperationCredentialReviewSubmitResponses]
 
-export type UlmOperationCredentialDeleteData = {
+export type UlmOperationOperationCredentialDeleteData = {
   body?: never
   path: {
     operationID: string
@@ -10074,27 +10074,27 @@ export type UlmOperationCredentialDeleteData = {
   url: "/ulm/operation/{operationID}/credentials/{credentialID}"
 }
 
-export type UlmOperationCredentialDeleteErrors = {
+export type UlmOperationOperationCredentialDeleteErrors = {
   /**
    * Bad request
    */
   400: BadRequestError
 }
 
-export type UlmOperationCredentialDeleteError =
-  UlmOperationCredentialDeleteErrors[keyof UlmOperationCredentialDeleteErrors]
+export type UlmOperationOperationCredentialDeleteError =
+  UlmOperationOperationCredentialDeleteErrors[keyof UlmOperationOperationCredentialDeleteErrors]
 
-export type UlmOperationCredentialDeleteResponses = {
+export type UlmOperationOperationCredentialDeleteResponses = {
   /**
    * ULMCode credential deletion
    */
   200: UlmCredentialDeleteResult
 }
 
-export type UlmOperationCredentialDeleteResponse =
-  UlmOperationCredentialDeleteResponses[keyof UlmOperationCredentialDeleteResponses]
+export type UlmOperationOperationCredentialDeleteResponse =
+  UlmOperationOperationCredentialDeleteResponses[keyof UlmOperationOperationCredentialDeleteResponses]
 
-export type UlmOperationCredentialMaterializeEnvData = {
+export type UlmOperationOperationCredentialMaterializeEnvData = {
   body?: {
     credentialIDs?: Array<string>
   }
@@ -10105,25 +10105,25 @@ export type UlmOperationCredentialMaterializeEnvData = {
   url: "/ulm/operation/{operationID}/credentials/materialize-env"
 }
 
-export type UlmOperationCredentialMaterializeEnvErrors = {
+export type UlmOperationOperationCredentialMaterializeEnvErrors = {
   /**
    * Bad request
    */
   400: BadRequestError
 }
 
-export type UlmOperationCredentialMaterializeEnvError =
-  UlmOperationCredentialMaterializeEnvErrors[keyof UlmOperationCredentialMaterializeEnvErrors]
+export type UlmOperationOperationCredentialMaterializeEnvError =
+  UlmOperationOperationCredentialMaterializeEnvErrors[keyof UlmOperationOperationCredentialMaterializeEnvErrors]
 
-export type UlmOperationCredentialMaterializeEnvResponses = {
+export type UlmOperationOperationCredentialMaterializeEnvResponses = {
   /**
    * ULMCode credential env file
    */
   200: UlmCredentialMaterializeResult
 }
 
-export type UlmOperationCredentialMaterializeEnvResponse =
-  UlmOperationCredentialMaterializeEnvResponses[keyof UlmOperationCredentialMaterializeEnvResponses]
+export type UlmOperationOperationCredentialMaterializeEnvResponse =
+  UlmOperationOperationCredentialMaterializeEnvResponses[keyof UlmOperationOperationCredentialMaterializeEnvResponses]
 
 export type ExperimentalWorkspaceAdapterListData = {
   body?: never

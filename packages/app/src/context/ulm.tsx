@@ -91,7 +91,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
       setStore("refreshing", true)
       setStore("error", undefined)
       try {
-        const result = await sdk.client.ulm.operation.list({ eventLimit: "5" })
+        const result = await sdk().client.ulm.operation.list({ eventLimit: "5" })
         setStore("operations", reconcile(sortOperations(operationListFromResponse(result.data)), { key: "operationID" }))
         setLoaded(true)
       } catch (error) {
@@ -106,7 +106,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
       setStore("detailLoading", operationID, true)
       setStore("error", undefined)
       try {
-        const result = await sdk.client.ulm.operation.status({ operationID, eventLimit: "12" })
+        const result = await sdk().client.ulm.operation.status({ operationID, eventLimit: "12" })
         setStatus(setStore, result.data)
       } catch (error) {
         setStore("error", error instanceof Error ? error.message : String(error))
@@ -118,7 +118,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     async function resume(operationID: string) {
       setStore("actionLoading", operationID, true)
       try {
-        const result = await sdk.client.ulm.operation.resume({ operationID, eventLimit: "12" })
+        const result = await sdk().client.ulm.operation.resume({ operationID, eventLimit: "12" })
         setStore("resumeByID", operationID, result.data)
         return result.data
       } finally {
@@ -129,7 +129,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     async function audit(operationID: string) {
       setStore("actionLoading", operationID, true)
       try {
-        const result = await sdk.client.ulm.operation.audit2.write({ operationID, eventLimit: 12, finalHandoff: true })
+        const result = await sdk().client.ulm.operation.audit2.write({ operationID, eventLimit: 12, finalHandoff: true })
         setStore("auditByID", operationID, result.data)
         return result.data
       } finally {
@@ -138,7 +138,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     }
 
     async function refreshArtifacts(operationID: string) {
-      const result = await sdk.client.ulm.operation.finalArtifacts({ operationID })
+      const result = await sdk().client.ulm.operation.finalArtifacts({ operationID })
       setStore("artifactsByID", operationID, result.data)
       return result.data
     }
@@ -148,7 +148,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
       setStore("error", undefined)
       try {
         const response = await fetch(
-          `${sdk.url}/ulm/operation/close?directory=${encodeURIComponent(sdk.directory)}`,
+          `${sdk().url}/ulm/operation/close?directory=${encodeURIComponent(sdk().directory)}`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -166,7 +166,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     }
 
     async function daemonStatus(operationID: string) {
-      const result = await sdk.client.ulm.operation.daemon.status({ operationID })
+      const result = await sdk().client.ulm.operation.daemon.status({ operationID })
       setStore("daemonByID", operationID, result.data)
       return result.data
     }
@@ -174,7 +174,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     async function daemonStart(operationID: string) {
       setStore("actionLoading", operationID, true)
       try {
-        const result = await sdk.client.ulm.operation.daemon.start({ operationID })
+        const result = await sdk().client.ulm.operation.daemon.start({ operationID })
         setStore("daemonByID", operationID, result.data)
         return result.data
       } finally {
@@ -185,7 +185,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     async function daemonStop(operationID: string) {
       setStore("actionLoading", operationID, true)
       try {
-        const result = await sdk.client.ulm.operation.daemon.stop({ operationID })
+        const result = await sdk().client.ulm.operation.daemon.stop({ operationID })
         setStore("daemonByID", operationID, result.data)
         return result.data
       } finally {
@@ -194,14 +194,14 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     }
 
     const approvals = createMemo<UlmApprovalItem[]>(() => {
-      const sessions = new Map(sync.data.session.map((session) => [session.id, session] as const))
+      const sessions = new Map(sync().data.session.map((session) => [session.id, session] as const))
       const items: UlmApprovalItem[] = []
-      for (const [sessionID, requests] of Object.entries(sync.data.question)) {
+      for (const [sessionID, requests] of Object.entries(sync().data.question)) {
         for (const request of requests ?? []) {
           items.push({ type: "question", request, session: sessions.get(sessionID), operationID: requestOperationID(request) })
         }
       }
-      for (const [sessionID, requests] of Object.entries(sync.data.permission)) {
+      for (const [sessionID, requests] of Object.entries(sync().data.permission)) {
         for (const request of requests ?? []) {
           items.push({
             type: "permission",
@@ -215,9 +215,9 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
     })
 
     const source = createMemo(() => ({
-      sessions: sync.data.session,
-      questions: sync.data.question,
-      permissions: sync.data.permission,
+      sessions: sync().data.session,
+      questions: sync().data.question,
+      permissions: sync().data.permission,
     }))
 
     function approvalCounts(operationID: string) {
@@ -234,7 +234,7 @@ export const { use: useUlm, provider: UlmProvider } = createSimpleContext({
       onCleanup(() => window.clearInterval(interval))
     })
 
-    const unsub = sdk.event.on("operation.updated", (event) => {
+    const unsub = sdk().event.on("operation.updated", (event) => {
       setStore("operations", (items) => applyOperationUpdated(items, event))
       const operationID = event.properties.operationID
       setStore("statusByID", operationID, (current) => {

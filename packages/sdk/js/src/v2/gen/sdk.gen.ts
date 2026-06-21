@@ -268,14 +268,6 @@ import type {
   UlmOperationAuditWriteResponses,
   UlmOperationCloseErrors,
   UlmOperationCloseResponses,
-  UlmOperationCredentialCreateErrors,
-  UlmOperationCredentialCreateResponses,
-  UlmOperationCredentialDeleteErrors,
-  UlmOperationCredentialDeleteResponses,
-  UlmOperationCredentialMaterializeEnvErrors,
-  UlmOperationCredentialMaterializeEnvResponses,
-  UlmOperationCredentialReviewSubmitErrors,
-  UlmOperationCredentialReviewSubmitResponses,
   UlmOperationCredentialsErrors,
   UlmOperationCredentialsResponses,
   UlmOperationDaemonStartErrors,
@@ -292,6 +284,14 @@ import type {
   UlmOperationFinalArtifactsResponses,
   UlmOperationListErrors,
   UlmOperationListResponses,
+  UlmOperationOperationCredentialCreateErrors,
+  UlmOperationOperationCredentialCreateResponses,
+  UlmOperationOperationCredentialDeleteErrors,
+  UlmOperationOperationCredentialDeleteResponses,
+  UlmOperationOperationCredentialMaterializeEnvErrors,
+  UlmOperationOperationCredentialMaterializeEnvResponses,
+  UlmOperationOperationCredentialReviewSubmitErrors,
+  UlmOperationOperationCredentialReviewSubmitResponses,
   UlmOperationRecoverErrors,
   UlmOperationRecoverResponses,
   UlmOperationResumeErrors,
@@ -5384,8 +5384,8 @@ export class Review extends HeyApiClient {
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "operationID" }] }])
     return (options?.client ?? this.client).post<
-      UlmOperationCredentialReviewSubmitResponses,
-      UlmOperationCredentialReviewSubmitErrors,
+      UlmOperationOperationCredentialReviewSubmitResponses,
+      UlmOperationOperationCredentialReviewSubmitErrors,
       ThrowOnError
     >({
       url: "/ulm/operation/{operationID}/credentials/submit",
@@ -5395,7 +5395,7 @@ export class Review extends HeyApiClient {
   }
 }
 
-export class Credential extends HeyApiClient {
+export class OperationCredential extends HeyApiClient {
   /**
    * Create ULM operation credential
    *
@@ -5440,8 +5440,8 @@ export class Credential extends HeyApiClient {
       ],
     )
     return (options?.client ?? this.client).post<
-      UlmOperationCredentialCreateResponses,
-      UlmOperationCredentialCreateErrors,
+      UlmOperationOperationCredentialCreateResponses,
+      UlmOperationOperationCredentialCreateErrors,
       ThrowOnError
     >({
       url: "/ulm/operation/{operationID}/credentials",
@@ -5479,8 +5479,8 @@ export class Credential extends HeyApiClient {
       ],
     )
     return (options?.client ?? this.client).delete<
-      UlmOperationCredentialDeleteResponses,
-      UlmOperationCredentialDeleteErrors,
+      UlmOperationOperationCredentialDeleteResponses,
+      UlmOperationOperationCredentialDeleteErrors,
       ThrowOnError
     >({
       url: "/ulm/operation/{operationID}/credentials/{credentialID}",
@@ -5513,8 +5513,8 @@ export class Credential extends HeyApiClient {
       ],
     )
     return (options?.client ?? this.client).post<
-      UlmOperationCredentialMaterializeEnvResponses,
-      UlmOperationCredentialMaterializeEnvErrors,
+      UlmOperationOperationCredentialMaterializeEnvResponses,
+      UlmOperationOperationCredentialMaterializeEnvErrors,
       ThrowOnError
     >({
       url: "/ulm/operation/{operationID}/credentials/materialize-env",
@@ -5827,9 +5827,9 @@ export class Operation extends HeyApiClient {
     return (this._finalArtifact ??= new FinalArtifact({ client: this.client }))
   }
 
-  private _credential?: Credential
-  get credential(): Credential {
-    return (this._credential ??= new Credential({ client: this.client }))
+  private _operationCredential?: OperationCredential
+  get operationCredential(): OperationCredential {
+    return (this._operationCredential ??= new OperationCredential({ client: this.client }))
   }
 }
 

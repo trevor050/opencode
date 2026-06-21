@@ -122,7 +122,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     setPausedUntil(now + 30_000)
     if (now - lastTouch < 5_000) return
     lastTouch = now
-    const question = sdk.client.question as typeof sdk.client.question & QuestionTouchClient
+    const question = sdk().client.question as QuestionTouchClient
     void question.touch?.({
       requestID: request.id,
       holdMillis: 30_000,

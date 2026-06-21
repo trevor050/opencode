@@ -137,8 +137,14 @@ export const layer = Layer.effect(
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const districtProfile = yield* DistrictProfileTool
+    const evidenceRecord = yield* EvidenceRecordTool
+    const findingRecord = yield* FindingRecordTool
+    const identityGraph = yield* IdentityGraphTool
+    const operationAudit = yield* OperationAuditTool
     const taskRestart = yield* TaskRestartTool
     const operationCheckpoint = yield* OperationCheckpointTool
+    const operationCredentials = yield* OperationCredentialsTool
     const operationGovernor = yield* OperationGovernorTool
     const operationNext = yield* OperationNextTool
     const operationPlan = yield* OperationPlanTool
@@ -149,11 +155,15 @@ export const layer = Layer.effect(
     const operationRun = yield* OperationRunTool
     const operationSchedule = yield* OperationScheduleTool
     const operationStageGate = yield* OperationStageGateTool
+    const operationStatus = yield* OperationStatusTool
+    const personProfile = yield* PersonProfileTool
     const reportLint = yield* ReportLintTool
+    const reportOutline = yield* ReportOutlineTool
     const reportRender = yield* ReportRenderTool
     const runtimeDaemon = yield* RuntimeDaemonTool
     const runtimeScheduler = yield* RuntimeSchedulerTool
     const runtimeSummary = yield* RuntimeSummaryTool
+    const taskStatus = yield* TaskStatusTool
     const commandSupervise = yield* CommandSuperviseTool
     const evidenceNormalize = yield* EvidenceNormalizeTool
     const toolAcquire = yield* ToolAcquireTool
@@ -266,13 +276,13 @@ export const layer = Layer.effect(
           plan: Tool.init(plan),
         })
         const ulm = yield* Effect.all({
-          district_profile: Tool.init(DistrictProfileTool),
-          evidence_record: Tool.init(EvidenceRecordTool),
-          finding_record: Tool.init(FindingRecordTool),
-          identity_graph: Tool.init(IdentityGraphTool),
-          operation_audit: Tool.init(OperationAuditTool),
+          district_profile: Tool.init(districtProfile),
+          evidence_record: Tool.init(evidenceRecord),
+          finding_record: Tool.init(findingRecord),
+          identity_graph: Tool.init(identityGraph),
+          operation_audit: Tool.init(operationAudit),
           operation_checkpoint: Tool.init(operationCheckpoint),
-          operation_credentials: Tool.init(OperationCredentialsTool),
+          operation_credentials: Tool.init(operationCredentials),
           operation_governor: Tool.init(operationGovernor),
           operation_next: Tool.init(operationNext),
           operation_plan: Tool.init(operationPlan),
@@ -283,16 +293,16 @@ export const layer = Layer.effect(
           operation_run: Tool.init(operationRun),
           operation_schedule: Tool.init(operationSchedule),
           operation_stage_gate: Tool.init(operationStageGate),
-          operation_status: Tool.init(OperationStatusTool),
-          person_profile: Tool.init(PersonProfileTool),
+          operation_status: Tool.init(operationStatus),
+          person_profile: Tool.init(personProfile),
           report_lint: Tool.init(reportLint),
-          report_outline: Tool.init(ReportOutlineTool),
+          report_outline: Tool.init(reportOutline),
           report_render: Tool.init(reportRender),
           runtime_daemon: Tool.init(runtimeDaemon),
           runtime_scheduler: Tool.init(runtimeScheduler),
           runtime_summary: Tool.init(runtimeSummary),
           task_restart: Tool.init(taskRestart),
-          task_status: Tool.init(TaskStatusTool),
+          task_status: Tool.init(taskStatus),
           command_supervise: Tool.init(commandSupervise),
           evidence_normalize: Tool.init(evidenceNormalize),
           tool_acquire: Tool.init(toolAcquire),
