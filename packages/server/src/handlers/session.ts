@@ -1,5 +1,6 @@
 import { SessionV2 } from "@opencode-ai/core/session"
 import { DateTime, Effect } from "effect"
+import { HttpServerRequest } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { SessionsCursor } from "../groups/session"
@@ -10,9 +11,19 @@ import {
   SessionNotFoundError,
   UnknownError,
 } from "../errors"
+import { Location } from "@opencode-ai/core/location"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 
 const DefaultSessionsLimit = 50
+
+function decodeHeader(input: string) {
+  try {
+    return decodeURIComponent(input)
+  } catch {
+    return input
+  }
+}
 
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
@@ -63,17 +74,24 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         }),
       )
       .handle(
-        "session.create",
-        Effect.fn(function* (ctx) {
-          return {
-            data: yield* session.create({
-              id: ctx.payload.id,
-              agent: ctx.payload.agent,
-              model: ctx.payload.model,
-              location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) },
-            }),
-          }
-        }),
+	        "session.create",
+	        Effect.fn(function* (ctx) {
+	          const request = yield* HttpServerRequest.HttpServerRequest
+	          const directory = request.headers["x-opencode-directory"]
+	          const workspaceID = request.headers["x-opencode-workspace"]
+	          const location = Location.Ref.make({
+	            directory: AbsolutePath.make(directory ? decodeHeader(directory) : process.cwd()),
+	            workspaceID: workspaceID ? WorkspaceV2.ID.make(workspaceID) : undefined,
+	          })
+	          return {
+	            data: yield* session.create({
+	              id: ctx.payload.id,
+	              agent: ctx.payload.agent,
+	              model: ctx.payload.model,
+	              location: ctx.payload.location ?? location,
+	            }),
+	          }
+	        }),
       )
       .handle(
         "session.get",

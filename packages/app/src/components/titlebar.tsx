@@ -459,6 +459,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                     data-slot="titlebar-tabs-scroll"
                     class="flex min-w-0 flex-row items-center gap-1.5 overflow-x-auto no-scrollbar [app-region:no-drag]"
                     ref={(el) => {
+                      if (!el) return
                       tabScrollRef = el
                       createResizeObserver(el, refreshTabsAreOverflowing)
                     }}

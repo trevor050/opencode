@@ -142,7 +142,6 @@ export const locationLayer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const catalog = yield* Catalog.Service
-    const credentials = yield* Credential.Service
     const integrations = yield* Integration.Service
     const boot = yield* PluginBoot.Service
     return Service.of({
@@ -155,10 +154,14 @@ export const locationLayer = Layer.effect(
             (yield* catalog.model.available()).find(supported))
         if (!selected) return yield* new ModelNotSelectedError({ sessionID: session.id })
         const connection = yield* integrations.connection.forIntegration(Integration.ID.make(selected.providerID))
+        const credential =
+          connection?.type === "credential"
+            ? yield* integrations.connection.refresh(connection.id)
+            : undefined
         return yield* fromCatalogModel(
           withVariant(selected, session.model?.variant),
           connection,
-          connection?.type === "credential" ? yield* credentials.get(connection.id) : undefined,
+          credential,
         )
       }),
     })

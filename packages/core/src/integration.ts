@@ -232,6 +232,8 @@ export interface Interface {
       credentialID: Credential.ID,
       updates: Partial<Pick<Credential.Stored, "label">>,
     ) => Effect.Effect<void>
+    /** Refreshes an OAuth credential with its registered implementation when expired. */
+    readonly refresh: (credentialID: Credential.ID) => Effect.Effect<Credential.Stored | undefined>
     /** Removes a stored credential connection. */
     readonly remove: (credentialID: Credential.ID) => Effect.Effect<void>
   }
@@ -517,6 +519,17 @@ export const locationLayer = Layer.effect(
         update: Effect.fn("Integration.connection.update")(function* (credentialID, updates) {
           yield* credentials.update(credentialID, updates)
           yield* events.publish(Event.Updated, {})
+        }),
+        refresh: Effect.fn("Integration.connection.refresh")(function* (credentialID) {
+          const credential = yield* credentials.get(credentialID)
+          if (credential?.value.type !== "oauth") return credential
+          if (credential.value.expires > Date.now() + 60_000) return credential
+          const method = state.get().integrations.get(credential.integrationID)?.implementations.get(credential.value.methodID)
+          if (!method?.refresh) return credential
+          const value = yield* method.refresh(credential.value).pipe(Effect.catch(() => Effect.succeed(credential.value)))
+          yield* credentials.update(credential.id, { value })
+          yield* events.publish(Event.Updated, {})
+          return new Credential.Stored({ ...credential, value })
         }),
         remove: Effect.fn("Integration.connection.remove")(function* (credentialID) {
           yield* credentials.remove(credentialID)

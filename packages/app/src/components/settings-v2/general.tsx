@@ -668,7 +668,6 @@ export const SettingsGeneralV2: Component = () => {
     </div>
   )
 
-  // We can probably remove this, right?
   const DisplaySection = () => (
     <Show when={desktop()}>
       <div class="settings-v2-section">

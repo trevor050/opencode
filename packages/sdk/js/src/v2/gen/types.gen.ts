@@ -11516,6 +11516,7 @@ export type V2FsReadData = {
       directory?: string
       workspace?: string
     }
+    path?: string
   }
   url: "/api/fs/read/*"
 }

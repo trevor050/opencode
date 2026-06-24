@@ -18,7 +18,7 @@ export function createProviderBudgetTracker(
   const interval = new Date()
     .toISOString()
     .replace(/[^0-9]/g, "")
-    .substring(0, 12)
+    .substring(0, 8)
   const redis = getRedis()
   const keys = Object.fromEntries(
     tracked.map((provider) => [provider.id, buildRateLimitKey("provider-budget", provider.id, interval)]),
@@ -41,7 +41,7 @@ export function createProviderBudgetTracker(
       if (cost <= 0) return
       const pipeline = redis.pipeline()
       pipeline.incrby(keys[provider], cost)
-      pipeline.expire(keys[provider], 120)
+      pipeline.expire(keys[provider], 60 * 60 * 24 * 2)
       await pipeline.exec()
       logger.metric({
         "provider.budget_usage": budgetUsage[provider] + cost,
