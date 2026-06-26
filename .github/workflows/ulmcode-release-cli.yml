@@ -69,6 +69,32 @@ jobs:
           set -euo pipefail
           gh release upload "v${VERSION}" ./dist/ulmcode-skills.tar.gz --repo "$REPO" --clobber
 
+  release_capabilities:
+    needs: create_release
+    runs-on: ubuntu-latest
+    outputs:
+      apple_signing: ${{ steps.apple-signing.outputs.available }}
+    steps:
+      - id: apple-signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_CERTIFICATE}" ] &&
+             [ -n "${APPLE_CERTIFICATE_PASSWORD}" ] &&
+             [ -n "${APPLE_API_KEY_PATH}" ] &&
+             [ -n "${APPLE_API_KEY}" ] &&
+             [ -n "${APPLE_API_ISSUER}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping macOS desktop packaging because Apple signing secrets are not fully configured"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build_cli:
     needs: create_release
     runs-on: ubuntu-latest
@@ -147,6 +173,7 @@ jobs:
     needs:
       - create_release
       - build_cli
+      - release_capabilities
     strategy:
       fail-fast: false
       matrix:
@@ -155,17 +182,22 @@ jobs:
             target: x86_64-apple-darwin
             platform_flag: --mac --x64
             bun_install_flags: --os=darwin --cpu=x64
+            requires_apple_signing: true
           - host: macos-14
             target: aarch64-apple-darwin
             platform_flag: --mac --arm64
             bun_install_flags: --os=darwin --cpu=arm64
+            requires_apple_signing: true
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             platform_flag: --win --x64
+            requires_apple_signing: false
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform_flag: --linux --x64
+            requires_apple_signing: false
     runs-on: ${{ matrix.settings.host }}
+    if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
     steps:
       - uses: actions/checkout@v3
         with:
