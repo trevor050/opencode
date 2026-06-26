@@ -157,7 +157,16 @@ function validateLaunchEnv(env: NodeJS.ProcessEnv, configDir: string) {
     gaps.push(`OPENCODE_DISABLE_PROJECT_CONFIG must be 1, got ${env.OPENCODE_DISABLE_PROJECT_CONFIG}`)
   }
   if (env.OPENCODE_MCP_ALLOWLIST) {
-    const allowed = new Set(["websearch", "agent_browser", "playwright", "pentestMCP"])
+    const allowed = new Set([
+      "websearch",
+      "agent_browser",
+      "playwright",
+      "playwright_persistent",
+      "pentestMCP",
+      "companyscope",
+      "not_human_search",
+      "openregistry",
+    ])
     for (const item of env.OPENCODE_MCP_ALLOWLIST.split(",").map((value) => value.trim()).filter(Boolean)) {
       if (!allowed.has(item)) gaps.push(`OPENCODE_MCP_ALLOWLIST includes non-ULM MCP: ${item}`)
     }

@@ -830,7 +830,7 @@ export async function runOperationStep(worktree: string, input: OperationRunInpu
 
   const reason =
     mode === "advance" && next.action.action === "launch_lane"
-      ? `marked lane ${laneID} running and prepared launch parameters`
+      ? `marked lane ${laneID} running and prepared launch parameters; ${next.action.reason}`
       : next.action.reason
   const { graphPath: persistedGraphPath, runLogPath: persistedRunLogPath } = await persistRun(worktree, graph, {
     time: now.toISOString(),

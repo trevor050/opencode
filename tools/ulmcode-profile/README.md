@@ -19,12 +19,12 @@ It also runs the bundled lab replay catalog, proving the manifest-driven replay 
 ## Runtime Defaults
 
 - `pentest` is the default primary agent for operations.
-- `action` is the focused primary mode for one-off fixes, quick research, and narrow security checks. The old `build` mode remains hidden as a compatibility alias.
+- `action` is the focused primary mode for day-to-day cyber work: scoped checks, finding triage, suspicious-signal review, tool/CVE/control research, and narrow validation. The old `build` mode remains hidden as a compatibility alias.
 - `gpt-5.4-mini-fast` handles quick recon and evidence normalization.
 - `gpt-5.5` handles operation control, attack-path mapping, validation, reporting, report review, and hard reasoning lanes.
-- Session retries are capped with `max_retries: 8` so a long unattended operation can ride out transient provider failures without spinning forever.
 - Skills are allowlisted to the bundled K-12 pentest profile, including a dedicated long-report production skill for dense report drafting and sparse-report prevention.
-- Websearch, Agent Browser, Playwright, and pentest MCP are configured. `websearch` uses the Exa remote MCP for current research. `agent_browser` is the preferred browser automation MCP; Playwright is the fallback.
+- Websearch, Agent Browser, Playwright, pentest MCP, and a focused API-key-free OSINT set are configured. `websearch` uses the Exa remote MCP for current research. `agent_browser` is the preferred browser automation MCP; Playwright is the fallback. `pentestMCP` is vendored from `ramkansal/pentestMCP` and runs locally through Python/uv with host-installed tools instead of Docker.
+- The OSINT MCP set is intentionally narrow: `companyscope` for public company/domain/vendor context, `openregistry` for no-API-key corporate registry lookups, and `not_human_search` for discovering and checking MCP servers. The `companyscope` npm package currently starts and exposes its no-key company tools, but it is marked sunset upstream; keep it easy to remove if it stops working. People-search, breach-search, relay/payment, and Docker-only OSINT MCPs stay out of the default profile until they have stricter ULM-native policy wrappers.
 - The model stack is intentionally OpenAI-only. The profile must not configure non-OpenAI model routes or local model providers.
 - The profile includes a local `ulmcode-runtime-guard` server plugin that injects ULM operation-resume, background-task, report-lint, runtime-summary, and final-handoff guardrails into the runtime without depending on npm availability. It also bundles the local shell non-interactive strategy as a profile instruction so long unattended runs avoid prompt-prone shell commands.
 - No third-party model-routing plugins are vendored or installed by the ULMCode profile.
@@ -60,6 +60,8 @@ Burn-in is accelerated readiness evidence. Literal readiness only passes with ac
 ## First School Laptop Run
 
 Use the `school-laptop-48h` operation template for the first Surface/private-Wi-Fi school assessment. It creates a 48-hour unattended plan, supervisor lane, aggressive bounded scan profile, protected finalization window, and a 75-page report outline.
+
+For capability planning, see `docs/48-hour-district-pentest-activities.md`. It maps the main activity families in a full unattended district operation, expected artifacts, likely weak spots, and ability investments.
 
 Before leaving the laptop unattended:
 

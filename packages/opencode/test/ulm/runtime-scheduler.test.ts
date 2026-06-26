@@ -150,7 +150,12 @@ describe("ULM runtime scheduler", () => {
     expect(result.cycles[0]?.governor.action).toBe("continue")
     const heartbeat = JSON.parse(await fs.readFile(result.heartbeatPath, "utf8"))
     expect(heartbeat.lastAction).toBe("launch_lane")
+    expect(heartbeat.lastDecisionReason).toContain("priority")
     expect(await fs.readFile(result.logPath, "utf8")).toContain('"cycle":1')
+    const decisionLog = await fs.readFile(path.join(operationPath(dir.path, "School"), "scheduler", "decision-log.jsonl"), "utf8")
+    expect(decisionLog).toContain('"cycle":1')
+    expect(decisionLog).toContain('"selectedLane":"district_profile"')
+    expect(decisionLog).toContain('"priorityReason"')
   })
 
   test("launches prepared model lanes through the scheduler owner hook", async () => {

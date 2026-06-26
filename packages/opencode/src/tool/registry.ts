@@ -55,6 +55,7 @@ import { SessionStatus } from "@/session/status"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { OperationCheckpointTool } from "./operation_checkpoint"
+import { OperationBoardTool } from "./operation_board"
 import { OperationAuditTool } from "./operation_audit"
 import { OperationCredentialsTool } from "./operation_credentials"
 import { OperationGovernorTool } from "./operation_governor"
@@ -67,6 +68,7 @@ import { OperationResumeTool } from "./operation_resume"
 import { OperationRunTool } from "./operation_run"
 import { OperationScheduleTool } from "./operation_schedule"
 import { OperationStageGateTool } from "./operation_stage_gate"
+import { OperationStrategyTool } from "./operation_strategy"
 import { OperationStatusTool } from "./operation_status"
 import { ReportLintTool } from "./report_lint"
 import { ReportOutlineTool } from "./report_outline"
@@ -141,6 +143,7 @@ export const layer = Layer.effect(
     const evidenceRecord = yield* EvidenceRecordTool
     const findingRecord = yield* FindingRecordTool
     const identityGraph = yield* IdentityGraphTool
+    const operationBoard = yield* OperationBoardTool
     const operationAudit = yield* OperationAuditTool
     const taskRestart = yield* TaskRestartTool
     const operationCheckpoint = yield* OperationCheckpointTool
@@ -155,6 +158,7 @@ export const layer = Layer.effect(
     const operationRun = yield* OperationRunTool
     const operationSchedule = yield* OperationScheduleTool
     const operationStageGate = yield* OperationStageGateTool
+    const operationStrategy = yield* OperationStrategyTool
     const operationStatus = yield* OperationStatusTool
     const personProfile = yield* PersonProfileTool
     const reportLint = yield* ReportLintTool
@@ -174,6 +178,15 @@ export const layer = Layer.effect(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
         const custom: Tool.Def[] = []
 
+        function isToolDefinition(value: unknown): value is ToolDefinition {
+          return (
+            typeof value === "object" &&
+            value !== null &&
+            typeof Reflect.get(value, "description") === "string" &&
+            typeof Reflect.get(value, "execute") === "function"
+          )
+        }
+
         function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
           // Plugin tools still expose Zod args publicly; keep that compatibility
           // boxed at the registry boundary and give the LLM the original JSON Schema.
@@ -183,7 +196,7 @@ export const layer = Layer.effect(
           const entries = Object.entries(args)
           const allZod = entries.every((entry) => isZodType(entry[1]))
           const zodParams = allZod ? z.object(args) : undefined
-          const jsonSchema = zodParams ? zodJsonSchema(zodParams) : legacyJsonSchema(entries)
+          const jsonSchema = zodParams ? zodJsonSchema(zodParams, entries) : legacyJsonSchema(entries)
           const parameters = zodParams
             ? Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success)
             : Schema.Unknown
@@ -242,7 +255,8 @@ export const layer = Layer.effect(
           // `match` is an absolute filesystem path from `Glob.scanSync(..., { absolute: true })`.
           // Import it as `file://` so Node on Windows accepts the dynamic import.
           const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
-          for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+          for (const [id, def] of Object.entries<unknown>(mod)) {
+            if (!isToolDefinition(def)) continue
             custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
           }
         }
@@ -280,6 +294,7 @@ export const layer = Layer.effect(
           evidence_record: Tool.init(evidenceRecord),
           finding_record: Tool.init(findingRecord),
           identity_graph: Tool.init(identityGraph),
+          operation_board: Tool.init(operationBoard),
           operation_audit: Tool.init(operationAudit),
           operation_checkpoint: Tool.init(operationCheckpoint),
           operation_credentials: Tool.init(operationCredentials),
@@ -293,6 +308,7 @@ export const layer = Layer.effect(
           operation_run: Tool.init(operationRun),
           operation_schedule: Tool.init(operationSchedule),
           operation_stage_gate: Tool.init(operationStageGate),
+          operation_strategy: Tool.init(operationStrategy),
           operation_status: Tool.init(operationStatus),
           person_profile: Tool.init(personProfile),
           report_lint: Tool.init(reportLint),
@@ -330,6 +346,7 @@ export const layer = Layer.effect(
             ulm.evidence_record,
             ulm.finding_record,
             ulm.identity_graph,
+            ulm.operation_board,
             ulm.operation_audit,
             ulm.operation_checkpoint,
             ulm.operation_credentials,
@@ -343,6 +360,7 @@ export const layer = Layer.effect(
             ulm.operation_run,
             ulm.operation_schedule,
             ulm.operation_stage_gate,
+            ulm.operation_strategy,
             ulm.operation_status,
             ulm.person_profile,
             ulm.report_lint,
@@ -471,7 +489,12 @@ export const defaultLayer: Layer.Layer<Service> = Layer.suspend(() =>
 )
 
 function isZodType(value: unknown): value is z.ZodType {
-  return typeof value === "object" && value !== null && "_zod" in value
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (("_zod" in value && typeof Reflect.get(value, "safeParse") === "function") ||
+      ("_def" in value && typeof Reflect.get(value, "safeParse") === "function"))
+  )
 }
 
 function isJsonSchemaDefinition(value: unknown): value is JSONSchema7Definition {
@@ -489,13 +512,35 @@ function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
   }
 }
 
-function zodJsonSchema(schema: z.ZodType): JSONSchema7 {
+function zodDescription(value: unknown) {
+  const direct = typeof value === "object" && value !== null ? Reflect.get(value, "description") : undefined
+  if (typeof direct === "string" && direct.length > 0) return direct
+  const def = typeof value === "object" && value !== null ? Reflect.get(value, "_def") : undefined
+  const legacy = typeof def === "object" && def !== null ? Reflect.get(def, "description") : undefined
+  return typeof legacy === "string" && legacy.length > 0 ? legacy : undefined
+}
+
+function restoreZodDescriptions(schema: JSONSchema7, entries: [string, unknown][]): JSONSchema7 {
+  const properties = schema.properties
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return schema
+  for (const [name, arg] of entries) {
+    const description = zodDescription(arg)
+    const property = properties[name]
+    if (!description || typeof property !== "object" || property === null || Array.isArray(property)) continue
+    if (typeof Reflect.get(property, "description") !== "string") {
+      Reflect.set(property, "description", description)
+    }
+  }
+  return schema
+}
+
+function zodJsonSchema(schema: z.ZodType, entries: [string, unknown][]): JSONSchema7 {
   const result = normalizeZodJsonSchema(z.toJSONSchema(schema, { io: "input" }))
   if (!isJsonSchemaObject(result)) throw new Error("plugin tool Zod schema produced a non-object JSON Schema")
   const { $defs, ...rest } = result
-  return (
+  return restoreZodDescriptions((
     $defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs as JSONSchema7["definitions"] } : rest
-  ) as JSONSchema7
+  ) as JSONSchema7, entries)
 }
 
 function normalizeZodJsonSchema(value: unknown): unknown {

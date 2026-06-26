@@ -52,6 +52,7 @@ This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, 
 - Moonshot/Kimi schema normalization strips `$ref` siblings, cleans tuple items, and flattens deeply nested schemas near provider depth limits.
 - MCP dynamic tools retry once after transport/session errors by reconnecting; auth/business errors should surface directly.
 - Codex/OpenAI `server_is_overloaded` is retryable provider overload. Codex OAuth refresh may omit a new refresh token; preserve the existing one on refresh while keeping first-login strict.
+- OpenAI `promptCacheKey` is intentionally stable by app/model, not session ID, so new ULMCode chats can reuse cached static prefixes. For OpenAI `gpt-5.5*`, also preserve `promptCacheRetention: "24h"`; OpenAI does not use normal in-memory cache retention for that family. Do not switch either back unless measuring a real cache-routing regression.
 - Core process handling resolves exit state on `exit` as well as `close`, and SIGKILL escalation must not wait forever for a close event.
 - Broad Node process-kill commands stay blocked because OpenCode itself runs on Node; PID-scoped kills and project-scoped stop commands can remain allowed.
 

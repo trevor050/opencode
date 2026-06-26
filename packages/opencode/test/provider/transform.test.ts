@@ -72,7 +72,9 @@ describe("ProviderTransform.options - setCacheKey", () => {
     expect(result.promptCacheKey).toBeUndefined()
   })
 
-  test("should set promptCacheKey for openai provider regardless of setCacheKey", () => {
+  test("should set a stable promptCacheKey for openai provider across sessions", () => {
+    const previousAppName = process.env.OPENCODE_APP_NAME
+    delete process.env.OPENCODE_APP_NAME
     const openaiModel = {
       ...mockModel,
       providerID: "openai",
@@ -82,8 +84,72 @@ describe("ProviderTransform.options - setCacheKey", () => {
         npm: "@ai-sdk/openai",
       },
     }
-    const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
-    expect(result.promptCacheKey).toBe(sessionID)
+    try {
+      const first = ProviderTransform.options({ model: openaiModel, sessionID: "session-a", providerOptions: {} })
+      const second = ProviderTransform.options({ model: openaiModel, sessionID: "session-b", providerOptions: {} })
+      expect(first.promptCacheKey).toBe("opencode:openai:gpt-4")
+      expect(second.promptCacheKey).toBe(first.promptCacheKey)
+    } finally {
+      if (previousAppName === undefined) delete process.env.OPENCODE_APP_NAME
+      else process.env.OPENCODE_APP_NAME = previousAppName
+    }
+  })
+
+  test("should include ulmcode app name in openai promptCacheKey", () => {
+    const previousAppName = process.env.OPENCODE_APP_NAME
+    process.env.OPENCODE_APP_NAME = "ulmcode"
+    const openaiModel = {
+      ...mockModel,
+      providerID: "openai",
+      api: {
+        id: "gpt-4",
+        url: "https://api.openai.com",
+        npm: "@ai-sdk/openai",
+      },
+    }
+    try {
+      const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
+      expect(result.promptCacheKey).toBe("ulmcode:openai:gpt-4")
+    } finally {
+      if (previousAppName === undefined) delete process.env.OPENCODE_APP_NAME
+      else process.env.OPENCODE_APP_NAME = previousAppName
+    }
+  })
+
+  test("should honor explicit promptCacheKey for openai provider", () => {
+    const openaiModel = {
+      ...mockModel,
+      providerID: "openai",
+      api: {
+        id: "gpt-4",
+        url: "https://api.openai.com",
+        npm: "@ai-sdk/openai",
+      },
+    }
+    const result = ProviderTransform.options({
+      model: openaiModel,
+      sessionID,
+      providerOptions: { promptCacheKey: "ulmcode:action:gpt-4" },
+    })
+    expect(result.promptCacheKey).toBe("ulmcode:action:gpt-4")
+  })
+
+  test("should request extended prompt cache retention for openai gpt-5.5", () => {
+    const openaiModel = {
+      ...mockModel,
+      providerID: "openai",
+      api: {
+        id: "gpt-5.5",
+        url: "https://api.openai.com",
+        npm: "@ai-sdk/openai",
+      },
+    }
+    const result = ProviderTransform.options({
+      model: openaiModel,
+      sessionID,
+      providerOptions: {},
+    })
+    expect(result.promptCacheRetention).toBe("24h")
   })
 
   test("should set store=false for openai provider", () => {

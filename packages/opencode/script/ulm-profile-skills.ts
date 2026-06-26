@@ -169,7 +169,7 @@ function validateRouting() {
     model: "openai/gpt-5.5",
   })
   if (opencodeConfig.agent?.action?.options?.reasoningEffort !== "medium") {
-    throw new Error("opencode.json: action must use medium reasoning for focused one-off work")
+    throw new Error("opencode.json: action must use medium reasoning for day-to-day cyber work")
   }
   assertRoute("opencode.json", "recon", opencodeConfig.agent?.recon, {
     model: "openai/gpt-5.4-mini-fast",

@@ -26,6 +26,20 @@ export function sanitizeSurrogates(content: string) {
   return content.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD")
 }
 
+function openAIPromptCacheKey(input: { model: Provider.Model; providerOptions?: Record<string, unknown> }) {
+  const explicit = input.providerOptions?.promptCacheKey ?? input.providerOptions?.cacheKey
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim()
+
+  const appName = process.env.OPENCODE_APP_NAME === "ulmcode" ? "ulmcode" : "opencode"
+  return `${appName}:openai:${input.model.api.id}`
+}
+
+function openAIPromptCacheRetention(input: { model: Provider.Model; providerOptions?: Record<string, unknown> }) {
+  const explicit = input.providerOptions?.promptCacheRetention ?? input.providerOptions?.prompt_cache_retention
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim()
+  return /^gpt-5[.-]5(?:\b|[-.])/.test(input.model.api.id.toLowerCase()) ? "24h" : undefined
+}
+
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
   switch (npm) {
@@ -1128,7 +1142,11 @@ export function options(input: {
     }
   }
 
-  if (input.model.providerID === "openai" || input.providerOptions?.setCacheKey) {
+  if (input.model.providerID === "openai") {
+    result["promptCacheKey"] = openAIPromptCacheKey(input)
+    const promptCacheRetention = openAIPromptCacheRetention(input)
+    if (promptCacheRetention) result["promptCacheRetention"] = promptCacheRetention
+  } else if (input.providerOptions?.setCacheKey) {
     result["promptCacheKey"] = input.sessionID
   }
 

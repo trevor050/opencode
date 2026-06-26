@@ -490,6 +490,7 @@ describe("OpenAI Responses route", () => {
           providerOptions: {
             openai: {
               promptCacheKey: "session_123",
+              promptCacheRetention: "24h",
               reasoningEffort: "high",
               reasoningSummary: "auto",
               include: ["reasoning.encrypted_content"],
@@ -500,6 +501,7 @@ describe("OpenAI Responses route", () => {
 
       expect(prepared.body.store).toBe(false)
       expect(prepared.body.prompt_cache_key).toBe("session_123")
+      expect(prepared.body.prompt_cache_retention).toBe("24h")
       expect(prepared.body.include).toEqual(["reasoning.encrypted_content"])
       expect(prepared.body.reasoning).toEqual({ effort: "high", summary: "auto" })
       expect(prepared.body.text).toEqual({ verbosity: "low" })

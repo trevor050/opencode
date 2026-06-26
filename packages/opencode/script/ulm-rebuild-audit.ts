@@ -217,11 +217,11 @@ async function auditOperationRuntime() {
   const todoService = await read("packages/opencode/src/session/todo.ts")
   const commandService = await read("packages/opencode/src/command/index.ts")
   const configService = await read("packages/opencode/src/config/config.ts")
-  const observability = await read("packages/core/src/effect/observability.ts")
+  const observability = await read("packages/core/src/observability/otlp.ts")
   const shellTool = await read("packages/opencode/src/tool/shell.ts")
   const shellPrompt = await read("packages/opencode/src/tool/shell/shell.txt")
   const systemPrompt = await read("packages/opencode/src/session/system.ts")
-  const promptPaste = await read("packages/opencode/src/cli/cmd/tui/component/prompt/paste.ts")
+  const promptPaste = await read("packages/tui/src/component/prompt/index.tsx")
   const coreProjectService = await read("packages/core/src/project.ts")
   const coreGitService = await read("packages/core/src/git.ts")
   const providerTransform = await read("packages/opencode/src/provider/transform.ts")
@@ -772,10 +772,11 @@ async function auditOperationRuntime() {
   ])
   requireText("packages/opencode/src/command/index.ts", commandService, ["CLEAR_TASKS", "CLEAR_TASKS_ZH", "todowrite"])
   requireText("packages/opencode/src/config/config.ts", configService, ["enable_sse_json_repair"])
-  requireText("packages/core/src/effect/observability.ts", observability, [
-    "OTEL_SERVICE_NAME",
-    "service.version",
+  requireText("packages/core/src/observability/otlp.ts", observability, [
+    'serviceName: "opencode"',
+    "serviceVersion: InstallationVersion",
     "deployment.environment.name",
+    "service.instance.id",
   ])
   requireText("packages/opencode/src/tool/shell.ts", shellTool, [
     "isDangerousProcessKillCommand",
@@ -784,10 +785,10 @@ async function auditOperationRuntime() {
   ])
   requireText("packages/opencode/src/tool/shell/shell.txt", shellPrompt, ["pkill node", "taskkill /F /IM node.exe"])
   requireText("packages/opencode/src/session/system.ts", systemPrompt, ["pkill node", "OpenCode itself runs on Node.js"])
-  requireText("packages/opencode/src/cli/cmd/tui/component/prompt/paste.ts", promptPaste, [
-    "displayOffsetToStringIndex",
-    "expandPromptTextParts",
-    "Bun.stringWidth",
+  requireText("packages/tui/src/component/prompt/index.tsx", promptPaste, [
+    "expandTrackedPastedText",
+    "paste_summary_enabled",
+    "[Pasted ~${lineCount} lines]",
   ])
   requireText("packages/core/src/project.ts", coreProjectService, [
     "cached(repo.store)",
@@ -1476,14 +1477,15 @@ async function auditProfileRouting() {
     "__ULMCODE_PROFILE_DIR__/plugins/shell-strategy/shell_strategy.md",
   ])
   requireText("packages/opencode/src/agent/prompt/action.txt", actionPrompt, [
-    "focused, one-off",
+    "day-to-day authorized cyber work",
     "switching to `pentest`",
     "operation_memory",
-    "quick repo fixes",
+    "scoped vulnerability checks",
+    "validating one narrow hypothesis",
   ])
   requireText("packages/opencode/src/agent/prompt/pentest.txt", pentestPrompt, [
     "Use `operation_memory` as operation-local working memory",
-    "Use `action` for focused one-off tasks",
+    "Use `action` for day-to-day cyber tasks",
     "prefer `websearch` first",
     "Record runtime/system constraints early",
     "treat it as stale",

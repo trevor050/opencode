@@ -75,6 +75,9 @@ export const promptCacheKey = (request: LLMRequest) => {
   return typeof value === "string" ? value : undefined
 }
 
+export const promptCacheRetention = (request: LLMRequest): "24h" | undefined =>
+  options(request)?.promptCacheRetention === "24h" ? "24h" : undefined
+
 export const textVerbosity = (request: LLMRequest) => {
   const value = options(request)?.textVerbosity
   return isTextVerbosity(value) ? value : undefined

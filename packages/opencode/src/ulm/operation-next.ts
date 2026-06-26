@@ -6,6 +6,12 @@ import type { GovernorDecision } from "./runtime-governor"
 import { evaluateRuntimeGovernor } from "./runtime-governor"
 import type { OperationGraphRecord, OperationLane } from "./operation-graph"
 import { discoveryResearchMinutesForDuration } from "./pentest-kickoff"
+import { readOperationStrategyMemo, writeStrategyHintGaps, type OperationStrategyMemo } from "./operation-strategy"
+import {
+  prioritizeSchedulerItems,
+  type PrioritizedSchedulerItem,
+  type SchedulerItemCategory,
+} from "./scheduler-priority"
 
 export type OperationNextAction =
   | {
@@ -106,12 +112,98 @@ function blockedDependencies(graph: OperationGraphRecord, lane: OperationLane) {
   })
 }
 
-function selectReadyLane(graph: OperationGraphRecord) {
-  return graph.lanes.find((lane) => {
+type PrioritizedLane = {
+  lane: OperationLane
+  priority: PrioritizedSchedulerItem["priority"]
+}
+
+function lanePriorityCategory(lane: OperationLane): SchedulerItemCategory {
+  const annotated = (lane as OperationLane & { priorityCategory?: unknown }).priorityCategory
+  if (
+    annotated === "finalization" ||
+    annotated === "credential_safety" ||
+    annotated === "critical_capability" ||
+    annotated === "validation_debt" ||
+    annotated === "evidence_quality" ||
+    annotated === "high_impact_finding" ||
+    annotated === "coverage_expansion" ||
+    annotated === "extra_recon"
+  ) {
+    return annotated
+  }
+  const haystack = `${lane.id} ${lane.title}`.toLowerCase()
+  if (haystack.includes("report") || haystack.includes("handoff") || haystack.includes("operator_summary")) return "finalization"
+  if (haystack.includes("credential") || haystack.includes("safety")) return "credential_safety"
+  if (lane.id === "finding_validation" || haystack.includes("validation")) return "validation_debt"
+  if (lane.id === "evidence_normalization" || haystack.includes("evidence")) return "evidence_quality"
+  if (haystack.includes("district") || haystack.includes("profile") || haystack.includes("person") || haystack.includes("role")) {
+    return "coverage_expansion"
+  }
+  if (
+    haystack.includes("google") ||
+    haystack.includes("microsoft") ||
+    haystack.includes("entra") ||
+    haystack.includes("genesis") ||
+    haystack.includes("sis") ||
+    haystack.includes("browser") ||
+    haystack.includes("identity") ||
+    haystack.includes("saas") ||
+    haystack.includes("ad")
+  ) {
+    return "critical_capability"
+  }
+  if (haystack.includes("finding") || haystack.includes("attack")) return "high_impact_finding"
+  if (lane.id.startsWith("planned_work_")) return "coverage_expansion"
+  return "extra_recon"
+}
+
+function readyLanes(graph: OperationGraphRecord) {
+  return graph.lanes.filter((lane) => {
     if (lane.id === "supervisor") return false
     if (lane.status !== "ready" && lane.status !== "pending") return false
     return dependenciesComplete(graph, lane)
   })
+}
+
+function strategyHintGaps(strategy: OperationStrategyMemo | undefined, graph: OperationGraphRecord) {
+  if (!strategy) return []
+  const lanes = new Set(graph.lanes.map((lane) => lane.id))
+  return strategy.gaps.concat(
+    strategy.items
+      .map((item) => item.suggestedLane)
+      .filter((lane): lane is string => Boolean(lane))
+      .filter((lane) => !lanes.has(lane))
+      .map((lane) => `strategy suggested missing lane ${lane}`),
+  )
+}
+
+function prioritizeReadyLanes(
+  graph: OperationGraphRecord,
+  input: { now: Date; finalizationDue?: boolean; strategy?: OperationStrategyMemo },
+): PrioritizedLane[] {
+  const lanes = readyLanes(graph)
+  const byID = new Map(lanes.map((lane) => [lane.id, lane]))
+  return prioritizeSchedulerItems({
+    now: input.now.toISOString(),
+    finalizationDue: input.finalizationDue ?? false,
+    strategyHints: input.strategy?.items.map((item) => ({
+      title: item.title,
+      suggestedLane: item.suggestedLane,
+    })),
+    items: lanes.map((lane) => ({
+      id: lane.id,
+      label: lane.title,
+      kind: "lane",
+      category: lanePriorityCategory(lane),
+      coverageImpact: lane.coverageImpact ?? "none",
+      ageMinutes: lane.startedAt ? Math.max(0, (input.now.getTime() - Date.parse(lane.startedAt)) / 60 / 1000) : 0,
+    })),
+  })
+    .map((item) => {
+      const lane = byID.get(item.id)
+      return lane ? { lane, priority: item.priority } : undefined
+    })
+    .filter((item): item is PrioritizedLane => Boolean(item))
 }
 
 async function readOperationScopeRules(worktree: string, operationID: string) {
@@ -210,6 +302,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
   const runtime = await readJson<RuntimeSummaryRecord>(path.join(root, "deliverables", "runtime-summary.json"))
   const goal = (await readOperationGoal(worktree, operationID)).goal
   const now = input.now instanceof Date ? input.now : input.now ? new Date(input.now) : new Date()
+  const strategy = await readOperationStrategyMemo(worktree, operationID)
 
   if (!graph) {
     if (!operationPlan && discoveryCharter?.planningApproval?.status === "approved") {
@@ -245,6 +338,8 @@ export async function decideOperationNext(worktree: string, input: { operationID
     return { action, path: await writeNextAction(worktree, action) }
   }
 
+  await writeStrategyHintGaps(worktree, operationID, strategyHintGaps(strategy, graph))
+
   if (!runtime) {
     const action: OperationNextAction = {
       operationID,
@@ -269,8 +364,9 @@ export async function decideOperationNext(worktree: string, input: { operationID
     return { action, path: await writeNextAction(worktree, action) }
   }
 
-  const lane = selectReadyLane(graph)
-  if (!lane) {
+  const prioritizedLanes = prioritizeReadyLanes(graph, { now, strategy })
+  const selected = prioritizedLanes[0]
+  if (!selected) {
     const incomplete = graph.lanes.find((item) => item.status !== "complete")
     const coverage = (goal?.targetDurationHours ?? 0) >= 1 ? await evaluateCoverageReadiness(worktree, operationID) : undefined
     if (!incomplete && targetWindowStillOpen(goal, now)) {
@@ -318,6 +414,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
     }
     return { action, path: await writeNextAction(worktree, action) }
   }
+  const lane = selected.lane
 
   const governor = await evaluateRuntimeGovernor(worktree, { operationID, laneID: lane.id })
   if (governor.action !== "continue") {
@@ -336,7 +433,7 @@ export async function decideOperationNext(worktree: string, input: { operationID
   const action: OperationNextAction = {
     operationID,
     action: "launch_lane",
-    reason: `lane ${lane.id} is ready and within governor limits`,
+    reason: `lane ${lane.id} is ready and within governor limits; priority ${selected.priority.score.toFixed(1)}: ${selected.priority.reason}`,
     lane,
     prompt: promptForLane(lane, await readOperationScopeRules(worktree, operationID)),
     recommendedTools: lane.allowedTools,
