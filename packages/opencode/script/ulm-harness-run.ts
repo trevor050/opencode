@@ -376,7 +376,7 @@ const scenarios: HarnessScenario[] = [
   scenario("dashboard_api_e2e", "dashboard-api-contract", async () => {
     const checks = [
       await pathExists("packages/opencode/src/server/routes/instance/httpapi/handlers/ulm.ts"),
-      await pathExists("packages/opencode/src/cli/cmd/tui/routes/ulm-operations.tsx"),
+      await pathExists("packages/tui/src/routes/ulm-operations.tsx"),
       ...(await fileIncludes("packages/opencode/test/server/httpapi-ulm.test.ts", [
         "/ulm/operation",
         "/ulm/operation/school/status",

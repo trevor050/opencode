@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import { existsSync } from "fs"
 import path from "path"
-import { Bus } from "@/bus"
+import { GlobalBus } from "@/bus/global"
 import { OperationEvent } from "./event"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { Schema } from "effect"
@@ -55,40 +55,34 @@ async function publishOperationUpdated(
   worktree: string,
   input: { operationID: string; artifact: OperationUpdatedArtifact; path?: string },
 ) {
-  try {
-    const status = await readOperationStatus(worktree, input.operationID, { eventLimit: 0 }).catch(() => undefined)
-    await Bus.publish(
-      {
-        directory: worktree,
-        worktree,
-        project: {
-          id: ProjectV2.ID.global,
-          worktree,
-          time: { created: Date.now(), updated: Date.now() },
-          sandboxes: [],
-        },
-      },
-      OperationEvent.Updated,
-      {
-        ...input,
-        operation: status?.operation
-          ? {
-              objective: status.operation.objective,
-              stage: status.operation.stage,
-              status: status.operation.status,
-              summary: status.operation.summary,
-              riskLevel: status.operation.riskLevel,
-              nextActions: status.operation.nextActions,
-              blockers: status.operation.blockers,
-            }
-          : undefined,
-        findings: status?.findings ? { total: status.findings.total } : undefined,
-        evidence: status?.evidence ? { total: status.evidence.total } : undefined,
-        reports: status?.reports,
-        runtimeSummary: status?.runtimeSummary,
-      },
-    )
-  } catch {}
+  let properties: Schema.Schema.Type<typeof OperationEvent.Updated.properties> = input
+  const status = await readOperationStatus(worktree, input.operationID, { eventLimit: 0 }).catch(() => undefined)
+  properties = {
+    ...input,
+    operation: status?.operation
+      ? {
+          objective: status.operation.objective,
+          stage: status.operation.stage,
+          status: status.operation.status,
+          summary: status.operation.summary,
+          riskLevel: status.operation.riskLevel,
+          nextActions: status.operation.nextActions,
+          blockers: status.operation.blockers,
+        }
+      : undefined,
+    findings: status?.findings ? { total: status.findings.total } : undefined,
+    evidence: status?.evidence ? { total: status.evidence.total } : undefined,
+    reports: status?.reports,
+    runtimeSummary: status?.runtimeSummary,
+  }
+  GlobalBus.emit("event", {
+    directory: worktree,
+    project: ProjectV2.ID.global,
+    payload: {
+      type: OperationEvent.Updated.type,
+      properties,
+    },
+  })
 }
 
 export type OperationCheckpointInput = {

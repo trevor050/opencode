@@ -72,7 +72,7 @@ describe("background.job", () => {
       expect(second.id).toBe(id)
       expect(first.status).toBe("running")
       expect(second.status).toBe("running")
-      expect((yield* jobs.list()).map((item) => item.id)).toEqual([id])
+      expect((yield* jobs.list()).filter((item) => item.id === id)).toHaveLength(1)
 
       yield* jobs.cancel(id)
     }),

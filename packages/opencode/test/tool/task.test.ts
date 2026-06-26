@@ -312,8 +312,8 @@ describe("tool.task", () => {
       expect(result.metadata.background).toBe(true)
       expect(result.output).toContain(`task_id: ${child.id}`)
       expect(result.output).toContain("state: running")
-      expect(result.output).toContain("deduped: true")
-      expect(result.output).toContain("Poll it with task_status")
+      expect(result.output).toContain("Background task updated")
+      expect(result.output).toContain("Additional context sent to the running background task")
     }),
   )
 
@@ -410,7 +410,10 @@ describe("tool.task", () => {
       expect(yield* Effect.promise(() => cancelled.promise)).toBe(input.sessionID)
 
       const exit = yield* Fiber.await(fiber)
-      expect(Exit.isSuccess(exit)).toBe(true)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Task cancelled")
+      }
     }),
   )
 
@@ -499,7 +502,11 @@ describe("tool.task", () => {
             action: "deny",
           },
         ])
-        expect(seen?.tools).toBeUndefined()
+        expect(seen?.tools).toMatchObject({
+          todowrite: false,
+          bash: false,
+          read: false,
+        })
       }),
     {
       config: {
@@ -951,7 +958,7 @@ describe("tool.task", () => {
 
       expect(polledAfterReload.metadata.state).toBe("stale")
       expect(polledAfterReload.output).toContain("state: stale")
-      expect(polledAfterReload.output).toContain("lost its running fiber")
+      expect(polledAfterReload.output).toContain("no longer has its running fiber")
       expect(polledAfterReload.output).toContain('"task_id":"' + taskSession.id + '"')
       expect(polledAfterReload.output).toContain('"subagent_type":"validator"')
       expect(polledAfterReload.output).toContain('"operationID":"school"')

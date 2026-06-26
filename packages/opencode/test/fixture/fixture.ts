@@ -14,6 +14,7 @@ import { InstanceBootstrap } from "../../src/project/bootstrap-service"
 import type { InstanceContext } from "../../src/project/instance-context"
 import { InstanceRuntime } from "../../src/project/instance-runtime"
 import { InstanceStore } from "../../src/project/instance-store"
+import { Instance } from "../../src/project/instance"
 import { TestLLMServer } from "../lib/llm-server"
 
 const noopBootstrap = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
@@ -27,7 +28,7 @@ export async function provideTestInstance<R>(input: {
   const ctx = await InstanceRuntime.load({ directory: input.directory })
   try {
     if (input.init) await Effect.runPromise(input.init.pipe(Effect.provideService(InstanceRef, ctx)))
-    return await input.fn(ctx)
+    return await Instance.restore(ctx, () => input.fn(ctx))
   } finally {
     await InstanceRuntime.disposeInstance(ctx)
   }

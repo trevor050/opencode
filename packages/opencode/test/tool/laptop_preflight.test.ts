@@ -5,6 +5,7 @@ import fs from "fs/promises"
 import path from "path"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Instance } from "@/project/instance"
 import { LaptopPreflightTool } from "@/tool/laptop_preflight"
 import { Truncate } from "@/tool/truncate"
@@ -68,7 +69,7 @@ describe("tool.laptop_preflight", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const operationID = "school"
@@ -116,7 +117,7 @@ describe("tool.laptop_preflight", () => {
             expect(result.metadata.gaps).toEqual([])
             expect(result.metadata.files.json).toBe(path.join(root, "scheduler", "laptop-preflight.json"))
             expect(yield* Effect.promise(() => fs.readFile(result.metadata.files.markdown, "utf8"))).toContain("operator-sleep")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })

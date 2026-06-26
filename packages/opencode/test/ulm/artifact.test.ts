@@ -215,14 +215,18 @@ describe("ULM artifact ledger", () => {
   test("publishes operation update events after durable writes", async () => {
     const worktree = await tmpdir()
     const received: Array<{ operationID: string; artifact: string; path?: string }> = []
+    let seen!: () => void
+    const eventSeen = new Promise<void>((resolve) => {
+      seen = resolve
+    })
 
     await WithInstance.provide({
       directory: worktree,
       fn: async () => {
         const unsubscribe = Bus.subscribe(OperationEvent.Updated, (evt) => {
           received.push(evt.properties)
+          seen()
         })
-        await Bun.sleep(10)
         await writeOperationCheckpoint(worktree, {
           operationID: "School Assessment",
           objective: "Authorized school assessment",
@@ -230,7 +234,7 @@ describe("ULM artifact ledger", () => {
           status: "running",
           summary: "Recon lane started.",
         })
-        await Bun.sleep(10)
+        await Promise.race([eventSeen, Bun.sleep(500)])
         unsubscribe()
       },
     })

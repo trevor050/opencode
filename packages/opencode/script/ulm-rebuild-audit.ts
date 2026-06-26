@@ -216,7 +216,6 @@ async function auditOperationRuntime() {
   const operationResume = await read("packages/opencode/src/tool/operation_resume.ts")
   const todoService = await read("packages/opencode/src/session/todo.ts")
   const commandService = await read("packages/opencode/src/command/index.ts")
-  const configService = await read("packages/opencode/src/config/config.ts")
   const observability = await read("packages/core/src/observability/otlp.ts")
   const shellTool = await read("packages/opencode/src/tool/shell.ts")
   const shellPrompt = await read("packages/opencode/src/tool/shell/shell.txt")
@@ -231,8 +230,8 @@ async function auditOperationRuntime() {
   const codexTests = await read("packages/opencode/test/plugin/codex.test.ts")
   const pluginTypes = await read("packages/plugin/src/index.ts")
   const sessionPrompt = await read("packages/opencode/src/session/prompt.ts")
-  const v2ModelGroup = await read("packages/opencode/src/server/routes/instance/httpapi/groups/v2/model.ts")
-  const v2ModelHandler = await read("packages/opencode/src/server/routes/instance/httpapi/handlers/v2/model.ts")
+  const providerGroup = await read("packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts")
+  const providerHandler = await read("packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts")
   const sdk = await read("packages/sdk/js/src/v2/gen/sdk.gen.ts")
   const requiredTools = [
     "OperationCheckpointTool",
@@ -771,7 +770,6 @@ async function auditOperationRuntime() {
     'todo.status === "in_progress"',
   ])
   requireText("packages/opencode/src/command/index.ts", commandService, ["CLEAR_TASKS", "CLEAR_TASKS_ZH", "todowrite"])
-  requireText("packages/opencode/src/config/config.ts", configService, ["enable_sse_json_repair"])
   requireText("packages/core/src/observability/otlp.ts", observability, [
     'serviceName: "opencode"',
     "serviceVersion: InstallationVersion",
@@ -831,14 +829,14 @@ async function auditOperationRuntime() {
     "msgs = preChat.messages",
     "msgs = legacyChat.messages",
   ])
-  requireText("packages/opencode/src/server/routes/instance/httpapi/groups/v2/model.ts", v2ModelGroup, [
-    "v2.model.list",
-    "V2LocationMiddleware",
-    "LocationQuery",
+  requireText("packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts", providerGroup, [
+    "provider.list",
+    "WorkspaceRoutingMiddleware",
+    "WorkspaceRoutingQuery",
   ])
-  requireText("packages/opencode/src/server/routes/instance/httpapi/handlers/v2/model.ts", v2ModelHandler, [
-    "Catalog.Service",
-    "catalog.model.available",
+  requireText("packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts", providerHandler, [
+    "ModelsDev.Service",
+    "Provider.defaultModelIDs",
   ])
   requireText("packages/sdk/js/src/v2/gen/sdk.gen.ts", sdk, ["class Model", "get model()", 'url: "/api/model"'])
   for (const tool of [
@@ -1543,7 +1541,7 @@ async function auditProfileRuntime() {
   ])
   requireText("tools/ulmcode-profile/scripts/install-profile.sh", installer, [
     "ulmcode-launch.sh",
-    "websearch,agent_browser,playwright,pentestMCP",
+    "websearch,agent_browser,playwright,playwright_persistent,pentestMCP,companyscope,not_human_search,openregistry",
     "rm -f \"$TARGET_DIR/oh-my-openagent.jsonc\"",
     "rm -f \"$TARGET_DIR/.opencode/oh-my-openagent.jsonc\"",
     "tool-manifest.json",

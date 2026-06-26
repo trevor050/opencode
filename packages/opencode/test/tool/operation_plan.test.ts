@@ -4,6 +4,7 @@ import { Cause, Effect, Layer } from "effect"
 import fs from "fs/promises"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { MessageID, SessionID } from "@/session/schema"
 import { OperationPlanTool } from "@/tool/operation_plan"
 import { Truncate } from "@/tool/truncate"
@@ -37,7 +38,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const operationRoot = `${dir.path}/.ulmcode/operations/school`
@@ -77,7 +78,7 @@ describe("tool.operation_plan", () => {
             if (exit._tag !== "Failure") return
             const message = Cause.pretty(exit.cause)
             expect(message).toContain("operation_plan cannot rewrite the durable plan after operation execution has started")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -86,7 +87,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -129,7 +130,7 @@ describe("tool.operation_plan", () => {
             expect(result.output).toContain("plan_preview:")
             expect(result.output).not.toContain("/all")
             expect(result.metadata.phases).toBe(0)
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -138,7 +139,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -179,7 +180,7 @@ describe("tool.operation_plan", () => {
             expect(record.planningApproval.approver).toBe("operator")
             expect(markdown).toContain("Discovery Charter approved")
             expect(result.output).toContain("planning_approval: approved")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -188,7 +189,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -300,7 +301,7 @@ describe("tool.operation_plan", () => {
             expect(result.output).toContain("planning_approval: approved")
             expect(record.planningApproval.status).toBe("approved")
             expect(record.discoveryCharter.purpose).toContain("Research and bounded discovery")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -309,7 +310,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -360,7 +361,7 @@ describe("tool.operation_plan", () => {
             expect(message).toContain("coverageContract.requiredLanes must use operation_schedule lane ids")
             expect(message).toContain("attack-chain")
             expect(message).toContain("report_writing")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -369,7 +370,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -508,7 +509,7 @@ describe("tool.operation_plan", () => {
             expect(result.output).toContain("planning_approval: approved")
             expect(result.metadata.phases).toBe(4)
             expect(record.timeBudget.durationFit.confidence).toBe("duration_sized")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -517,7 +518,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -680,7 +681,7 @@ describe("tool.operation_plan", () => {
 
             expect(result.output).toContain("plan_kind: operation_plan")
             expect(result.metadata.phases).toBe(6)
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -689,7 +690,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -764,7 +765,7 @@ describe("tool.operation_plan", () => {
             const message = String(Cause.squash(exit.cause))
             expect(message).toContain("2h+ operation plan requires planningApproval.status=approved")
             expect(message).not.toContain("Effect.tryPromise")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
