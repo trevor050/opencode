@@ -252,7 +252,7 @@ export function TitlebarTabStrip(props: {
               {(tab, index) => {
                 const id = tabKey(tab)
                 let ref!: HTMLDivElement
-                useTabShortcut(index, () => props.onNavigate(tab, ref))
+                useTabShortcut(id, index, () => props.onNavigate(tab, ref))
                 const serverCtx = createMemo(() => {
                   if (tab.type !== "session") return
                   const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
@@ -311,10 +311,10 @@ export function TitlebarTabStrip(props: {
   )
 }
 
-function useTabShortcut(index: () => number, onSelect: () => void) {
+function useTabShortcut(id: string, index: () => number, onSelect: () => void) {
   const command = useCommand()
 
-  command.register(() => {
+  command.register(id, () => {
     const number = index() + 1
     if (number > 9) return []
     return [

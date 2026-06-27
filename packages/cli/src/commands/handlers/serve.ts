@@ -29,9 +29,17 @@ function listen(hostname: string, port: Option.Option<number>, password: string)
   if (Option.isSome(port)) return bind(hostname, port.value, password)
   const next = (port: number): ReturnType<typeof bind> =>
     bind(hostname, port, password).pipe(
-      Effect.catch((error) => (port === 65_535 ? Effect.fail(error) : next(port + 1))),
+      Effect.catch((error) => (isAddressInUse(error) && port < 65_535 ? next(port + 1) : Effect.fail(error))),
     )
   return next(4096)
+}
+
+function isAddressInUse(error: unknown) {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: string }).code === "EADDRINUSE"
+  )
 }
 
 function bind(hostname: string, port: number, password: string) {

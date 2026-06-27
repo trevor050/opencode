@@ -1,4 +1,4 @@
-import { createComputed, on, type Accessor } from "solid-js"
+import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { PromptHistoryEntry } from "./history"
 
@@ -37,7 +37,7 @@ export function createPromptInputTransientState(identity: Accessor<unknown>, pla
     variantOpen: false,
   })
 
-  createComputed(on(identity, () => resetPromptInputTransientState(setStore), { defer: true }))
+  createEffect(on(identity, () => resetPromptInputTransientState(setStore), { defer: true }))
 
   return [store, setStore] as const
 }
