@@ -324,7 +324,8 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
   })
   await writeJson(path.join(scenarioRoot, "deliverables", "final", "manifest.json"), { operationID, generatedBy: "burnin-harness" })
   await writeJson(path.join(scenarioRoot, "deliverables", "stage-gates", "handoff.json"), { operationID, stage: "handoff", ok: true })
-  const beforeAudit = await completeOperationGoal(scenarioWorktree, { operationID })
+  const completionCheckTime = virtualTime(goal.goal.createdAt, input.targetElapsedSeconds)
+  const beforeAudit = await completeOperationGoal(scenarioWorktree, { operationID }, { now: completionCheckTime })
   if (input.completed) {
     await writeJson(path.join(scenarioRoot, "deliverables", "operation-audit.json"), { operationID, ok: true, generatedBy: "burnin-harness" })
     await writeJson(path.join(scenarioRoot, "supervisor", "supervisor-review-handoff.json"), {
@@ -334,7 +335,9 @@ async function writeSupervisorScenario(worktree: string, input: { operationID: s
       decisions: [{ action: "handoff_ready", reason: "final runtime and audit artifacts are present" }],
     })
   }
-  const afterAudit = input.completed ? await completeOperationGoal(scenarioWorktree, { operationID }) : undefined
+  const afterAudit = input.completed
+    ? await completeOperationGoal(scenarioWorktree, { operationID }, { now: completionCheckTime })
+    : undefined
   const proof: BurnInSupervisorScenarioProof = {
     operationGoalCreated: goal.created || !!goal.goal,
     targetDurationHours,

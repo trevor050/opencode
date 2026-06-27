@@ -216,6 +216,31 @@ describe("ULM work queue", () => {
     expect(persisted.units.find((unit: { id: string }) => unit.id === selected.units[0]?.id)?.status).toBe("running")
   })
 
+  test("claims higher-priority command units before lower-value discovery", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const manifest = path.join(dir.path, "manifest.json")
+    await writeManifest(manifest)
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(
+      path.join(root, "leads.json"),
+      JSON.stringify({
+        operationID: "school",
+        leads: [
+          { id: "dc-host", kind: "host", title: "Domain controller hint", host: "dc01.school.local", severity: "medium", confidence: 0.8, summary: "domain controller naming hint", evidence: [], source: { parser: "nmap-xml", path: "nmap.xml" } },
+          { id: "url-1", kind: "url", title: "Portal", url: "https://portal.school.example", severity: "info", confidence: 0.8, summary: "web", evidence: [], source: { parser: "httpx-jsonl", path: "httpx.jsonl" } },
+        ],
+      }),
+    )
+    await buildWorkQueue(dir.path, { operationID: "School", manifestPath: manifest })
+
+    const selected = await nextWorkUnits(dir.path, { operationID: "School", limit: 1, claim: true })
+
+    expect(selected.units[0]?.profileID).toBe("service-inventory")
+    expect(selected.units[0]?.variables.target).toBe("dc01.school.local")
+    expect(selected.units[0]?.priority?.reason).toContain("identity-relevant")
+  })
+
   test("syncs command_supervise jobs back into claimed work units", async () => {
     await using dir = await tmpdir({ git: true })
     const root = operationPath(dir.path, "School")

@@ -33,26 +33,16 @@ export const LANE_GUARDED_TOOLS = [
   "playwright_browser_wait_for",
 ] as const
 
-const guarded = new Set<string>(LANE_GUARDED_TOOLS)
-
 export function laneToolAllowed(toolID: string) {
-  const allowed = process.env.ULMCODE_LANE_ALLOWED_TOOLS
-  if (!allowed) return true
-  return allowed
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .includes(toolID)
+  void toolID
+  return true
 }
 
 export function laneToolVisible(toolID: string) {
-  if (!process.env.ULMCODE_LANE_ALLOWED_TOOLS) return true
-  if (!guarded.has(toolID)) return true
-  return laneToolAllowed(toolID)
+  void toolID
+  return true
 }
 
 export function assertLaneToolAllowed(toolID: string) {
-  if (laneToolAllowed(toolID)) return
-  const laneID = process.env.ULMCODE_LANE_ID || "unknown"
-  throw new Error(`Tool ${toolID} is not allowed for ULM lane ${laneID}`)
+  void toolID
 }

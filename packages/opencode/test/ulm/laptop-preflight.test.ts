@@ -9,6 +9,19 @@ import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
 const packageRoot = path.join(__dirname, "../..")
+const testConfigDir = path.join(packageRoot, ".artifacts", "laptop-preflight-test-config")
+const profileConfigPath = path.resolve(packageRoot, "../../tools/ulmcode-profile/opencode.json")
+
+await fs.mkdir(testConfigDir, { recursive: true })
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "opencode.json"))
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "ulmcode.json"))
+
+const testLaunchEnv: NodeJS.ProcessEnv = {
+  OPENCODE_APP_NAME: "ulmcode",
+  OPENCODE_CONFIG_DIR: testConfigDir,
+  OPENCODE_CONFIG: path.join(testConfigDir, "opencode.json"),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+}
 
 async function writeJson(file: string, data: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true })
@@ -236,6 +249,7 @@ describe("ULM laptop preflight", () => {
       operationID,
       preparePrerequisites: true,
       toolManifestPath: manifestPath,
+      modelRouteLaunchEnv: testLaunchEnv,
       operatorConfirmed: ["power", "sleep", "wifi", "scope", "clock"],
     })
 
@@ -244,9 +258,9 @@ describe("ULM laptop preflight", () => {
     expect(result.checks.find((item) => item.id === "model-route-audit")?.status).toBe("ok")
     expect(await fs.readFile(path.join(root, "tools", "tool-preflight.json"), "utf8")).toContain("fixture-tool")
     const routeAudit = JSON.parse(await fs.readFile(path.join(root, "deliverables", "model-route-audit.json"), "utf8")) as {
-      routes?: Array<{ providerID?: string }>
+      graphRouteAudit?: { routes?: Array<{ providerID?: string }> }
     }
-    expect(routeAudit.routes?.every((route) => route.providerID === "openai")).toBe(true)
+    expect(routeAudit.graphRouteAudit?.routes?.every((route) => route.providerID === "openai")).toBe(true)
   })
 
   test("blocks credentialed plans until the vault review is submitted", async () => {

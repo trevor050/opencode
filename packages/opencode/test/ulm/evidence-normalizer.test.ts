@@ -111,6 +111,78 @@ describe("ULM evidence normalizer", () => {
     expect(result.leads.find((lead) => lead.kind === "service")?.summary).toContain("nginx 1.24")
   })
 
+  test("uses explicit command plan artifacts instead of parsing stderr with the requested parser", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const commandRoot = path.join(root, "commands", "http-discovery")
+    const artifact = path.join(root, "evidence", "raw", "httpx.jsonl")
+    const stderr = path.join(commandRoot, "stderr.log")
+    await fs.mkdir(commandRoot, { recursive: true })
+    await fs.mkdir(path.dirname(artifact), { recursive: true })
+    await fs.writeFile(
+      artifact,
+      JSON.stringify({
+        url: "https://portal.school.example",
+        host: "portal.school.example",
+        status_code: 200,
+        title: "Student Portal",
+      }) + "\n",
+    )
+    await fs.writeFile(stderr, "____  _   _  banner output that is not JSONL\n")
+    await fs.writeFile(
+      path.join(commandRoot, "command-plan.json"),
+      JSON.stringify(
+        {
+          operationID: "school",
+          command: "httpx -json -o evidence/raw/httpx.jsonl",
+          operationRoot: root,
+          stderrPath: stderr,
+          artifacts: ["evidence/raw/httpx.jsonl"],
+        },
+        null,
+        2,
+      ) + "\n",
+    )
+
+    const result = await normalizeEvidence(dir.path, { operationID: "School", parser: "httpx-jsonl" })
+
+    expect(result.artifacts).toEqual(["evidence/raw/httpx.jsonl"])
+    expect(result.leads).toHaveLength(1)
+    expect(result.leads[0]?.url).toBe("https://portal.school.example")
+  })
+
+  test("keeps explicit artifacts usable when a command plan is partially written", async () => {
+    await using dir = await tmpdir({ git: true })
+    const root = operationPath(dir.path, "School")
+    const commandRoot = path.join(root, "commands", "ad-lightweight-enum")
+    const artifact = path.join(root, "evidence", "raw", "nmap-ad.xml")
+    await fs.mkdir(commandRoot, { recursive: true })
+    await fs.mkdir(path.dirname(artifact), { recursive: true })
+    await fs.writeFile(
+      artifact,
+      `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <status state="up"/>
+    <address addr="10.0.0.25" addrtype="ipv4"/>
+  </host>
+</nmaprun>
+`,
+    )
+    await fs.writeFile(path.join(commandRoot, "command-plan.json"), "{\n")
+
+    const result = await normalizeEvidence(dir.path, {
+      operationID: "School",
+      artifactPaths: ["evidence/raw/nmap-ad.xml"],
+      commandPlanPaths: ["commands/ad-lightweight-enum/command-plan.json"],
+      parser: "nmap-xml",
+    })
+
+    expect(result.artifacts).toEqual(["evidence/raw/nmap-ad.xml"])
+    expect(result.leads).toHaveLength(1)
+    expect(result.leads[0]?.host).toBe("10.0.0.25")
+  })
+
   test("normalizes screenshots TLS cloud assets and auth surfaces into structured leads", async () => {
     await using dir = await tmpdir({ git: true })
     const root = operationPath(dir.path, "School")

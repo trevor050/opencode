@@ -122,7 +122,13 @@ function hasStaleOrFailedLane(graph: OperationGraphLike | undefined) {
         if (lane.status === "complete" || lane.status === "skipped") return false
         return (
           lane.status === "failed" ||
-          lane.activeJobs?.some((job) => job.status === "stale" || job.status === "error" || job.status === "cancelled")
+          lane.status === "blocked" ||
+          lane.activeJobs?.some((job) =>
+            job.status === "stale" ||
+            job.status === "error" ||
+            job.status === "cancelled" ||
+            job.status === "completed_missing_proof"
+          )
         )
       },
     ) ?? false
@@ -228,7 +234,7 @@ function decisionsFor(input: {
         requiredArtifacts: ["plans/discovery-charter.json", "evidence/", "memory.md"],
         operatorMessage: "Use the approved charter to run the research pass, record evidence and plan-shaping notes, then write the full operation plan.",
         modelPrompt:
-          `Launch a dedicated Discovery Charter research pass${targetMinutes ? ` targeting about ${targetMinutes} minutes` : ""}. The goal is research: answer charter questions, inspect useful external/source material, run only safe scoped recon, put active probes through command_supervise, record evidence and operation_memory notes, checkpoint the discoveries, then call operation_plan with planningMode=full-duration only once duration-fit evidence and an overflow backlog are defensible.`,
+          `Launch a dedicated Discovery Charter research pass${targetMinutes ? ` targeting about ${targetMinutes} minutes` : ""}. The goal is research: answer charter questions, inspect useful external/source material, run safe scoped recon, use bounded foreground commands only for short work, put broad or uncertain probes through command_supervise/background task, record evidence and operation_memory notes, checkpoint the discoveries, then call operation_plan with planningMode=full-duration only once duration-fit evidence and an overflow backlog are defensible.`,
       }),
     )
   }
@@ -301,11 +307,11 @@ function decisionsFor(input: {
       decision({
         action: "continue_coverage",
         reason: "coverage contract is not release-ready",
-        requiredNextTool: "operation_run",
+        requiredNextTool: "runtime_scheduler",
         requiredArtifacts: ["plans/coverage-contract.json", "plans/operation-graph.json", "evidence/"],
         operatorMessage: "Coverage is not ready for release; continue safe testing, retry/fallback lanes, or ask the operator if scope affects safety.",
         modelPrompt:
-          "Use operation_next and operation_run to continue coverage. For blocked scope/safety decisions, use ask_operator instead of treating a skip as completion.",
+          "Use runtime_scheduler or runtime_daemon to continue automated coverage. Use operation_next/operation_run for diagnosis or lane proof updates, and use operation_recover/task_restart for blocked or stale work; do not treat a skip as completion unless proof and scope safety support it.",
       }),
     )
   }
@@ -386,11 +392,11 @@ function decisionsFor(input: {
       decision({
         action: "continue_execution",
         reason: "operation graph has incomplete lanes or missing lane proof",
-        requiredNextTool: "operation_run",
+        requiredNextTool: "runtime_scheduler",
         requiredArtifacts: ["plans/operation-graph.json", "lane-complete/"],
         operatorMessage: "Continue execution until every planned lane is complete or explicitly skipped with proof.",
         modelPrompt:
-          "Call operation_run or operation_next, then advance the next incomplete lane with task background=true or command_supervise.",
+          "Call runtime_scheduler or runtime_daemon to keep the scheduled run moving. Use operation_next/operation_run only to inspect decisions or record lane proof; launch work with task background=true, command_supervise, or scheduler-returned launch parameters.",
       }),
     )
   }
@@ -495,11 +501,11 @@ function decisionsFor(input: {
       decision({
         action: input.reviewKind === "turn_end" ? "continue_execution" : "continue",
         reason: "no supervisor blockers found",
-        requiredNextTool: "operation_run",
+        requiredNextTool: "runtime_scheduler",
         requiredArtifacts: ["plans/operation-run.jsonl"],
         operatorMessage: "Continue with the next scheduled operation lane.",
         modelPrompt:
-          "Call operation_run or operation_next and launch the next bounded lane through task or command_supervise.",
+          "Call runtime_scheduler or runtime_daemon to continue scheduled execution. Use operation_next/operation_run for read-mostly inspection or lane proof updates, then launch bounded work through task background=true or command_supervise when needed.",
       }),
     )
   }

@@ -133,6 +133,22 @@ describe("ULM operation supervisor", () => {
     expect(review.files?.markdown).toContain("latest.md")
   })
 
+  test("routes blocked graph lanes to recovery instead of generic execution", async () => {
+    await using dir = await tmpdir({ git: true })
+    await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized overnight assessment", targetDurationHours: 20 })
+    await writeMinimalPlan(dir.path)
+    const graph = await writeOperationGraph(dir.path, { operationID: "school", includeSupervisor: true })
+    const parsed = JSON.parse(await fs.readFile(graph.json, "utf8"))
+    parsed.lanes[0].status = "blocked"
+    await fs.writeFile(graph.json, JSON.stringify(parsed, null, 2) + "\n")
+
+    const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
+
+    const recoveryDecision = review.decisions.find((item) => item.action === "recover")
+    expect(recoveryDecision?.requiredNextTool).toBe("operation_resume")
+    expect(recoveryDecision?.modelPrompt).toContain("operation_recover")
+  })
+
   test("rejects raw credential secrets before writing supervisor review artifacts", async () => {
     await using dir = await tmpdir({ git: true })
     await createOperationGoal(dir.path, { operationID: "school", objective: "Authorized overnight assessment", targetDurationHours: 20 })
@@ -195,7 +211,8 @@ describe("ULM operation supervisor", () => {
     const review = await superviseOperation(dir.path, { operationID: "school", writeArtifacts: false })
 
     const coverageDecision = review.decisions.find((item) => item.action === "continue_coverage")
-    expect(coverageDecision?.requiredNextTool).toBe("operation_run")
+    expect(coverageDecision?.requiredNextTool).toBe("runtime_scheduler")
+    expect(coverageDecision?.modelPrompt).toContain("runtime_scheduler")
   })
 
   test("continues reporting when a final audit exists but has blockers", async () => {

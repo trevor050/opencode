@@ -173,7 +173,7 @@ describe("ULM runtime governor", () => {
     expect(decision.recommendedTools).toContain("operation_audit")
   })
 
-  test("requests compaction when graph or runtime summary is missing", async () => {
+  test("requests compaction when the graph is missing", async () => {
     await using dir = await tmpdir({ git: true })
 
     const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School" })
@@ -181,6 +181,18 @@ describe("ULM runtime governor", () => {
     expect(decision.action).toBe("compact")
     expect(decision.blockers).toEqual(["operation graph is missing", "runtime summary is missing"])
     expect(decision.recommendedTools).toContain("operation_schedule")
+  })
+
+  test("allows first lane launch before runtime summary exists", async () => {
+    await using dir = await tmpdir({ git: true })
+    await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+
+    const decision = await evaluateRuntimeGovernor(dir.path, { operationID: "School", laneID: "district_profile" })
+
+    expect(decision.action).toBe("continue")
+    expect(decision.reason).toContain("runtime summary has not been written yet")
+    expect(decision.blockers).toEqual([])
+    expect(decision.recommendedTools).toContain("runtime_summary")
   })
 
   test("writes a durable model route audit for primary and fallback lane routes", async () => {

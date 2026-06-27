@@ -106,6 +106,8 @@ export const Parameters = Schema.Struct({
   reportingCloseout: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
 })
 
+type OperationPlanParams = Schema.Schema.Type<typeof Parameters>
+
 type Metadata = {
   operationID: string
   json: string
@@ -142,6 +144,38 @@ function shouldValidateCoverageLanes(params: Schema.Schema.Type<typeof Parameter
   return true
 }
 
+async function readApprovedDiscoveryCharterDefaults(
+  worktree: string,
+  operationIDInput: string,
+): Promise<Pick<OperationPlanParams, "planningApproval" | "discoveryCharter"> | undefined> {
+  const root = operationPath(worktree, operationIDInput)
+  const file = path.join(root, "plans", "discovery-charter.json")
+  let record: Pick<OperationPlanParams, "planningApproval" | "discoveryCharter"> | undefined
+  try {
+    record = JSON.parse(await fs.readFile(file, "utf8")) as typeof record
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+  if (record?.planningApproval?.status !== "approved" || !record.discoveryCharter) return undefined
+  return {
+    planningApproval: record.planningApproval,
+    discoveryCharter: record.discoveryCharter,
+  }
+}
+
+async function applyFullDurationDefaults(worktree: string, params: OperationPlanParams): Promise<OperationPlanParams> {
+  const targetHours = params.timeBudget?.targetHours ?? 0
+  if (targetHours < 2 || (params.planningApproval && params.discoveryCharter)) return params
+  const defaults = await readApprovedDiscoveryCharterDefaults(worktree, params.operationID)
+  if (!defaults) return params
+  return {
+    ...params,
+    planningApproval: params.planningApproval ?? defaults.planningApproval,
+    discoveryCharter: params.discoveryCharter ?? defaults.discoveryCharter,
+  }
+}
+
 async function hasActiveExecution(worktree: string, operationID: string) {
   const root = operationPath(worktree, operationID)
   const runLog = path.join(root, "plans", "operation-run.jsonl")
@@ -172,13 +206,16 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
         const discoveryMode =
           params.planningMode === "discovery-charter" ||
           (params.planningMode === undefined && params.phases === undefined && params.discoveryCharter)
-        if (yield* Effect.tryPromise(() => hasActiveExecution(Instance.worktree, params.operationID)).pipe(Effect.orDie)) {
+        if (yield* toolPromise(() => hasActiveExecution(Instance.worktree, params.operationID)).pipe(Effect.orDie)) {
           return yield* Effect.die(
             new Error(
               "operation_plan cannot rewrite the durable plan after operation execution has started; use operation_status, operation_run, operation_resume, operation_recover, report_lint, report_render, runtime_summary, or operation_audit to continue.",
             ),
           )
         }
+        const planParams = discoveryMode
+          ? params
+          : yield* toolPromise(() => applyFullDurationDefaults(Instance.worktree, params)).pipe(Effect.orDie)
         const result =
           discoveryMode
             ? yield* toolPromise(() =>
@@ -204,15 +241,15 @@ export const OperationPlanTool = Tool.define<typeof Parameters, Metadata, never>
               ).pipe(Effect.orDie)
             : yield* toolPromise(() =>
                 Promise.resolve().then(() => {
-                  if (shouldValidateCoverageLanes(params)) assertKnownCoverageLanes(params.coverageContract?.requiredLanes)
+                  if (shouldValidateCoverageLanes(planParams)) assertKnownCoverageLanes(planParams.coverageContract?.requiredLanes)
                   return writeOperationPlan(Instance.worktree, {
-                    ...params,
-                    phases: params.phases ?? [],
-                    reportingCloseout: params.reportingCloseout ?? [],
+                    ...planParams,
+                    phases: planParams.phases ?? [],
+                    reportingCloseout: planParams.reportingCloseout ?? [],
                   })
                 }),
               ).pipe(Effect.orDie)
-        const approvalStatus = discoveryMode ? (params.planningApproval?.status ?? "pending") : params.planningApproval?.status
+        const approvalStatus = discoveryMode ? (params.planningApproval?.status ?? "pending") : planParams.planningApproval?.status
         const operatorView = "Review the plan preview below or open the markdown artifact path."
         const preview = yield* Effect.tryPromise(() => Bun.file(result.markdown).text()).pipe(
           Effect.catch(() => Effect.succeed("")),

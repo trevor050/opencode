@@ -695,6 +695,7 @@ async function selectedOperationLaunchPacket(repoRoot: string, operationID: stri
     "scope-confirmed",
     "clock-confirmed",
     "credential-review",
+    "model-route-audit",
     "tool-model-preflight",
     "wall-clock-canary",
     "laptop-preflight",

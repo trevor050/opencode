@@ -115,7 +115,7 @@ function modelFromRoute(route: string | undefined) {
 function laneChildToolOverrides(allowedTools: readonly string[] | undefined) {
   if (!allowedTools) return {}
   const allowed = new Set(allowedTools)
-  return Object.fromEntries(LANE_GUARDED_TOOLS.map((tool) => [tool, allowed.has(tool)]))
+  return Object.fromEntries(LANE_GUARDED_TOOLS.filter((tool) => allowed.has(tool)).map((tool) => [tool, true]))
 }
 
 function operationScopedTaskPrompt(params: Schema.Schema.Type<typeof Parameters>) {
@@ -573,12 +573,13 @@ export const TaskTool = Tool.define(
       const cancel = ops.cancel(nextSession.id)
 
       function onAbort() {
-        runCancel.fork(cancel)
+        runCancel.fork(Effect.all([cancel, jobs.cancel(nextSession.id)], { discard: true }))
       }
 
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           ctx.abort.addEventListener("abort", onAbort)
+          if (ctx.abort.aborted) onAbort()
         }),
         () =>
           Effect.gen(function* () {

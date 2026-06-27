@@ -76,6 +76,46 @@ describe("ULM operation next action", () => {
     expect(result.action.recommendedTools).toContain("district_profile")
   })
 
+  test("launches a critical capability lane before lower-value ready recon work", async () => {
+    await using dir = await tmpdir({ git: true })
+    const written = await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })
+    const graph = JSON.parse(await fs.readFile(written.json, "utf8"))
+    graph.lanes = [
+      {
+        ...graph.lanes.find((lane: { id: string }) => lane.id === "recon"),
+        status: "ready",
+        dependsOn: [],
+        coverageImpact: "medium",
+      },
+      {
+        ...graph.lanes.find((lane: { id: string }) => lane.id === "identity_auth_review"),
+        id: "google_workspace_review",
+        title: "Google Workspace Review",
+        status: "ready",
+        dependsOn: [],
+        coverageImpact: "high",
+        priorityCategory: "critical_capability",
+        expectedArtifacts: ["work-blocks/google-workspace-review.md"],
+      },
+    ]
+    await fs.writeFile(written.json, JSON.stringify(graph, null, 2) + "\n")
+    await writeRuntimeSummary(dir.path, {
+      operationID: "School",
+      usage: { costUSD: 1, budgetUSD: 10 },
+      compaction: { pressure: "low" },
+    })
+
+    const result = await decideOperationNext(dir.path, {
+      operationID: "School",
+      now: new Date("2026-06-26T01:00:00.000Z"),
+    })
+
+    expect(result.action.action).toBe("launch_lane")
+    if (result.action.action !== "launch_lane") throw new Error("expected launch_lane")
+    expect(result.action.lane.id).toBe("google_workspace_review")
+    expect(result.action.reason).toContain("critical capability")
+  })
+
   test("includes operation plan scope rules in next lane prompts", async () => {
     await using dir = await tmpdir({ git: true })
     await writeOperationGraph(dir.path, { operationID: "School", budgetUSD: 10 })

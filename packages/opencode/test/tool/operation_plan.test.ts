@@ -4,6 +4,7 @@ import { Cause, Effect, Layer } from "effect"
 import fs from "fs/promises"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
+import { InstanceRef } from "@/effect/instance-ref"
 import { MessageID, SessionID } from "@/session/schema"
 import { OperationPlanTool } from "@/tool/operation_plan"
 import { Truncate } from "@/tool/truncate"
@@ -37,7 +38,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const operationRoot = `${dir.path}/.ulmcode/operations/school`
@@ -77,7 +78,7 @@ describe("tool.operation_plan", () => {
             if (exit._tag !== "Failure") return
             const message = Cause.pretty(exit.cause)
             expect(message).toContain("operation_plan cannot rewrite the durable plan after operation execution has started")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -86,7 +87,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -129,7 +130,7 @@ describe("tool.operation_plan", () => {
             expect(result.output).toContain("plan_preview:")
             expect(result.output).not.toContain("/all")
             expect(result.metadata.phases).toBe(0)
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -138,7 +139,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -179,7 +180,128 @@ describe("tool.operation_plan", () => {
             expect(record.planningApproval.approver).toBe("operator")
             expect(markdown).toContain("Discovery Charter approved")
             expect(result.output).toContain("planning_approval: approved")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
+        ),
+    })
+  })
+
+  test("reuses an approved Discovery Charter when writing a full-duration plan", async () => {
+    await using dir = await tmpdir({ git: true })
+    await provideTestInstance({
+      directory: dir.path,
+      fn: (ctx) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const tool = yield* OperationPlanTool
+            const def = yield* tool.init()
+            yield* def.execute(
+              {
+                operationID: "home-network-hardrun-20260507",
+                planningMode: "discovery-charter",
+                planningApproval: {
+                  status: "approved",
+                  discoveryCharterPath: "plans/discovery-charter.md",
+                  approver: "operator",
+                  notes: ["Operator approved the Discovery Charter."],
+                },
+                discoveryCharter: {
+                  purpose: "Research and bounded discovery before the full autonomous plan.",
+                  researchQuestions: ["Which hosts and services are in scope?"],
+                  reconInvestments: ["Passive baseline and bounded service inventory."],
+                  operatorQuestions: ["Use conservative defaults after kickoff."],
+                  candidateDeepWorkLanes: ["LAN discovery", "router review", "report closeout"],
+                  decisionCriteriaForFullPlan: ["Enough safe work exists for the target duration."],
+                },
+              },
+              {
+                sessionID: SessionID.make("session-1"),
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+
+            const result = yield* def.execute(
+              {
+                operationID: "home-network-hardrun-20260507",
+                planningMode: "full-duration",
+                templateName: "home-network-full-duration",
+                trustLevel: "unattended",
+                scanProfile: "aggressive",
+                assumptions: ["Authorized non-destructive home-network run."],
+                timeBudget: {
+                  targetHours: 2.5,
+                  finalizationWindowHours: 0.5,
+                  durationFit: {
+                    confidence: "duration_sized",
+                    evidence: ["Approved charter and initial discovery identify enough bounded safe work."],
+                    overflowBacklog: ["Spend spare time on evidence normalization and report review."],
+                  },
+                  allocations: [
+                    { stage: "recon", hours: 1, work: "Bounded LAN discovery and service inventory." },
+                    { stage: "validation", hours: 0.5, work: "Validate or reject candidates safely." },
+                    { stage: "reporting", hours: 0.5, work: "Write and lint the report." },
+                  ],
+                  executionBlocks: executionBlocks({ minutes: 120 }),
+                },
+                coverageContract: {
+                  status: "unmet",
+                  goals: ["Complete safe scoped discovery and reporting."],
+                  minimumEvidence: ["Discovery output or explicit blockers."],
+                  requiredLanes: ["recon", "finding_validation", "report_review"],
+                  allowedSkippedLanes: [],
+                  fallbackRules: ["Use narrower checks when a command stalls."],
+                  retryRules: ["Retry timeouts once with narrower scope."],
+                  subagentOpportunities: ["recon", "validator", "report-reviewer"],
+                  reportGates: ["report_lint", "report_render", "operation_audit"],
+                },
+                phases: [
+                  {
+                    stage: "recon",
+                    objective: "Map scoped services safely.",
+                    actions: ["Run bounded discovery."],
+                    successCriteria: ["Evidence or blockers are recorded."],
+                    subagents: ["recon"],
+                    noSubagents: [],
+                  },
+                  {
+                    stage: "validation",
+                    objective: "Validate candidates safely.",
+                    actions: ["Review candidate findings."],
+                    successCriteria: ["Candidates are validated or rejected."],
+                    subagents: ["validator"],
+                    noSubagents: [],
+                  },
+                  {
+                    stage: "reporting",
+                    objective: "Produce the handoff report.",
+                    actions: ["Draft, lint, render, and summarize."],
+                    successCriteria: ["Report and runtime summary exist."],
+                    subagents: ["report-writer"],
+                    noSubagents: [],
+                  },
+                ],
+                reportingCloseout: ["report_lint", "report_render", "runtime_summary", "operation_audit"],
+              },
+              {
+                sessionID: SessionID.make("session-1"),
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+            const record = yield* Effect.promise(() => fs.readFile(result.metadata.json, "utf8").then(JSON.parse))
+
+            expect(result.output).toContain("planning_approval: approved")
+            expect(record.planningApproval.status).toBe("approved")
+            expect(record.discoveryCharter.purpose).toContain("Research and bounded discovery")
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -188,7 +310,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -239,7 +361,7 @@ describe("tool.operation_plan", () => {
             expect(message).toContain("coverageContract.requiredLanes must use operation_schedule lane ids")
             expect(message).toContain("attack-chain")
             expect(message).toContain("report_writing")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -248,7 +370,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -387,7 +509,7 @@ describe("tool.operation_plan", () => {
             expect(result.output).toContain("planning_approval: approved")
             expect(result.metadata.phases).toBe(4)
             expect(record.timeBudget.durationFit.confidence).toBe("duration_sized")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -396,7 +518,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -559,7 +681,7 @@ describe("tool.operation_plan", () => {
 
             expect(result.output).toContain("plan_kind: operation_plan")
             expect(result.metadata.phases).toBe(6)
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })
@@ -568,7 +690,7 @@ describe("tool.operation_plan", () => {
     await using dir = await tmpdir({ git: true })
     await provideTestInstance({
       directory: dir.path,
-      fn: () =>
+      fn: (ctx) =>
         Effect.runPromise(
           Effect.gen(function* () {
             const tool = yield* OperationPlanTool
@@ -643,7 +765,7 @@ describe("tool.operation_plan", () => {
             const message = String(Cause.squash(exit.cause))
             expect(message).toContain("2h+ operation plan requires planningApproval.status=approved")
             expect(message).not.toContain("Effect.tryPromise")
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), Effect.provideService(InstanceRef, ctx)),
         ),
     })
   })

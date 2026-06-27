@@ -1,7 +1,7 @@
 import { Effect, Exit, Layer, PubSub, Scope, Context, Stream, Schema } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { BusEvent } from "./bus-event"
-import { GlobalBus } from "./global"
+import { GlobalBus, type GlobalEvent } from "./global"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -206,11 +206,20 @@ export async function publish<D extends BusEvent.Definition>(
 }
 
 export function subscribe<D extends BusEvent.Definition>(def: D, callback: (event: Payload<D>) => unknown) {
-  return runSync((svc) => svc.subscribeCallback(def, callback))
+  const handler = (event: GlobalEvent) => {
+    if (event.payload?.type !== def.type) return
+    callback(event.payload as Payload<D>)
+  }
+  GlobalBus.on("event", handler)
+  return () => GlobalBus.off("event", handler)
 }
 
 export function subscribeAll(callback: (event: any) => unknown) {
-  return runSync((svc) => svc.subscribeAllCallback(callback))
+  const handler = (event: GlobalEvent) => {
+    callback(event.payload)
+  }
+  GlobalBus.on("event", handler)
+  return () => GlobalBus.off("event", handler)
 }
 
 export * as Bus from "."

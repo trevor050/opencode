@@ -32,6 +32,7 @@ const result = await runFirstRunRehearsal(worktree, {
   operationID,
   canaryTargetSeconds,
   canaryIntervalSeconds,
+  modelRouteLaunchEnv: process.env,
 })
 
 if (hasArg("--json")) {

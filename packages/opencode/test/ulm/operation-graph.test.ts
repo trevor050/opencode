@@ -36,12 +36,15 @@ describe("ULM operation graph", () => {
     expect(graph.lanes.find((lane) => lane.id === "recon")?.dependsOn).toEqual([])
     expect(graph.lanes.find((lane) => lane.id === "report_writing")?.dependsOn).toEqual(["report_evidence_index"])
     expect(graph.lanes.every((lane) => lane.modelRoute.includes("/"))).toBe(true)
-    expect(graph.lanes.every((lane) => lane.fallbackModelRoutes.length >= 1)).toBe(true)
+    expect(graph.lanes.find((lane) => lane.id === "recon")?.fallbackModelRoutes.length).toBeGreaterThanOrEqual(1)
     expect(graph.lanes.find((lane) => lane.id === "report_writing")?.modelRoute).toBe("openai/gpt-5.5")
     expect(graph.lanes.find((lane) => lane.id === "recon")?.modelRoute).toBe("openai/gpt-5.4-mini-fast")
     expect(graph.lanes.find((lane) => lane.id === "recon")?.fallbackModelRoutes).toContain("openai/gpt-5.5")
     expect(graph.lanes.find((lane) => lane.id === "recon")?.coverageImpact).toBe("blocks_release")
     expect(graph.lanes.find((lane) => lane.id === "report_review")?.releaseRequired).toBe(true)
+    expect(graph.lanes.find((lane) => lane.id === "district_profile")?.allowedTools).toEqual(
+      expect.arrayContaining(["bash", "read", "grep", "glob"]),
+    )
     expect(graph.lanes.reduce((sum, lane) => sum + (lane.budget.maxUSD ?? 0), 0)).toBeCloseTo(20, 2)
   })
 
@@ -284,6 +287,9 @@ describe("ULM operation graph", () => {
 
     expect(graph.lanes.map((lane) => lane.id)).toContain("supervisor")
     expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toContain("operation_supervise")
+    expect(graph.lanes.find((lane) => lane.id === "supervisor")?.allowedTools).toEqual(
+      expect.arrayContaining(["operation_next", "operation_run", "task", "command_supervise"]),
+    )
   })
 
   test("builds report-only lanes without recon and identity discovery work", () => {

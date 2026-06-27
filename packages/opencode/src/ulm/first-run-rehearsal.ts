@@ -15,6 +15,7 @@ export type FirstRunRehearsalInput = {
   sleep?: (milliseconds: number) => Promise<void>
   bunPath?: string
   runtimeDaemonScriptPath?: string
+  modelRouteLaunchEnv?: NodeJS.ProcessEnv
 }
 
 export type FirstRunRehearsalResult = {
@@ -155,6 +156,7 @@ export async function runFirstRunRehearsal(
     targetHours: 48,
     preparePrerequisites: true,
     toolManifestPath: rehearsalManifestPath,
+    modelRouteLaunchEnv: input.modelRouteLaunchEnv,
     allowSyntheticCredentials: true,
     operatorConfirmed: ["power", "sleep", "wifi", "scope", "clock"],
     now: input.now,

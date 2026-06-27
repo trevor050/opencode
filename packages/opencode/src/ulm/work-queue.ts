@@ -20,6 +20,10 @@ export type WorkUnit = {
   rationale: string
   safety: "non_destructive"
   attempts: number
+  priority?: {
+    score: number
+    reason: string
+  }
   jobID?: string
   createdAt: string
   updatedAt: string
@@ -85,6 +89,14 @@ export type WorkQueueJobSyncResult = {
   failedUnits: string[]
 }
 
+export type WorkQueueExternalJob = BackgroundJob.Info | {
+  id: string
+  status: BackgroundJob.Status
+  startedAt: number
+  completedAt?: number
+  metadata?: Record<string, unknown>
+}
+
 export type WorkQueueLeaseResult = {
   operationID: string
   queuePath: string
@@ -128,6 +140,33 @@ function nonBlank(value: string | undefined) {
   return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
+function identityRelevantTarget(value: string | undefined) {
+  return /\b(?:dc\d*|domain|ad|ldap|kerberos|kdc|entra|m365|google|sis|genesis)[\w.-]*/i.test(value ?? "")
+}
+
+function commandUnitPriority(input: { profileID: string; variables: Record<string, string>; rationale: string }) {
+  const values = Object.values(input.variables).join(" ")
+  if (input.profileID === "service-inventory" && identityRelevantTarget(values)) {
+    return { score: 850, reason: "identity-relevant service inventory should run before lower-value discovery" }
+  }
+  if (input.profileID === "smb-inventory" || input.profileID === "ad-lightweight-enum") {
+    return { score: 800, reason: "identity and Windows-domain inventory supports high-value access review" }
+  }
+  if (input.profileID === "service-inventory") {
+    return { score: 500, reason: "service inventory establishes host role and validation context" }
+  }
+  if (input.profileID === "http-discovery") {
+    return { score: 420, reason: "HTTP discovery builds web inventory across known hosts" }
+  }
+  if (input.profileID === "passive-web-baseline") {
+    return { score: 360, reason: "passive web baseline can validate common web control gaps" }
+  }
+  if (input.profileID === "content-discovery") {
+    return { score: 300, reason: "content discovery is useful but should not outrank identity-relevant inventory" }
+  }
+  return { score: 100, reason: `default priority for ${input.profileID}` }
+}
+
 function jobMatchesWorktree(job: BackgroundJob.Info, worktree: string) {
   const metadataWorktree = job.metadata?.worktree
   return typeof metadataWorktree !== "string" || path.resolve(metadataWorktree) === path.resolve(worktree)
@@ -168,11 +207,20 @@ function addUnit(input: {
     rationale: input.rationale,
     safety: "non_destructive",
     attempts: 0,
+    priority: commandUnitPriority({
+      profileID: input.profile.id,
+      variables: input.variables,
+      rationale: input.rationale,
+    }),
     createdAt: input.now,
     updatedAt: input.now,
   }
   input.units.push(unit)
   input.existing.set(id, unit)
+}
+
+function workUnitPriorityScore(unit: WorkUnit) {
+  return unit.priority?.score ?? 0
 }
 
 export async function buildWorkQueue(worktree: string, input: WorkQueueInput): Promise<WorkQueueResult> {
@@ -291,6 +339,13 @@ export async function nextWorkUnits(worktree: string, input: WorkQueueNextInput)
   const selected = queue.units
     .filter((unit) => unit.status === "queued")
     .filter((unit) => !input.laneID || unit.laneID === input.laneID)
+    .toSorted((left, right) => {
+      const scoreDelta = workUnitPriorityScore(right) - workUnitPriorityScore(left)
+      if (scoreDelta !== 0) return scoreDelta
+      const createdDelta = Date.parse(left.createdAt) - Date.parse(right.createdAt)
+      if (Number.isFinite(createdDelta) && createdDelta !== 0) return createdDelta
+      return left.id.localeCompare(right.id)
+    })
     .slice(0, limit)
   if (input.claim) {
     const selectedIDs = new Set(selected.map((unit) => unit.id))
@@ -326,7 +381,7 @@ export async function nextWorkUnits(worktree: string, input: WorkQueueNextInput)
 
 export async function syncWorkQueueJobs(
   worktree: string,
-  input: { operationID: string; backgroundJobs?: BackgroundJob.Info[] },
+  input: { operationID: string; backgroundJobs?: WorkQueueExternalJob[] },
 ): Promise<WorkQueueJobSyncResult> {
   const operationID = slug(input.operationID, "operation")
   const root = operationPath(worktree, operationID)
@@ -345,7 +400,7 @@ export async function syncWorkQueueJobs(
     const metadataOperation = job.metadata?.operationID
     const workUnitID = job.metadata?.workUnitID
     if (metadataOperation !== operationID || typeof workUnitID !== "string") continue
-    if (!jobMatchesWorktree(job, worktree)) continue
+    if ("type" in job && !jobMatchesWorktree(job, worktree)) continue
     const unit = unitsByID.get(workUnitID)
     if (!unit) continue
     unit.jobID = job.id
@@ -405,6 +460,7 @@ export async function requeueStaleWorkUnits(
     const updated = Date.parse(unit.updatedAt)
     if (Number.isNaN(updated) || now.getTime() - updated <= leaseMs) continue
     unit.status = "queued"
+    unit.jobID = undefined
     unit.updatedAt = now.toISOString()
     requeuedUnits.push(unit.id)
   }

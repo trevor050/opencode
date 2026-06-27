@@ -6,6 +6,19 @@ import { formatFirstRunRehearsal, runFirstRunRehearsal } from "@/ulm/first-run-r
 import { tmpdir } from "../fixture/fixture"
 
 const packageRoot = path.join(__dirname, "../..")
+const testConfigDir = path.join(packageRoot, ".artifacts", "first-run-rehearsal-test-config")
+const profileConfigPath = path.resolve(packageRoot, "../../tools/ulmcode-profile/opencode.json")
+
+await fs.mkdir(testConfigDir, { recursive: true })
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "opencode.json"))
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "ulmcode.json"))
+
+const testLaunchEnv: NodeJS.ProcessEnv = {
+  OPENCODE_APP_NAME: "ulmcode",
+  OPENCODE_CONFIG_DIR: testConfigDir,
+  OPENCODE_CONFIG: path.join(testConfigDir, "opencode.json"),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+}
 
 function fakeClock(start: string, stepSeconds: number) {
   let tick = 0
@@ -25,6 +38,7 @@ describe("ULM first run rehearsal", () => {
       sleep: async (milliseconds) => {
         sleeps.push(milliseconds)
       },
+      modelRouteLaunchEnv: testLaunchEnv,
     })
 
     expect(result.operationID).toBe("surface-school-rehearsal")
@@ -82,7 +96,7 @@ describe("ULM first run rehearsal", () => {
         "--strict",
         "--json",
       ],
-      { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
+      { cwd: packageRoot, env: { ...process.env, ...testLaunchEnv }, stdout: "pipe", stderr: "pipe" },
     )
     const [stdout, stderr, exit] = await Promise.all([
       new Response(proc.stdout).text(),

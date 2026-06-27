@@ -1,0 +1,5 @@
+Write a lightweight operation strategy memo for the scheduler.
+
+This tool gathers current operation state, writes a model-facing strategist prompt, and persists a permissive `strategy/next-actions.json` memo. The scheduler may use the memo as hints, but missing or imperfect fields should not block progress.
+
+Use it during long-running operations when the daemon needs better judgment about the next few high-value moves, especially identity, SaaS, authenticated browser, validation, or report-readiness work.

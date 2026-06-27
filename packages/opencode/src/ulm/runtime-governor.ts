@@ -97,8 +97,8 @@ function decideFromRuntime(input: {
     recommendedTools.push("operation_schedule")
   }
   if (!input.runtime) {
-    blockers.push("runtime summary is missing")
     recommendedTools.push("runtime_summary")
+    if (!input.graph) blockers.push("runtime summary is missing")
   }
   if (remainingUSD !== undefined && remainingUSD <= 0) blockers.push("operation budget exhausted")
   if (laneBudgetUSD !== undefined && laneSpent !== undefined && laneSpent >= laneBudgetUSD) {
@@ -203,9 +203,13 @@ function decideFromRuntime(input: {
     operationID: input.operationID,
     laneID: input.lane?.id,
     action: "continue",
-    reason: input.lane
-      ? `lane ${input.lane.id} is within recorded runtime limits`
-      : "operation is within recorded runtime limits",
+    reason: !input.runtime
+      ? input.lane
+        ? `lane ${input.lane.id} can start; runtime summary has not been written yet, so refresh runtime_summary after initial progress`
+        : "operation can continue; runtime summary has not been written yet, so refresh runtime_summary after initial progress"
+      : input.lane
+        ? `lane ${input.lane.id} is within recorded runtime limits`
+        : "operation is within recorded runtime limits",
     modelRoute: input.lane?.modelRoute,
     remainingUSD,
     laneBudgetUSD,

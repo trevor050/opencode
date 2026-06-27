@@ -256,6 +256,67 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("background task_id resume returns the running task instead of failing", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const jobs = yield* BackgroundJob.Service
+      const storage = yield* Storage.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "Running child" })
+      yield* Effect.addFinalizer(() => storage.remove(["background_job", child.id]).pipe(Effect.ignore))
+      yield* jobs.start({
+        id: child.id,
+        type: TaskTool.id,
+        title: "Running child",
+        metadata: {
+          parentSessionID: chat.id,
+          sessionID: child.id,
+          subagent: "general",
+          subagent_type: "general",
+          description: "inspect bug",
+          prompt: "continue the already-running lane",
+          operationID: "school",
+          laneID: "charter_research",
+          modelRoute: "test/test-model",
+        },
+        run: Effect.never,
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let prompted = false
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "please resume the lane and collect the latest evidence",
+          subagent_type: "general",
+          task_id: child.id,
+          background: true,
+          operationID: "school",
+          laneID: "charter_research",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps({ onPrompt: () => (prompted = true) }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(prompted).toBe(false)
+      expect(result.metadata.sessionId).toBe(child.id)
+      expect(result.metadata.background).toBe(true)
+      expect(result.output).toContain(`task_id: ${child.id}`)
+      expect(result.output).toContain("state: running")
+      expect(result.output).toContain("Background task updated")
+      expect(result.output).toContain("Additional context sent to the running background task")
+    }),
+  )
+
   it.instance("execute asks by default and skips checks when bypassed", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
@@ -349,7 +410,10 @@ describe("tool.task", () => {
       expect(yield* Effect.promise(() => cancelled.promise)).toBe(input.sessionID)
 
       const exit = yield* Fiber.await(fiber)
-      expect(Exit.isSuccess(exit)).toBe(true)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Task cancelled")
+      }
     }),
   )
 
@@ -438,7 +502,11 @@ describe("tool.task", () => {
             action: "deny",
           },
         ])
-        expect(seen?.tools).toBeUndefined()
+        expect(seen?.tools).toMatchObject({
+          todowrite: false,
+          bash: false,
+          read: false,
+        })
       }),
     {
       config: {
@@ -458,7 +526,7 @@ describe("tool.task", () => {
   )
 
   it.instance(
-    "execute disables guarded lane tools that are not in the lane allowlist",
+    "execute sends positive lane tool hints without disabling omitted tools",
     () =>
       Effect.gen(function* () {
         const { chat, assistant } = yield* seed()
@@ -487,17 +555,14 @@ describe("tool.task", () => {
         )
 
         expect(seen?.tools).toMatchObject({
-          operation_recover: false,
-          runtime_scheduler: false,
-          runtime_daemon: false,
           task: true,
           command_supervise: true,
-          bash: false,
           write: true,
-          browser_evidence: false,
-          playwright_browser_wait_for: false,
-          playwright_browser_navigate: false,
         })
+        expect(seen?.tools?.bash).toBeUndefined()
+        expect(seen?.tools?.operation_recover).toBeUndefined()
+        expect(seen?.tools?.browser_evidence).toBeUndefined()
+        expect(seen?.tools?.playwright_browser_wait_for).toBeUndefined()
       }),
     {
       config: {
@@ -893,7 +958,7 @@ describe("tool.task", () => {
 
       expect(polledAfterReload.metadata.state).toBe("stale")
       expect(polledAfterReload.output).toContain("state: stale")
-      expect(polledAfterReload.output).toContain("lost its running fiber")
+      expect(polledAfterReload.output).toContain("no longer has its running fiber")
       expect(polledAfterReload.output).toContain('"task_id":"' + taskSession.id + '"')
       expect(polledAfterReload.output).toContain('"subagent_type":"validator"')
       expect(polledAfterReload.output).toContain('"operationID":"school"')

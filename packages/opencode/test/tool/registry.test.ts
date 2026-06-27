@@ -66,12 +66,12 @@ afterEach(async () => {
 })
 
 describe("tool.registry", () => {
-  it.instance("does not expose task_status", () =>
+  it.instance("exposes task_status for background operation polling", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
       const ids = yield* registry.ids()
 
-      expect(ids).not.toContain("task_status")
+      expect(ids).toContain("task_status")
     }),
   )
 

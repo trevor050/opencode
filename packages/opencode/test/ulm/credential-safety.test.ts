@@ -107,6 +107,23 @@ describe("credential safety", () => {
     expect(credentialGuessingPolicyGaps("use operation_credentials materialized ULMCODE_CREDENTIAL_ROUTER_PASSWORD")).toEqual([])
   })
 
+  test("does not flag defensive credential restrictions as guessing instructions", () => {
+    expect(
+      credentialGuessingPolicyGaps(
+        "Review priority web/admin surfaces and fragile-device default low-risk checks. No password spraying, brute force, or default credential guessing is authorized.",
+      ),
+    ).toEqual([])
+    expect(credentialGuessingPolicyGaps("test the web admin surface and try admin/password").length).toBeGreaterThan(0)
+  })
+
+  test("does not flag stakeholder report prose about admin password risk as guessing", () => {
+    expect(
+      credentialGuessingPolicyGaps(
+        "Testing followed the recorded operation plan. The district administrator login does not require MFA. A stolen administrator password could provide access to district-wide student data without a second factor.",
+      ),
+    ).toEqual([])
+  })
+
   test("scanner catches raw usernames, SSIDs, and restart prompts", () => {
     const result = scanOperationArtifactValue("School", "runtime-summary", {
       backgroundTasks: [

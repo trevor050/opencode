@@ -1,0 +1,5 @@
+Generate a read-only operation management board from existing artifacts.
+
+This tool writes `board/operation-board.json` and `board/operation-board.md` with current objective, strategy items, active lanes/jobs, blockers, browser session artifacts, evidence counts, identity/SaaS gaps, report readiness, and finalization status.
+
+It is not a source of truth and should not mutate lanes or findings.

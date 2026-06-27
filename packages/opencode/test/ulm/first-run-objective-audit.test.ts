@@ -81,6 +81,7 @@ async function writePassingLaunchPacket(root: string, operationID: string) {
       { id: "scope-confirmed" },
       { id: "clock-confirmed" },
       { id: "credential-review", detail: "Genesis and Google credentials are stored through the vault with redacted indexes only." },
+      { id: "model-route-audit" },
       { id: "tool-model-preflight" },
       { id: "wall-clock-canary" },
       { id: "laptop-preflight" },

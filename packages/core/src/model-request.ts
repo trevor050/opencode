@@ -63,6 +63,8 @@ const profiles = new Map<string, Profile>([
       semantics: new Map([
         ["store", "store"],
         ["promptCacheKey", "promptCacheKey"],
+        ["promptCacheRetention", "promptCacheRetention"],
+        ["prompt_cache_retention", "promptCacheRetention"],
         ["reasoningEffort", "reasoningEffort"],
         ["reasoningSummary", "reasoningSummary"],
         ["include", "include"],

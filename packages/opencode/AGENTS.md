@@ -1,6 +1,6 @@
 # packages/opencode Agent Notes
 
-Last updated: 2026-05-11
+Last updated: 2026-05-18
 
 This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, operation artifacts, scheduler/daemon scripts, provider catalog, server routes, and most tests. The repo-root `AGENTS.md` carries the product-level ULM operation contract; this file keeps package-local coding and runtime landmines.
 
@@ -44,6 +44,11 @@ This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, 
 - Package CLI daemon child lanes may pass subagent names through `opencode run --agent` only when `ULMCODE_DAEMON_CHILD=1` and `ULMCODE_LANE_ID` are set. Normal CLI runs should still reject subagents as primary agents.
 - Background `task` metadata is persisted under `background_job/<task_id>` and must keep prompt/subagent/operation/worktree metadata, restart args, and runtime usage snapshots for stale-job recovery.
 - `operation_recover` depends on `command_supervise` metadata: `profileID`, variables, output prefix, manifest path, lane ID, and `workUnitID`.
+- Explicit `task_id` resumes for background tasks should return the existing running/stale task status, not throw and force the model into duplicate recovery tasks.
+- Blocked lanes are recoverable state. Supervisor decisions should route blocked/stale/failed lane work to `operation_resume`/`operation_recover`; generic active-run continuation should point models at `runtime_scheduler`/`runtime_daemon`, not only `operation_run`.
+- Native ULM tools must be imported and registered in `src/tool/registry.ts`, not merely present as files under `src/tool`. Initialize tool handles outside the `InstanceState.make` closure so extra service requirements do not leak into the scoped state effect.
+- `tool-manifest` command templates allow safe multi-token target/Args fragments such as `-iL evidence/raw/hosts.txt`. Keep shell metacharacters quoted, but do not collapse safe nmap option fragments into one quoted argv token.
+- `evidence_normalize` should prefer explicit artifact paths and tolerate concurrently written or malformed command-plan JSON. A bad command plan must not block normalization of a valid explicit artifact.
 
 ## Provider And Process Gotchas
 
@@ -52,6 +57,7 @@ This package is the core ULMCode/OpenCode runtime: session loop, agents, tools, 
 - Moonshot/Kimi schema normalization strips `$ref` siblings, cleans tuple items, and flattens deeply nested schemas near provider depth limits.
 - MCP dynamic tools retry once after transport/session errors by reconnecting; auth/business errors should surface directly.
 - Codex/OpenAI `server_is_overloaded` is retryable provider overload. Codex OAuth refresh may omit a new refresh token; preserve the existing one on refresh while keeping first-login strict.
+- OpenAI `promptCacheKey` is intentionally stable by app/model, not session ID, so new ULMCode chats can reuse cached static prefixes. For OpenAI `gpt-5.5*`, also preserve `promptCacheRetention: "24h"`; OpenAI does not use normal in-memory cache retention for that family. Do not switch either back unless measuring a real cache-routing regression.
 - Core process handling resolves exit state on `exit` as well as `close`, and SIGKILL escalation must not wait forever for a close event.
 - Broad Node process-kill commands stay blocked because OpenCode itself runs on Node; PID-scoped kills and project-scoped stop commands can remain allowed.
 

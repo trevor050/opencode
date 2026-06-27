@@ -73,7 +73,20 @@ cfg = {
   },
   "mcp": {
     "playwright": {"type": "local", "command": ["npx", "@playwright/mcp@latest"]},
-    "pentestMCP": {"type": "local", "command": ["docker", "run", "--rm", "-i", "ramgameer/pentest-mcp:latest"]}
+    "playwright_persistent": {"type": "local", "command": ["__ULMCODE_PROFILE_DIR__/mcp/playwright-persistent/run-stdio.sh"]},
+    "pentestMCP": {"type": "local", "command": ["__ULMCODE_PROFILE_DIR__/mcp/pentestMCP/run-stdio.sh"]},
+    "companyscope": {"type": "local", "command": ["npx", "-y", "companyscope-mcp"]},
+    "not_human_search": {
+      "type": "remote",
+      "url": "https://nothumansearch.ai/mcp",
+      "enabled": True,
+      "oauth": False
+    },
+    "openregistry": {
+      "type": "remote",
+      "url": "https://openregistry.sophymarine.com/mcp",
+      "enabled": True
+    }
   }
 }
 config_file.write_text(json.dumps(cfg, indent=2) + "\n")

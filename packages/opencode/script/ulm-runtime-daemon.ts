@@ -343,23 +343,25 @@ function processIsAlive(pid: unknown) {
   }
 }
 
+type CliModelPidRecord = {
+  jobID?: string
+  pid?: number
+  createdAt?: string
+}
+
 function activeCliModelLaunch(laneID: string) {
   const dir = path.join(operationPath(worktree, operationID), "scheduler", "cli-launches")
   try {
     return readdirSync(dir)
       .filter((file) => file.endsWith(`-model-pid-${laneID}.json`))
-      .map((file) => {
+      .map((file): CliModelPidRecord | undefined => {
         try {
-          return JSON.parse(readFileSync(path.join(dir, file), "utf8")) as {
-            jobID?: string
-            pid?: number
-            createdAt?: string
-          }
+          return JSON.parse(readFileSync(path.join(dir, file), "utf8")) as CliModelPidRecord
         } catch {
           return undefined
         }
       })
-      .filter((record): record is { jobID?: string; pid?: number; createdAt?: string } => !!record)
+      .filter((record): record is CliModelPidRecord => record !== undefined)
       .toSorted((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
       .find((record) => processIsAlive(record.pid))
   } catch {
@@ -422,6 +424,83 @@ function cliModelBackgroundJobs(): BackgroundJob.Info[] {
           worktree,
         },
       }))
+  } catch {
+    return []
+  }
+}
+
+function cliCommandBackgroundJobs(): BackgroundJob.Info[] {
+  const root = operationPath(worktree, operationID)
+  const launchDir = path.join(root, "scheduler", "cli-launches")
+  try {
+    return readdirSync(launchDir)
+      .filter((file) => file.includes("-command-pid-") && file.endsWith(".json"))
+      .map((file): BackgroundJob.Info | undefined => {
+        try {
+          const record = JSON.parse(readFileSync(path.join(launchDir, file), "utf8")) as {
+            profileID?: string
+            laneID?: string
+            workUnitID?: string
+            planPath?: string
+            pid?: number
+            jobID?: string
+            createdAt?: string
+          }
+          if (!record.jobID || !record.workUnitID) return undefined
+          let status: BackgroundJob.Status = "running"
+          let completedAt: number | undefined
+          let error: string | undefined
+          if (!processIsAlive(record.pid)) {
+            const heartbeatPath =
+              record.planPath
+                ? (() => {
+                    try {
+                      const plan = JSON.parse(readFileSync(record.planPath, "utf8")) as { heartbeatPath?: string }
+                      return plan.heartbeatPath
+                    } catch {
+                      return undefined
+                    }
+                  })()
+                : undefined
+            const heartbeat = heartbeatPath
+              ? (() => {
+                  try {
+                    return JSON.parse(readFileSync(heartbeatPath, "utf8")) as {
+                      status?: string
+                      checkedAt?: string
+                      error?: string
+                      timedOut?: string
+                    }
+                  } catch {
+                    return undefined
+                  }
+                })()
+              : undefined
+            status = heartbeat?.status === "completed" ? "completed" : "error"
+            completedAt = heartbeat?.checkedAt ? Date.parse(heartbeat.checkedAt) : Date.now()
+            error = heartbeat?.error ?? (heartbeat?.timedOut ? `command ${heartbeat.timedOut} timeout` : `CLI command worker pid ${record.pid ?? "unknown"} is no longer running`)
+          }
+          return {
+            id: record.jobID,
+            type: "command_supervise",
+            title: `CLI command ${record.profileID ?? record.workUnitID}`,
+            status,
+            startedAt: record.createdAt ? Date.parse(record.createdAt) : Date.now(),
+            completedAt,
+            error,
+            metadata: {
+              operationID,
+              laneID: record.laneID,
+              workUnitID: record.workUnitID,
+              profileID: record.profileID,
+              worktree,
+            },
+          } satisfies BackgroundJob.Info
+        } catch {
+          return undefined
+        }
+      })
+      .filter((job): job is BackgroundJob.Info => job !== undefined)
   } catch {
     return []
   }
@@ -575,6 +654,7 @@ try {
     requireLaptopPreflight: args.skipLaptopPreflight ? false : undefined,
     includeInstalledModelRouteAudit: true,
     backgroundJobProvider: async () => cliModelBackgroundJobs(),
+    commandJobProvider: async () => cliCommandBackgroundJobs(),
     recoverBackgroundJob: recoverCliModelJob,
     launchModelLane,
     launchCommandWorkUnit,

@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { existsSync } from "fs"
 import path from "path"
 import { containsRawCredentialSecret, credentialGuessingPolicyGaps } from "./credential-safety"
 
@@ -36,8 +37,22 @@ function slug(value: string, fallback: string) {
   return normalized || fallback
 }
 
+function operationsRoot(worktree: string) {
+  const base = path.resolve(worktree)
+  const root = path.parse(base).root
+  if (base === root) return path.join(path.resolve(process.cwd()), ".ulmcode", "operations")
+  let current = base
+  while (true) {
+    const candidate = path.join(current, ".ulmcode", "operations")
+    if (existsSync(candidate)) return candidate
+    const parent = path.dirname(current)
+    if (parent === current) return path.join(base, ".ulmcode", "operations")
+    current = parent
+  }
+}
+
 function operationPath(worktree: string, operationID: string) {
-  return path.join(worktree, ".ulmcode", "operations", slug(operationID, "operation"))
+  return path.join(operationsRoot(worktree), slug(operationID, "operation"))
 }
 
 function masked(value: string) {
@@ -119,7 +134,7 @@ export async function scanOperationArtifacts(worktree: string, operationID: stri
       else if (/\.(json|jsonl|md|html|txt)$/i.test(entry.name)) files.push(full)
     }
   }
-  for (const dir of ["deliverables", "reports", "supervisor", "tasks", "memory"].map((item) => path.join(root, item))) {
+  for (const dir of ["deliverables", "reports", "supervisor", "tasks", "memory", "evidence", "findings", "plans", "commands"].map((item) => path.join(root, item))) {
     await collect(dir)
   }
   const results = await Promise.all(files.map((file) => scanOperationArtifactFile(id, file)))

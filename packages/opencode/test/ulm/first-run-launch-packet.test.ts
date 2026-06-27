@@ -56,6 +56,7 @@ describe("ULM first run launch packet", () => {
       "scope-confirmed",
       "clock-confirmed",
       "credential-review",
+      "model-route-audit",
       "tool-model-preflight",
       "wall-clock-canary",
       "laptop-preflight",

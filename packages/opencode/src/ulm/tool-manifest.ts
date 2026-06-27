@@ -84,16 +84,25 @@ export async function readToolManifest(file: string): Promise<ToolManifest> {
   return JSON.parse(await fs.readFile(file, "utf8")) as ToolManifest
 }
 
+const SAFE_UNQUOTED_TOKEN = /^[A-Za-z0-9_./:@%+=,-]+$/
+
 function shellQuote(value: string) {
-  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value
+  if (SAFE_UNQUOTED_TOKEN.test(value)) return value
   return `'${value.replaceAll("'", "'\"'\"'")}'`
+}
+
+function shellQuoteArgFragment(value: string) {
+  const tokens = value.trim().split(/\s+/).filter(Boolean)
+  if (tokens.length > 1 && tokens.every((token) => SAFE_UNQUOTED_TOKEN.test(token))) return tokens.join(" ")
+  return shellQuote(value)
 }
 
 function renderTemplate(template: string, variables: Record<string, string | undefined>) {
   return template.replaceAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (match, key: string) => {
     const value = variables[key]
     if (!value) throw new Error(`command profile requires variable ${key}`)
-    return shellQuote(value)
+    const allowsArgFragment = key === "target" || key.endsWith("Args") || key.endsWith("args")
+    return allowsArgFragment ? shellQuoteArgFragment(value) : shellQuote(value)
   })
 }
 

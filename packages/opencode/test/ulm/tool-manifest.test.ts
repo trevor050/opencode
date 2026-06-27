@@ -76,6 +76,63 @@ describe("ULM tool manifest command plans", () => {
     await expect(fs.stat(path.join(dir.path, ".ulmcode", "operations", "school", "evidence", "raw"))).resolves.toBeTruthy()
   })
 
+  test("renders safe target option fragments as separate argv tokens", async () => {
+    await using dir = await tmpdir({ git: true })
+    const manifestPath = path.join(dir.path, "manifest.json")
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        lastReviewed: "2026-05-05",
+        policy: {
+          defaultSafetyMode: "non_destructive",
+          destructiveSafetyMode: "interactive_destructive",
+          installFailureBehavior: "record_blocker_with_fallback",
+          notes: [],
+        },
+        tools: [
+          {
+            id: "nmap",
+            purpose: "file-backed AD host enum",
+            safety: "non_destructive",
+            install: [{ platform: "darwin", command: "brew install nmap" }],
+            validate: "nmap --version",
+            safeExamples: ["nmap -iL hosts.txt"],
+            outputParsers: ["xml"],
+            fallbacks: [],
+          },
+        ],
+        commandProfiles: [
+          {
+            id: "ad-lightweight-enum",
+            tool: "nmap",
+            safety: "non_destructive",
+            template: "nmap -sT -Pn -oA {outputPrefix} {target}",
+            heartbeatSeconds: 60,
+            idleTimeoutSeconds: 600,
+            hardTimeoutSeconds: 1200,
+            restartable: true,
+            artifacts: [],
+          },
+        ],
+      }),
+    )
+
+    const plan = await buildCommandPlan({
+      worktree: dir.path,
+      operationID: "School",
+      profileID: "ad-lightweight-enum",
+      variables: { target: "-iL evidence/raw/charter_research/passive_arp_in_scope_hosts.txt" },
+      outputPrefix: "evidence/raw/charter_research/nmap_ad_file_light_passive_arp",
+      manifestPath,
+    })
+
+    expect(plan.command).toBe(
+      "nmap -sT -Pn -oA evidence/raw/charter_research/nmap_ad_file_light_passive_arp -iL evidence/raw/charter_research/passive_arp_in_scope_hosts.txt",
+    )
+    expect(plan.command).not.toContain("'-iL evidence")
+  })
+
   test("rejects destructive command profiles for unattended supervision", async () => {
     await using dir = await tmpdir({ git: true })
     const manifestPath = path.join(dir.path, "manifest.json")

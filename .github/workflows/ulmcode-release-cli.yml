@@ -69,6 +69,32 @@ jobs:
           set -euo pipefail
           gh release upload "v${VERSION}" ./dist/ulmcode-skills.tar.gz --repo "$REPO" --clobber
 
+  release_capabilities:
+    needs: create_release
+    runs-on: ubuntu-latest
+    outputs:
+      apple_signing: ${{ steps.apple-signing.outputs.available }}
+    steps:
+      - id: apple-signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_CERTIFICATE}" ] &&
+             [ -n "${APPLE_CERTIFICATE_PASSWORD}" ] &&
+             [ -n "${APPLE_API_KEY_PATH}" ] &&
+             [ -n "${APPLE_API_KEY}" ] &&
+             [ -n "${APPLE_API_ISSUER}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping macOS desktop packaging because Apple signing secrets are not fully configured"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build_cli:
     needs: create_release
     runs-on: ubuntu-latest
@@ -147,6 +173,7 @@ jobs:
     needs:
       - create_release
       - build_cli
+      - release_capabilities
     strategy:
       fail-fast: false
       matrix:
@@ -155,49 +182,60 @@ jobs:
             target: x86_64-apple-darwin
             platform_flag: --mac --x64
             bun_install_flags: --os=darwin --cpu=x64
+            requires_apple_signing: true
           - host: macos-14
             target: aarch64-apple-darwin
             platform_flag: --mac --arm64
             bun_install_flags: --os=darwin --cpu=arm64
+            requires_apple_signing: true
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             platform_flag: --win --x64
+            requires_apple_signing: false
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform_flag: --linux --x64
+            requires_apple_signing: false
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-tags: true
 
+      - name: Skip macOS desktop packaging without signing secrets
+        if: ${{ matrix.settings.requires_apple_signing && needs.release_capabilities.outputs.apple_signing != 'true' }}
+        run: echo "::notice::Skipping ${{ matrix.settings.target }} because Apple signing secrets are not fully configured"
+
       - uses: apple-actions/import-codesign-certs@v2
-        if: runner.os == 'macOS'
+        if: ${{ runner.os == 'macOS' && needs.release_capabilities.outputs.apple_signing == 'true' }}
         with:
           keychain: build
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
       - name: Setup Apple API Key
-        if: runner.os == 'macOS'
+        if: ${{ runner.os == 'macOS' && needs.release_capabilities.outputs.apple_signing == 'true' }}
         shell: bash
         run: echo "${{ secrets.APPLE_API_KEY_PATH }}" > "$RUNNER_TEMP/apple-api-key.p8"
 
       - uses: ./.github/actions/setup-bun
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         with:
           install-flags: ${{ matrix.settings.bun_install_flags }}
 
       - uses: actions/setup-node@v4
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         with:
           node-version: "24"
 
       - name: Install Linux packaging dependencies
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (!matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true') }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends rpm
 
       - name: Prepare desktop bundle
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         working-directory: packages/desktop
         env:
           GH_TOKEN: ${{ github.token }}
@@ -208,12 +246,14 @@ jobs:
         run: bun ./scripts/prepare.ts
 
       - name: Build desktop renderer/main
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         working-directory: packages/desktop
         env:
           OPENCODE_CHANNEL: prod
         run: bun run build
 
       - name: Package desktop updater artifacts
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         working-directory: packages/desktop
         timeout-minutes: 60
         env:
@@ -227,7 +267,7 @@ jobs:
         run: npx electron-builder ${{ matrix.settings.platform_flag }} --publish never --config electron-builder.config.ts
 
       - name: Create macOS app archive
-        if: runner.os == 'macOS'
+        if: ${{ runner.os == 'macOS' && needs.release_capabilities.outputs.apple_signing == 'true' }}
         working-directory: packages/desktop/dist
         shell: bash
         run: |
@@ -249,6 +289,7 @@ jobs:
           tar -czf "$OUT_NAME" -C "$(dirname "$APP_PATH")" "$(basename "$APP_PATH")"
 
       - name: Upload desktop release assets
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -261,12 +302,13 @@ jobs:
           done < <(find packages/desktop/dist -maxdepth 1 -type f ! -name 'builder-debug.yml' -print0)
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && (!matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true') }}
         with:
           name: ulmcode-desktop-${{ matrix.settings.target }}
           path: packages/desktop/dist/*
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !matrix.settings.requires_apple_signing || needs.release_capabilities.outputs.apple_signing == 'true' }}
         with:
           name: latest-yml-${{ matrix.settings.target }}
           path: packages/desktop/dist/latest*.yml

@@ -76,4 +76,28 @@ describe("ULM model route audit", () => {
     expect(result.gaps.join("\n")).toContain("opencode/big-pickle")
     expect(result.gaps.join("\n")).toContain("installed opencode.json and ulmcode.json disagree")
   })
+
+  test("strict launch env fails closed when ULM OpenAI routing env is unset", async () => {
+    await using dir = await tmpdir({ git: true })
+    const profile = path.join(dir.path, "opencode.json")
+    const installed = path.join(dir.path, "installed")
+    await writeJson(profile, cleanProfile)
+    await fs.mkdir(installed, { recursive: true })
+    await writeJson(path.join(installed, "opencode.json"), cleanProfile)
+    await writeJson(path.join(installed, "ulmcode.json"), cleanProfile)
+
+    const result = await auditULMModelRoutes({
+      worktree: dir.path,
+      profileConfigPath: profile,
+      installedConfigDir: installed,
+      includeInstalled: true,
+      launchEnv: {},
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.launchEnv.ok).toBe(false)
+    expect(result.gaps.join("\n")).toContain("OPENCODE_APP_NAME must be ulmcode, got unset")
+    expect(result.gaps.join("\n")).toContain("OPENCODE_CONFIG_DIR must point at")
+    expect(result.gaps.join("\n")).toContain("OPENCODE_DISABLE_PROJECT_CONFIG must be 1, got unset")
+  })
 })

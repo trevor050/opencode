@@ -215,14 +215,18 @@ describe("ULM artifact ledger", () => {
   test("publishes operation update events after durable writes", async () => {
     const worktree = await tmpdir()
     const received: Array<{ operationID: string; artifact: string; path?: string }> = []
+    let seen!: () => void
+    const eventSeen = new Promise<void>((resolve) => {
+      seen = resolve
+    })
 
     await WithInstance.provide({
       directory: worktree,
       fn: async () => {
         const unsubscribe = Bus.subscribe(OperationEvent.Updated, (evt) => {
           received.push(evt.properties)
+          seen()
         })
-        await Bun.sleep(10)
         await writeOperationCheckpoint(worktree, {
           operationID: "School Assessment",
           objective: "Authorized school assessment",
@@ -230,7 +234,7 @@ describe("ULM artifact ledger", () => {
           status: "running",
           summary: "Recon lane started.",
         })
-        await Bun.sleep(10)
+        await Promise.race([eventSeen, Bun.sleep(500)])
         unsubscribe()
       },
     })
@@ -336,6 +340,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -519,6 +524,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "Delegated admins can reset student passwords, move OUs, and approve SIS sync accounts.",
       path: "evidence/raw/ev-google-delegation.txt",
+      content: "synthetic evidence artifact\n",
     })
     await writeEvidence(worktree, {
       operationID: "school",
@@ -527,6 +533,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "Normalized evidence for delegated Google Workspace group export.",
       path: "evidence/raw/ev-google-delegation.txt",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -628,6 +635,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -683,6 +691,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -735,6 +744,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -925,6 +935,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -968,6 +979,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1014,6 +1026,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1085,6 +1098,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1133,6 +1147,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1189,6 +1204,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1273,6 +1289,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1483,6 +1500,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1550,6 +1568,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1693,6 +1712,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeEvidence(worktree, {
       operationID: "school",
@@ -1701,6 +1721,7 @@ describe("ULM artifact ledger", () => {
       kind: "note",
       summary: "Normalized MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -1895,6 +1916,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2109,6 +2131,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export shows privileged enforcement is optional.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2213,6 +2236,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "Synthetic policy export supports the privileged MFA finding.",
       path: "evidence/raw/synthetic-idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2252,6 +2276,10 @@ describe("ULM artifact ledger", () => {
         `${sectionText} `.repeat(350),
         "",
       ]),
+      "## Weak privileged MFA coverage",
+      "",
+      `${sectionText} administrator control gap privileged MFA remediation evidence `.repeat(40),
+      "",
     ].join("\n")
     await fs.writeFile(path.join(outline.root, "reports", "report.md"), reportBody)
     await writeRuntimeSummary(worktree, {
@@ -2325,6 +2353,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2623,6 +2652,7 @@ describe("ULM artifact ledger", () => {
       kind: "command_output",
       summary: "Network scan evidence exists.",
       path: "evidence/raw/nmap.txt",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2755,6 +2785,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2802,6 +2833,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2851,6 +2883,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "Evidence-backed validation artifact.",
       path: "evidence/raw/ev-1.txt",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -2901,6 +2934,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "Synthetic rehearsal evidence.",
       path: "evidence/raw/synthetic.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -3350,6 +3384,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -3403,6 +3438,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -3458,6 +3494,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",
@@ -3511,6 +3548,7 @@ describe("ULM artifact ledger", () => {
       kind: "file",
       summary: "MFA policy export.",
       path: "evidence/raw/idp-policy.json",
+      content: "synthetic evidence artifact\n",
     })
     await writeFinding(worktree, {
       operationID: "school",

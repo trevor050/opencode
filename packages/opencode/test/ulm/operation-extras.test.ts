@@ -17,6 +17,19 @@ import { writeRuntimeSupervisor } from "@/ulm/runtime-supervisor"
 import { tmpdir } from "../fixture/fixture"
 
 const packageRoot = path.join(__dirname, "../..")
+const testConfigDir = path.join(packageRoot, ".artifacts", "operation-extras-test-config")
+const profileConfigPath = path.resolve(packageRoot, "../../tools/ulmcode-profile/opencode.json")
+
+await fs.mkdir(testConfigDir, { recursive: true })
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "opencode.json"))
+await fs.copyFile(profileConfigPath, path.join(testConfigDir, "ulmcode.json"))
+
+const testLaunchEnv: NodeJS.ProcessEnv = {
+  OPENCODE_APP_NAME: "ulmcode",
+  OPENCODE_CONFIG_DIR: testConfigDir,
+  OPENCODE_CONFIG: path.join(testConfigDir, "opencode.json"),
+  OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+}
 
 async function writeJson(file: string, data: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true })
@@ -381,6 +394,7 @@ describe("ULM operation extras", () => {
       operationID: operation.operationID,
       preparePrerequisites: true,
       toolManifestPath,
+      modelRouteLaunchEnv: testLaunchEnv,
       operatorConfirmed: ["power", "sleep", "wifi", "scope", "clock"],
     })
     await completeOperationGraph(dir.path, operation.operationID, operation.graph.json)
@@ -391,6 +405,7 @@ describe("ULM operation extras", () => {
       cycleIntervalSeconds: 0,
       maxCycles: 1,
       supervisorEnabled: false,
+      modelRouteLaunchEnv: testLaunchEnv,
       now: () => new Date("2026-05-04T00:00:00.000Z"),
     })
 

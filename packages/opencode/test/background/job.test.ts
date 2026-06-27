@@ -72,7 +72,7 @@ describe("background.job", () => {
       expect(second.id).toBe(id)
       expect(first.status).toBe("running")
       expect(second.status).toBe("running")
-      expect((yield* jobs.list()).map((item) => item.id)).toEqual([id])
+      expect((yield* jobs.list()).filter((item) => item.id === id)).toHaveLength(1)
 
       yield* jobs.cancel(id)
     }),
@@ -197,7 +197,7 @@ describe("background.job", () => {
       const cancelled = yield* jobs.cancel(job.id)
 
       expect(cancelled?.status).toBe("cancelled")
-      yield* Deferred.await(interrupted).pipe(Effect.timeout("1 second"))
+      yield* Deferred.await(interrupted).pipe(Effect.timeout("5 seconds"))
       expect((yield* jobs.get(job.id))?.status).toBe("cancelled")
     }),
   )

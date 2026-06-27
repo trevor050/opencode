@@ -52,8 +52,19 @@ export const layer: Layer.Layer<Service, never, Storage.Service> = Layer.unwrap(
   Effect.gen(function* () {
     const storage = yield* Storage.Service
     const state = yield* InstanceState.make(() => CoreBackgroundJob.make)
-    const readStored = (id: string) =>
-      storage.read<Info>(storageKey(id)).pipe(Effect.catch(() => Effect.succeed(undefined)))
+const readStored = (id: string) =>
+      storage.read<Info>(storageKey(id)).pipe(
+        Effect.map((job) =>
+          job.status === "running"
+            ? {
+                ...job,
+                status: "stale" as const,
+                error: job.error ?? "Task was persisted as running, but the process no longer has its running fiber.",
+              }
+            : job,
+        ),
+        Effect.catch(() => Effect.succeed(undefined)),
+      )
     const writeStored = (info: Info) =>
       storage.write(storageKey(info.id), info).pipe(Effect.as(info), Effect.catch(() => Effect.succeed(info)))
     const withStored = (info: CoreBackgroundJob.Info) =>

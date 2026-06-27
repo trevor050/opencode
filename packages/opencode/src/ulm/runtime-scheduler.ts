@@ -72,6 +72,27 @@ export type RuntimeSchedulerCycle = {
   launchedCommandJobs: string[]
 }
 
+type RuntimeSchedulerDecisionRecord = {
+  operationID: string
+  cycle: number
+  time: string
+  action?: string
+  selectedLane?: string
+  priorityScore?: number
+  priorityReason?: string
+  supervisorAction?: OperationSupervisorAction
+  supervisorReason?: string
+  selectedCommandUnits: Array<{
+    id: string
+    profileID: string
+    laneID: string
+    priorityScore?: number
+    priorityReason?: string
+  }>
+  launchedJobs: string[]
+  launchedCommandJobs: string[]
+}
+
 export type RuntimeSchedulerResult = {
   operationID: string
   heartbeatPath: string
@@ -123,6 +144,16 @@ function hasActiveReportRepairJob(input: { operationID: string; backgroundJobs?:
       job.metadata?.operationID === input.operationID &&
       job.metadata?.laneID === REPORT_REPAIR_LANE_ID,
   )
+}
+
+function priorityFromReason(reason: string | undefined): { priorityScore?: number; priorityReason?: string } {
+  const match = reason?.match(/priority\s+([0-9.]+):\s+(.+)$/)
+  if (!match) return {}
+  const score = Number(match[1])
+  return {
+    ...(Number.isFinite(score) ? { priorityScore: score } : {}),
+    priorityReason: match[2],
+  }
 }
 
 function reportRepairTaskParams(
@@ -337,6 +368,7 @@ export async function runRuntimeScheduler(
   const schedulerDir = path.join(root, "scheduler")
   const heartbeatPath = path.join(schedulerDir, "heartbeat.json")
   const logPath = path.join(schedulerDir, "scheduler.jsonl")
+  const decisionLogPath = path.join(schedulerDir, "decision-log.jsonl")
   const maxCycles = Math.max(1, input.maxCycles ?? 1)
   const cycles: RuntimeSchedulerCycle[] = []
   let lastSupervisorReviewAt = parseDate(input.lastSupervisorReviewAt)
@@ -432,6 +464,27 @@ export async function runRuntimeScheduler(
     }
     cycles.push(record)
     await appendJsonl(logPath, record)
+    const priority = priorityFromReason(run?.reason)
+    const decisionRecord: RuntimeSchedulerDecisionRecord = {
+      operationID,
+      cycle,
+      time: record.time,
+      action: run?.action ?? (supervisor?.blocking ? "supervisor_blocked" : undefined),
+      selectedLane: run?.laneID,
+      ...priority,
+      supervisorAction: supervisor?.action,
+      supervisorReason: supervisor?.reason,
+      selectedCommandUnits: commandUnits.units.map((unit) => ({
+        id: unit.id,
+        profileID: unit.profileID,
+        laneID: unit.laneID,
+        priorityScore: unit.priority?.score,
+        priorityReason: unit.priority?.reason,
+      })),
+      launchedJobs,
+      launchedCommandJobs,
+    }
+    await appendJsonl(decisionLogPath, decisionRecord)
     await writeJson(heartbeatPath, {
       operationID,
       cycle,
@@ -443,6 +496,8 @@ export async function runRuntimeScheduler(
       lastReason: backlog
         ? `expanded operation backlog: lanes=${backlog.generatedLanes.length}, work_units=${backlog.generatedWorkUnits}`
         : run?.reason ?? supervisor?.reason,
+      lastDecisionReason: priority.priorityReason ? `priority ${priority.priorityScore}: ${priority.priorityReason}` : undefined,
+      lastPriorityScore: priority.priorityScore,
       governorAction: governor.action,
       governorReason: governor.reason,
       requeuedWorkUnits: lease.requeuedUnits,
@@ -488,6 +543,7 @@ export async function runRuntimeScheduler(
     }
   }
 
+  const finalPriority = priorityFromReason(cycles.at(-1)?.run?.reason)
   await writeJson(heartbeatPath, {
     operationID,
     cycles: cycles.length,
@@ -499,6 +555,10 @@ export async function runRuntimeScheduler(
     lastReason: cycles.at(-1)?.backlog
       ? `expanded operation backlog: lanes=${cycles.at(-1)?.backlog?.generatedLanes.length ?? 0}, work_units=${cycles.at(-1)?.backlog?.generatedWorkUnits ?? 0}`
       : cycles.at(-1)?.run?.reason ?? cycles.at(-1)?.supervisor?.reason,
+    lastDecisionReason: finalPriority.priorityReason
+      ? `priority ${finalPriority.priorityScore}: ${finalPriority.priorityReason}`
+      : undefined,
+    lastPriorityScore: finalPriority.priorityScore,
     governorAction: cycles.at(-1)?.governor.action,
     governorReason: cycles.at(-1)?.governor.reason,
     launchedJobs: cycles.at(-1)?.launchedJobs ?? [],
