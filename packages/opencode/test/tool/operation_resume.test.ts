@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { LocationServiceMap } from "@opencode-ai/core/location-layer"
+import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Database } from "@opencode-ai/core/database/database"
 import { Effect, Layer } from "effect"
 import { Agent } from "@/agent/agent"
@@ -31,7 +31,7 @@ const layer = Layer.mergeAll(
   Bus.layer,
   Config.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
-  LocationServiceMap.layer,
+  locationServiceMapLayer,
   Session.defaultLayer,
   SessionStatus.defaultLayer,
   Database.defaultLayer,

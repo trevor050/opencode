@@ -73,7 +73,7 @@ describe("Npm.add", () => {
       return yield* npm.add(spec)
     }).pipe(Effect.scoped, Effect.provide(npmLayer(path.join(tmp.path, "cache"))), Effect.runPromise)
 
-    expect(Option.isSome(entry.entrypoint)).toBe(true)
+    expect(entry.entrypoint).toBeDefined()
   })
 
   test("resolves cached remote tarball specs to the actual installed package name", async () => {

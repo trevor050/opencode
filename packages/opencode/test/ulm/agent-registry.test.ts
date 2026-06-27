@@ -4,7 +4,7 @@ import { ToolRegistry } from "@/tool/registry"
 import { testEffect } from "../lib/effect"
 import { Effect, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { LocationServiceMap } from "@opencode-ai/core/location-layer"
+import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Permission } from "@/permission"
 
 const it = testEffect(
@@ -12,7 +12,7 @@ const it = testEffect(
     Agent.defaultLayer,
     ToolRegistry.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
-    LocationServiceMap.layer,
+    locationServiceMapLayer,
   ) as Layer.Layer<Agent.Service | ToolRegistry.Service, never, never>,
 )
 
