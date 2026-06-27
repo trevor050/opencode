@@ -1,6 +1,6 @@
 import { Button } from "@opencode-ai/ui/button"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { Markdown } from "@opencode-ai/ui/markdown"
+import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { createMemo, createSignal, Match, Show, Switch } from "solid-js"
 
 export function UlmReportPreviewDialog(props: {

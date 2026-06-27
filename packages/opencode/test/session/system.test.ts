@@ -12,7 +12,8 @@ import type { Provider } from "@/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { provideInstance, testInstanceStoreLayer, tmpdir } from "../fixture/fixture"
-import { LocationServiceMap } from "@opencode-ai/core/location-layer"
+import { MCP } from "../../src/mcp"
+import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { testEffect } from "../lib/effect"
 
 const skills: Skill.Info[] = [
@@ -113,7 +114,24 @@ function withTmpInstance<A, E, R>(self: (dir: string) => Effect.Effect<A, E, R>)
 const it = testEffect(
   Layer.mergeAll(
     SystemPrompt.layer.pipe(
-      Layer.provide(LocationServiceMap.layer),
+      Layer.provide(locationServiceMapLayer),
+      Layer.provide(
+        Layer.mock(MCP.Service, {
+          instructions: () =>
+            Effect.succeed([
+              {
+                name: "guide-server",
+                instructions: "Use lookup before mutate.",
+                tools: [],
+              },
+              {
+                name: "tool-server",
+                instructions: "Prefer search before update.",
+                tools: ["tool-server_search", "tool-server_update"],
+              },
+            ]),
+        }),
+      ),
       Layer.provide(
         Layer.succeed(
           Skill.Service,
@@ -289,5 +307,42 @@ describe("session.system", () => {
         expect(block.split(/\s+/).length).toBeLessThan(700)
       }),
     ),
+  )
+
+  it.effect("MCP output includes connected server instructions", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.mcp(build)
+
+      expect(output).toBe(
+        [
+          "<mcp_instructions>",
+          '  <server name="guide-server">',
+          "    Use lookup before mutate.",
+          "  </server>",
+          '  <server name="tool-server">',
+          "    Prefer search before update.",
+          "  </server>",
+          "</mcp_instructions>",
+        ].join("\n"),
+      )
+    }),
+  )
+
+  it.effect("MCP output omits servers when all advertised tools are denied", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.mcp(build, Permission.fromConfig({ "tool-server_*": "deny" }))
+
+      expect(output).toBe(
+        [
+          "<mcp_instructions>",
+          '  <server name="guide-server">',
+          "    Use lookup before mutate.",
+          "  </server>",
+          "</mcp_instructions>",
+        ].join("\n"),
+      )
+    }),
   )
 })

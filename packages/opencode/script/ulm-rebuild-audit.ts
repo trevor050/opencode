@@ -789,7 +789,7 @@ async function auditOperationRuntime() {
     "[Pasted ~${lineCount} lines]",
   ])
   requireText("packages/core/src/project.ts", coreProjectService, [
-    "cached(repo.store)",
+    "cached(repo.commonDirectory)",
     "remote(repo)",
     "root(repo)",
   ])
