@@ -132,6 +132,6 @@ const readStored = (id: string) =>
 
 export const defaultLayer: Layer.Layer<Service> = layer.pipe(Layer.provide(Storage.defaultLayer))
 
-export const node = LayerNode.make(defaultLayer, [])
+export const node = LayerNode.make({ service: Service, layer, deps: [Storage.node] })
 
 export * as BackgroundJob from "./job"

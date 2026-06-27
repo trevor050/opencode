@@ -27,9 +27,19 @@ export default Runtime.handler(
 
 function listen(hostname: string, port: Option.Option<number>, password: string) {
   if (Option.isSome(port)) return bind(hostname, port.value, password)
-  // Preserve the familiar default when available, but let the OS choose a free
-  // port when another local server already owns 4096.
-  return bind(hostname, 4096, password).pipe(Effect.catch(() => bind(hostname, 0, password)))
+  const next = (port: number): ReturnType<typeof bind> =>
+    bind(hostname, port, password).pipe(
+      Effect.catch((error) => (isAddressInUse(error) && port < 65_535 ? next(port + 1) : Effect.fail(error))),
+    )
+  return next(4096)
+}
+
+function isAddressInUse(error: unknown) {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: string }).code === "EADDRINUSE"
+  )
 }
 
 function bind(hostname: string, port: number, password: string) {
