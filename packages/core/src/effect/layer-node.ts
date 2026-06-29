@@ -238,7 +238,7 @@ export function hoist<A, E, T extends Tag, const Items extends Replacements = re
       }
       return { ...node, dependencies: node.dependencies.map(context.visit) }
     },
-    { resolve: (node) => replacementMap.get(node.name) ?? node },
+    { resolve: (node) => replacementMap.get(node) ?? node },
   )
 
   return {
@@ -264,7 +264,7 @@ export function compile<A, E, const Items extends Replacements = readonly []>(
           ? implementation
           : implementation.pipe(Layer.provide(dependencies as [RuntimeLayer, ...RuntimeLayer[]]))
       },
-      { cache, resolve: (node) => replacementMap.get(node.name) ?? node },
+      { cache, resolve: (node) => replacementMap.get(node) ?? node },
     )
   const layers = flatten(root).map((node) => compileNode(node))
   const layer = layers.reduce<RuntimeLayer>((result, layer) => layer.pipe(Layer.provideMerge(result)), Layer.empty)
@@ -272,15 +272,20 @@ export function compile<A, E, const Items extends Replacements = readonly []>(
 }
 
 function replacementMapFrom(replacements?: Replacements) {
-  return new Map(replacements?.map(([source, replacement]) => [source.name, replacementNode(source, replacement)]))
+  return new Map(replacements?.map(([source, replacement]) => [source, replacementNode(source, replacement)]))
 }
 
-export function hasUnbound(root: Node<unknown, unknown, any>, source: AnyNode): boolean {
+export function hasUnbound(root: Node<unknown, unknown, any>, source: AnyNode, replacements?: Replacements): boolean {
   if (source.kind !== "unbound") throw new Error(`Cannot check non-unbound layer node: ${source.name}`)
-  return walk<boolean>(root, (node, context) => {
-    if (node === source) return true
-    return node.dependencies.some(context.visit)
-  })
+  const replacementMap = replacementMapFrom(replacements)
+  return walk<boolean>(
+    root,
+    (node, context) => {
+      if (node === source) return true
+      return node.dependencies.some(context.visit)
+    },
+    { resolve: (node) => replacementMap.get(node) ?? node },
+  )
 }
 
 function flatten(node: AnyNode): readonly AnyNode[] {

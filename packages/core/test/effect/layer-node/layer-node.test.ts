@@ -100,6 +100,27 @@ describe("layer node", () => {
     expect(await Effect.runPromise(program)).toEqual(["replaced", "replaced"])
   })
 
+  test("replaces only the matching node identity", async () => {
+    const firstValue = make({ service: Value, layer: Layer.succeed(Value, Value.of({ value: "first" })), deps: [] })
+    const secondValue = make({ service: Value, layer: Layer.succeed(Value, Value.of({ value: "second" })), deps: [] })
+    const left = make({
+      service: Left,
+      layer: Layer.effect(Left, Effect.map(Value, (item) => Left.of({ value: item.value }))),
+      deps: [firstValue],
+    })
+    const right = make({
+      service: Right,
+      layer: Layer.effect(Right, Effect.map(Value, (item) => Right.of({ value: item.value }))),
+      deps: [secondValue],
+    })
+    const replacement = Layer.succeed(Value, Value.of({ value: "replaced" }))
+    const layer = build(LayerNode.group([left, right]), [[firstValue, replacement]])
+    const program = Effect.gen(function* () {
+      return [(yield* Left).value, (yield* Right).value]
+    }).pipe(Effect.provide(layer))
+    expect(await Effect.runPromise(program)).toEqual(["replaced", "second"])
+  })
+
   test("does not acquire an unused replacement", async () => {
     let acquisitions = 0
     const other = make({ service: Left, layer: Layer.succeed(Left, Left.of({ value: "other" })), deps: [] })

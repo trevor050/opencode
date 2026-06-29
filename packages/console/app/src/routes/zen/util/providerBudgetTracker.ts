@@ -32,9 +32,6 @@ export function createProviderBudgetTracker(
       .toISOString()
       .replace(/[^0-9]/g, "")
       .substring(0, 12)
-  const now = new Date()
-  const currInterval = intervalAt(now)
-  const prevInterval = intervalAt(new Date(now.getTime() - 60_000))
 
   const redis = getRedis()
   const key = (providerId: string, priority: number, withInterval: string) =>
@@ -63,6 +60,9 @@ export function createProviderBudgetTracker(
     // the current priority hasn't already filled the previous-minute adjusted
     // budget.
     check: async () => {
+      const now = new Date()
+      const currInterval = intervalAt(now)
+      const prevInterval = intervalAt(new Date(now.getTime() - 60_000))
       const reads = Object.entries(maxPriorityByProvider).flatMap(([providerId, maxPriority]) =>
         Array.from({ length: maxPriority }, (_, index) => index + 1).flatMap((priority) => [
           { providerId, priority, interval: currInterval, prev: false },
@@ -135,7 +135,7 @@ export function createProviderBudgetTracker(
       if (config.budgetContribution === undefined) return
       const cost = centsToMicroCents(costInCent * config.budgetContribution)
       if (cost <= 0) return
-      const redisKey = key(provider, priority, currInterval)
+      const redisKey = key(provider, priority, intervalAt(new Date()))
       const pipeline = redis.pipeline()
       pipeline.incrby(redisKey, cost)
       // Keep two minutes so the previous interval is readable for budget adjustment.

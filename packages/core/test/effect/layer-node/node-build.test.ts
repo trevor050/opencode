@@ -98,6 +98,36 @@ describe("node build", () => {
     expect(acquisitions).toBe(1)
   })
 
+  test("builds the location service map for replacement dependencies", async () => {
+    const original = Node.makeGlobalNode({
+      service: Value,
+      layer: Layer.succeed(Value, Value.of({ value: "original" })),
+      deps: [],
+    })
+    const replacement = Node.makeGlobalNode({
+      service: Value,
+      layer: Layer.effect(
+        Value,
+        Effect.as(
+          Effect.serviceOption(LocationServiceMap.Service),
+          Value.of({ value: "replacement" }),
+        ),
+      ),
+      deps: [LocationServiceMap.node],
+    })
+    const result = Node.makeGlobalNode({
+      service: Result,
+      layer: Layer.effect(
+        Result,
+        Effect.map(Value, (item) => Result.of({ value: item.value })),
+      ),
+      deps: [original],
+    })
+    const layer = AppNodeBuilder.build(result, [[original, replacement]])
+    const program = Effect.map(Result, (item) => item.value).pipe(Effect.provide(layer))
+    expect(await Effect.runPromise(program)).toBe("replacement")
+  })
+
   test("returns a composed application layer", async () => {
     const value = Node.makeGlobalNode({
       service: Value,
