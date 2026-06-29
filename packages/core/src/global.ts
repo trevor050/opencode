@@ -5,7 +5,7 @@ import os from "os"
 import { Context, Effect, Layer } from "effect"
 import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
-import { makeGlobalNode } from "./effect/node"
+import { makeGlobalNode } from "./effect/app-node"
 
 const app = process.env.OPENCODE_APP_NAME ?? "opencode"
 const data = path.join(xdgData!, app)
